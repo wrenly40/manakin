@@ -288,7 +288,6 @@ app.innerHTML = `
   <aside id="panel" aria-label="Panel">
     <div id="panel-head">
       <h2 id="panel-title">Canvas</h2>
-      <span id="panel-state"></span>
     </div>
     <div id="panel-body"></div>
   </aside>
@@ -300,7 +299,6 @@ const stageWrap = document.getElementById('stage-wrap')!;
 const textEditor = document.getElementById('text-editor') as HTMLTextAreaElement;
 const panelEl = document.getElementById('panel')!;
 const panelTitle = document.getElementById('panel-title')!;
-const panelState = document.getElementById('panel-state')!;
 const panelBody = document.getElementById('panel-body')!;
 const timeState = document.getElementById('time-state')!;
 const progressFill = document.getElementById('progress-fill')!;
@@ -453,14 +451,14 @@ function renderToolbar(): void {
   const back = document.createElement('button');
   back.className = 'dswatch back' + (activeSlot === 'bg' ? ' active' : '');
   back.style.background = bgColour;
-  back.title = 'Background colour';
-  back.setAttribute('aria-label', 'Background colour');
+  back.title = 'Back colour';
+  back.setAttribute('aria-label', 'Back colour');
   back.addEventListener('click', () => openColour('bg'));
   const front = document.createElement('button');
   front.className = 'dswatch front' + (activeSlot === 'fg' ? ' active' : '');
   front.style.background = color;
-  front.title = 'Foreground colour';
-  front.setAttribute('aria-label', 'Foreground colour');
+  front.title = 'Front colour';
+  front.setAttribute('aria-label', 'Front colour');
   front.addEventListener('click', () => openColour('fg'));
   const swap = document.createElement('button');
   swap.className = 'swap-btn';
@@ -756,7 +754,6 @@ function renderPanel(): void {
 
 function renderBehavioursPanel(sel: Item): void {
   panelTitle.textContent = 'Behaviours';
-  panelState.textContent = 'Selected part';
   for (let b = 0; b < BEHAVIOURS.length; b++) {
     const layer = document.createElement('div');
     layer.className = 'blayer' + (expandedBehaviour === b ? ' expanded' : '');
@@ -830,7 +827,6 @@ function renderBehavioursPanel(sel: Item): void {
 
 function renderCanvasPanel(): void {
   panelTitle.textContent = 'Canvas';
-  panelState.textContent = items.length === 0 ? 'Empty stage' : `${items.length} part${items.length === 1 ? '' : 's'}`;
   const mkSection = (label: string): HTMLDivElement => {
     const sec = document.createElement('div');
     sec.className = 'psection';
@@ -925,9 +921,7 @@ function renderCanvasPanel(): void {
 // Clicking a swatch opens this view for that slot: hue ring +
 // saturation/value square, hex, recent colours, saved palette.
 function renderColourPanel(): void {
-  const slotName = colourSlot === 'fg' ? 'Foreground' : 'Background';
   panelTitle.textContent = 'Colour';
-  panelState.textContent = slotName;
   const hsv = hexToHsv(slotColour()) ?? { h: 0, s: 0, v: 0.12 };
   let hue = hsv.h;
   let sat = hsv.s;

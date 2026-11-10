@@ -1,8 +1,8 @@
 /* Manakin, styled like a macOS app: SF type, system colours,
    frosted materials, soft shadows — no emoji icons, no flat
-   web-pill chrome. Blue is used sparingly: the Play icon while
-   playing. The active tool is solid ink; inactive tools are
-   grey. Everything else is ink, grey and quiet fill. */
+   web-pill chrome. Toolbar buttons follow Bowerbird exactly:
+   40px, ink icons, active is a white pill with the toolbar
+   shadow. Blue is used sparingly: the Play icon. */
 :root {
   --accent: #007aff;
   --ink: #1d1d1f;
@@ -97,8 +97,8 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
    a pill over the stage, not a full-height sidebar. */
 #toolbar {
   position: absolute; top: 50%; left: 12px; transform: translateY(-50%);
-  display: flex; flex-direction: column; align-items: center; gap: 4px;
-  padding: 8px; width: 56px; z-index: 10;
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 12px 8px; width: 56px; z-index: 10;
   max-height: calc(100% - 24px); overflow-y: auto; scrollbar-width: none;
   background: rgba(255, 255, 255, 0.72);
   backdrop-filter: blur(20px) saturate(180%);
@@ -108,16 +108,19 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 }
 #toolbar::-webkit-scrollbar { display: none; }
 .tool {
-  width: 32px; height: 32px; border: none; border-radius: 9px; background: transparent;
-  color: var(--grey); display: flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; border: none; border-radius: 9px; background: transparent;
+  color: var(--ink); display: flex; align-items: center; justify-content: center;
   flex: none;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 .tool:hover { background: rgba(0, 0, 0, 0.05); }
+.tool:active { background: rgba(0, 0, 0, 0.09); }
 .tool.active {
-  background: transparent; color: var(--ink); box-shadow: none;
+  background: #fff; color: var(--ink);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
 }
 .tool svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-#toolbar hr { width: 32px; border: none; border-top: 1px solid var(--separator); margin: 2px 0; flex: none; }
+#toolbar hr { width: 32px; height: 1px; border: none; background: var(--separator); margin: 2px 0; flex: none; }
 /* Brush size: no slider. A size preview circle (drag it to resize)
    with a text input below to type the size, kept in sync both ways. */
 .size-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; }
@@ -187,7 +190,6 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
   padding: 16px 16px 8px;
 }
 #panel-head h2 { font-size: 13px; font-weight: 600; margin: 0; }
-#panel-state { font-size: 13px; color: var(--grey); }
 #panel-body { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 4px 16px 16px; }
 .psection { margin-bottom: 18px; }
 .psection h3 { font-size: 12px; font-weight: 600; color: var(--grey); margin: 0 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--hairline); }
@@ -275,17 +277,26 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
   display: flex; flex-direction: column; justify-content: center; gap: 8px;
   padding: 10px 16px 12px;
 }
-#player-row { display: flex; align-items: center; gap: 2px; }
+#player-row { display: flex; align-items: center; justify-content: center; gap: 8px; }
 .pctl {
   border: none; background: transparent; border-radius: 9px;
-  width: 32px; height: 32px; padding: 0;
+  width: 40px; height: 40px; padding: 0;
   display: flex; align-items: center; justify-content: center;
   color: var(--ink); flex: none;
 }
 .pctl:hover { background: rgba(0, 0, 0, 0.05); }
+.pctl:active { background: rgba(0, 0, 0, 0.09); }
 .pctl svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-#play-btn svg { width: 12px; height: 12px; fill: currentColor; stroke: none; }
-#play-btn.playing { color: var(--accent); }
+/* Play/Pause is the primary: a white pill with shadow-md and an
+   accent icon — the same app button language as the toolbar's
+   active pill, never a solid blue block. */
+#play-btn {
+  width: auto; height: 40px; padding: 0 18px;
+  border-radius: 999px; background: #fff;
+  box-shadow: var(--shadow-md); color: var(--accent);
+}
+#play-btn:hover { background: #fff; }
+#play-btn svg { width: 14px; height: 14px; fill: currentColor; stroke: none; }
 #timeline-row { display: flex; align-items: center; gap: 12px; }
 #progress-track {
   flex: 1; height: 4px; background: var(--fill); border-radius: 2px; overflow: hidden;
