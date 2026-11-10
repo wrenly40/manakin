@@ -46,7 +46,7 @@ function nid(): string {
 }
 function defaultActive(): boolean[] { return [false, false, false, false, false, false]; }
 function defaultSpeeds(): number[] { return [1, 1, 1, 1, 1, 1]; }
-function defaultAmounts(): number[] { return [1, 1, 1, 1, 1, 1]; }
+function defaultAmounts(): number[] { return [66, 66, 66, 66, 66, 66]; }
 function baseItem(color: string, width: number): ItemBase {
   return { id: nid(), color, width, active: defaultActive(), speeds: defaultSpeeds(), amounts: defaultAmounts() };
 }
@@ -209,6 +209,7 @@ function migrateItem(it: Item): void {
   if (!Array.isArray(it.active) || it.active.length !== BEHAVIOURS.length) it.active = defaultActive();
   if (!Array.isArray(it.speeds) || it.speeds.length !== BEHAVIOURS.length) it.speeds = defaultSpeeds();
   if (!Array.isArray(it.amounts) || it.amounts.length !== BEHAVIOURS.length) it.amounts = defaultAmounts();
+  else it.amounts = it.amounts.map((a) => (a === 0.5 ? 33 : a === 1 ? 66 : a === 2 ? 100 : a > 2 ? a : 66));
 }
 
 function load(): void {
@@ -272,10 +273,16 @@ app.innerHTML = `
       </div>
     </div>
     <footer id="player">
-      <button id="play-btn"><svg viewBox="0 0 12 12"><path d="M3 1.5 10 6l-7 4.5z"/></svg><span>Play</span></button>
-      <div id="progress-track" aria-hidden="true"><div id="progress-fill"></div></div>
-      <span id="time-state">0.0 / 4.0s</span>
-      <span id="player-state"></span>
+      <div id="player-row">
+        <button id="back-btn" class="pctl" title="Back" aria-label="Back to start"><svg viewBox="0 0 24 24"><path d="M6 5v14"/><path d="M20 5v14l-9-7z"/></svg></button>
+        <button id="play-btn" class="pctl" title="Play" aria-label="Play"><svg viewBox="0 0 12 12"><path d="M3 1.5 10 6l-7 4.5z"/></svg></button>
+        <button id="stop-btn" class="pctl" title="Stop" aria-label="Stop"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg></button>
+        <button id="forward-btn" class="pctl" title="Forward" aria-label="Forward to end"><svg viewBox="0 0 24 24"><path d="M18 5v14"/><path d="M4 5v14l9-7z"/></svg></button>
+      </div>
+      <div id="timeline-row">
+        <div id="progress-track" aria-hidden="true"><div id="progress-fill"></div></div>
+        <span id="time-state">0.0 / 4.0s</span>
+      </div>
     </footer>
   </div>
   <aside id="panel" aria-label="Panel">
@@ -295,10 +302,12 @@ const panelEl = document.getElementById('panel')!;
 const panelTitle = document.getElementById('panel-title')!;
 const panelState = document.getElementById('panel-state')!;
 const panelBody = document.getElementById('panel-body')!;
-const playerState = document.getElementById('player-state')!;
 const timeState = document.getElementById('time-state')!;
 const progressFill = document.getElementById('progress-fill')!;
-const playBtn = document.getElementById('play-btn')!;
+const playBtn = document.getElementById('play-btn') as HTMLButtonElement;
+const backBtn = document.getElementById('back-btn') as HTMLButtonElement;
+const stopBtn = document.getElementById('stop-btn') as HTMLButtonElement;
+const forwardBtn = document.getElementById('forward-btn') as HTMLButtonElement;
 const projectInput = document.getElementById('project-name') as HTMLInputElement;
 const panelBtn = document.getElementById('panel-btn') as HTMLButtonElement;
 
@@ -329,8 +338,8 @@ const TOOLS: { id: ToolId; label: string; key: string; svg: string }[] = [
   { id: 'eraser', label: 'Eraser', key: '', svg: '<path d="M7 20h10"/><path d="M5 15l8-8 4 4-5 5H9z"/>' },
   { id: 'shape', label: 'Geometry', key: 'E', svg: '<rect x="4" y="4" width="16" height="16" rx="2"/>' },
   { id: 'text', label: 'Text', key: 'T', svg: '<path d="M5 6h14M12 6v13"/>' },
-  // Paint bucket, tilted and pouring.
-  { id: 'paint', label: 'Paint', key: 'B', svg: '<path d="M5 12l2.5-5L17 11l-2 7.5-8 1.5z"/><path d="M7.5 7L17 11"/><path d="M18.5 4.5l.8 2M20.5 3.5l.6 1.8"/>' },
+  // Paint bucket: clean minimal tilted bucket outline, one pour line.
+  { id: 'paint', label: 'Paint', key: 'B', svg: '<path d="M4 12l6-6 8 8-6 6z"/><path d="M7 15l6-6"/><path d="M19 5l2-2"/>' },
 ];
 const toolbar = document.getElementById('toolbar')!;
 function swapColors(): void {
@@ -341,6 +350,13 @@ function swapColors(): void {
   renderToolbar();
 }
 function openColour(slot: 'fg' | 'bg'): void {
+  // Clicking the open swatch again closes the Colour view.
+  if (panelView === 'colour' && colourSlot === slot) {
+    panelView = 'auto';
+    renderToolbar();
+    renderPanel();
+    return;
+  }
   activeSlot = slot;
   colourSlot = slot;
   panelView = 'colour';
@@ -510,7 +526,10 @@ function hexToRgba(hex: string, alpha: number): string {
 // ---------- animation ----------
 // A behaviour layer is on for the whole loop when toggled on.
 // All on layers superpose; amplitude eases in/out so toggling is smooth.
-function amountScale(a: number): number { return a === 0.5 ? 0.5 : a === 2 ? 1.8 : 1; }
+function amountScale(a: number): number {
+  if (a > 2) return (a / 100) * 1.8; // percent 0-100
+  return a === 0.5 ? 0.5 : a === 2 ? 1.8 : 1;
+}
 function smoothedAmps(it: Item): number[] {
   let arr = smoothed.get(it.id);
   if (!arr) { arr = [0, 0, 0, 0, 0, 0]; smoothed.set(it.id, arr); }
@@ -656,25 +675,39 @@ function frame(ts: number): void {
 }
 
 // ---------- panel helpers ----------
-function segMini(
-  options: { value: number; label: string }[],
-  current: number,
-  aria: string,
-  onPick: (v: number) => void,
-): HTMLDivElement {
-  const wrap = document.createElement('div');
-  wrap.className = 'seg-mini';
-  wrap.setAttribute('role', 'group');
-  wrap.setAttribute('aria-label', aria);
-  for (const o of options) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = o.value === current ? 'active' : '';
-    b.textContent = o.label;
-    b.addEventListener('click', () => onPick(o.value));
-    wrap.appendChild(b);
-  }
-  return wrap;
+// Custom-styled continuous slider row: label + range input + live value text.
+// onInput runs live (graph redraw); onCommit runs on release (save).
+function paramSlider(opts: {
+  label: string; min: number; max: number; step: number; value: number;
+  format: (v: number) => string; aria: string;
+  onInput: (v: number) => void; onCommit: () => void;
+}): HTMLDivElement {
+  const row = document.createElement('div');
+  row.className = 'pslider-row';
+  const lab = document.createElement('span');
+  lab.className = 'dctl-label';
+  lab.textContent = opts.label;
+  const input = document.createElement('input');
+  input.type = 'range';
+  input.className = 'pslider';
+  input.min = String(opts.min);
+  input.max = String(opts.max);
+  input.step = String(opts.step);
+  input.value = String(opts.value);
+  input.setAttribute('aria-label', opts.aria);
+  const val = document.createElement('span');
+  val.className = 'pslider-value';
+  val.textContent = opts.format(opts.value);
+  input.addEventListener('input', () => {
+    const v = parseFloat(input.value);
+    val.textContent = opts.format(v);
+    opts.onInput(v);
+  });
+  input.addEventListener('change', () => opts.onCommit());
+  row.appendChild(lab);
+  row.appendChild(input);
+  row.appendChild(val);
+  return row;
 }
 
 function drawGraph(cv: HTMLCanvasElement, b: number, speed: number, amount: number): void {
@@ -774,38 +807,20 @@ function renderBehavioursPanel(sel: Item): void {
       graph.className = 'graph';
       graph.setAttribute('aria-label', `${BEHAVIOURS[b]} motion graph`);
       body.appendChild(graph);
-      const speedGroup = document.createElement('div');
-      speedGroup.className = 'dctl';
-      const speedLabel = document.createElement('span');
-      speedLabel.className = 'dctl-label';
-      speedLabel.textContent = 'Speed';
-      speedGroup.appendChild(speedLabel);
-      speedGroup.appendChild(segMini(
-        [{ value: 0.5, label: '0.5×' }, { value: 1, label: '1×' }, { value: 2, label: '2×' }],
-        sel.speeds[b],
-        `${BEHAVIOURS[b]} speed`,
-        (v) => {
-          const s = selected(); if (!s) return;
-          s.speeds[b] = v; save(); renderPanel();
-        },
-      ));
-      const amountGroup = document.createElement('div');
-      amountGroup.className = 'dctl';
-      const amountLabel = document.createElement('span');
-      amountLabel.className = 'dctl-label';
-      amountLabel.textContent = 'Amount';
-      amountGroup.appendChild(amountLabel);
-      amountGroup.appendChild(segMini(
-        [{ value: 0.5, label: 'S' }, { value: 1, label: 'M' }, { value: 2, label: 'L' }],
-        sel.amounts[b],
-        `${BEHAVIOURS[b]} amount`,
-        (v) => {
-          const s = selected(); if (!s) return;
-          s.amounts[b] = v; save(); renderPanel();
-        },
-      ));
-      body.appendChild(speedGroup);
-      body.appendChild(amountGroup);
+      body.appendChild(paramSlider({
+        label: 'Speed', min: 0.25, max: 3, step: 0.05, value: sel.speeds[b],
+        format: (v) => `${v.toFixed(2).replace(/0$/, '').replace(/\.$/, '')}x`,
+        aria: `${BEHAVIOURS[b]} speed`,
+        onInput: (v) => { const s = selected(); if (!s) return; s.speeds[b] = v; drawGraph(graph, b, s.speeds[b], s.amounts[b]); },
+        onCommit: () => save(),
+      }));
+      body.appendChild(paramSlider({
+        label: 'Amount', min: 0, max: 100, step: 1, value: sel.amounts[b],
+        format: (v) => `${Math.round(v)}%`,
+        aria: `${BEHAVIOURS[b]} amount`,
+        onInput: (v) => { const s = selected(); if (!s) return; s.amounts[b] = v; drawGraph(graph, b, s.speeds[b], s.amounts[b]); },
+        onCommit: () => save(),
+      }));
       layer.appendChild(body);
       drawGraph(graph, b, sel.speeds[b], sel.amounts[b]);
     }
@@ -917,15 +932,6 @@ function renderColourPanel(): void {
   let hue = hsv.h;
   let sat = hsv.s;
   let val = hsv.v;
-  const back = document.createElement('button');
-  back.type = 'button';
-  back.className = 'colour-back';
-  back.innerHTML = '<svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg><span>Back</span>';
-  back.addEventListener('click', () => {
-    panelView = 'auto';
-    renderPanel();
-  });
-  panelBody.appendChild(back);
   const applyDraft = (commit: boolean): void => {
     const hex = hsvToHex(hue, sat, val);
     if (activeSlot === 'fg') color = hex; else bgColour = hex;
@@ -954,9 +960,10 @@ function renderColourPanel(): void {
   ringWrap.appendChild(ringMarker);
   const placeRingMarker = (): void => {
     const rad = (hue * Math.PI) / 180;
-    const r = 62;
-    ringMarker.style.left = `${75 + r * Math.cos(rad) - 6}px`;
-    ringMarker.style.top = `${75 + r * Math.sin(rad) - 6}px`;
+    const r = 60;
+    ringMarker.style.left = `${70 + r * Math.cos(rad) - 6}px`;
+    ringMarker.style.top = `${70 + r * Math.sin(rad) - 6}px`;
+    ringMarker.style.background = `hsl(${Math.round(hue)}, 100%, 50%)`;
   };
   placeRingMarker();
   const hueFromEvent = (e: PointerEvent): void => {
@@ -1089,7 +1096,7 @@ function renderColourPanel(): void {
   const savedRow = mkChips('Saved palette', savedColours);
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
-  saveBtn.className = 'pbtn';
+  saveBtn.className = 'pbtn-quiet';
   saveBtn.textContent = 'Save current colour';
   saveBtn.addEventListener('click', () => {
     const hex = slotColour().toLowerCase();
@@ -1293,13 +1300,23 @@ function clearStage(): void {
 const PLAY_ICON = '<svg viewBox="0 0 12 12"><path d="M3 1.5 10 6l-7 4.5z"/></svg>';
 const PAUSE_ICON = '<svg viewBox="0 0 12 12"><path d="M2.5 2h2.6v8H2.5zM6.9 2h2.6v8H6.9z"/></svg>';
 function setPlayLabel(): void {
-  playBtn.innerHTML = (playing ? PAUSE_ICON : PLAY_ICON) + `<span>${playing ? 'Pause' : 'Play'}</span>`;
+  playBtn.innerHTML = playing ? PAUSE_ICON : PLAY_ICON;
+  playBtn.classList.toggle('playing', playing);
+  playBtn.title = playing ? 'Pause' : 'Play';
+  playBtn.setAttribute('aria-label', playing ? 'Pause' : 'Play');
 }
 playBtn.addEventListener('click', () => {
   playing = !playing;
   setPlayLabel();
   if (playing) lastTs = 0;
 });
+backBtn.addEventListener('click', () => { playTime = 0; });
+stopBtn.addEventListener('click', () => {
+  playing = false;
+  playTime = 0;
+  setPlayLabel();
+});
+forwardBtn.addEventListener('click', () => { playTime = LOOP_MS - 1; });
 function exportPNG(): void {
   const { w, h } = stageSize();
   const off = document.createElement('canvas');
@@ -1314,7 +1331,6 @@ function exportPNG(): void {
 async function exportVideo(): Promise<void> {
   const btn = document.getElementById('video-btn') as HTMLButtonElement | null;
   if (btn) { btn.disabled = true; btn.classList.add('busy'); btn.title = 'Recording…'; }
-  playerState.textContent = 'Recording video…';
   const wasPlaying = playing;
   if (!playing) { playing = true; setPlayLabel(); lastTs = 0; }
   const stream = canvas.captureStream(30);
@@ -1334,7 +1350,6 @@ async function exportVideo(): Promise<void> {
   if (btn2) { btn2.disabled = false; btn2.classList.remove('busy'); btn2.title = 'Video'; }
 }
 function downloadBlob(blob: Blob, filename: string): void {
-  playerState.textContent = `Downloading ${filename} (${blob.size} bytes)`;
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -1352,6 +1367,10 @@ window.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
   if ((e.ctrlKey || e.metaKey) && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
+  if (k === 'escape') {
+    if (panelView === 'colour') { panelView = 'auto'; renderPanel(); }
+    return;
+  }
   if (k === 'delete' || k === 'backspace') {
     const sel = selected();
     if (sel) { pushHistory(); items = items.filter((i) => i.id !== sel.id); selectedId = null; save(); renderPanel(); }
@@ -1372,6 +1391,7 @@ window.addEventListener('keydown', (e) => {
 load();
 projectInput.value = projectName;
 renderPanel();
+setPlayLabel();
 applyPanelOpen();
 resizeCanvas();
 window.addEventListener('resize', resizeCanvas);

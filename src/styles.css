@@ -1,8 +1,8 @@
 /* Manakin, styled like a macOS app: SF type, system colours,
    frosted materials, soft shadows — no emoji icons, no flat
-   web-pill chrome. Blue is used sparingly: the active tool,
-   the current beat dot, and Play. Everything else is ink,
-   grey and quiet fill. */
+   web-pill chrome. Blue is used sparingly: the Play icon while
+   playing. The active tool is solid ink; inactive tools are
+   grey. Everything else is ink, grey and quiet fill. */
 :root {
   --accent: #007aff;
   --ink: #1d1d1f;
@@ -109,13 +109,12 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 #toolbar::-webkit-scrollbar { display: none; }
 .tool {
   width: 32px; height: 32px; border: none; border-radius: 9px; background: transparent;
-  color: var(--ink); display: flex; align-items: center; justify-content: center;
+  color: var(--grey); display: flex; align-items: center; justify-content: center;
   flex: none;
 }
 .tool:hover { background: rgba(0, 0, 0, 0.05); }
 .tool.active {
-  background: #fff; color: var(--accent);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+  background: transparent; color: var(--ink); box-shadow: none;
 }
 .tool svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 #toolbar hr { width: 32px; border: none; border-top: 1px solid var(--separator); margin: 2px 0; flex: none; }
@@ -191,7 +190,7 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 #panel-state { font-size: 13px; color: var(--grey); }
 #panel-body { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 4px 16px 16px; }
 .psection { margin-bottom: 18px; }
-.psection h3 { font-size: 12px; font-weight: 600; color: var(--grey); margin: 0 0 8px; }
+.psection h3 { font-size: 12px; font-weight: 600; color: var(--grey); margin: 0 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--hairline); }
 .pbtn {
   display: block; width: 100%; height: 32px; margin-bottom: 8px;
   border: 1px solid var(--hairline); border-radius: 9px; background: #fff;
@@ -244,84 +243,83 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
   width: 248px; height: 48px; border-radius: 9px;
   background: var(--fill-2); display: block;
 }
-.dctl { display: flex; align-items: center; gap: 6px; }
-.dctl-label { font-size: 12px; color: var(--grey); }
-/* Small segmented pills for Speed and Amount. */
-.seg-mini {
-  display: inline-flex; gap: 2px; background: var(--fill);
-  border-radius: 8px; padding: 2px; flex: none;
+/* Behaviour parameter sliders: custom thin track, small round thumb —
+   never the native browser default. */
+.pslider-row { display: flex; align-items: center; gap: 8px; }
+.dctl-label { font-size: 12px; color: var(--grey); flex: none; width: 44px; }
+.pslider {
+  flex: 1; appearance: none; -webkit-appearance: none; background: transparent;
+  height: 20px; margin: 0; cursor: pointer; min-width: 0;
 }
-.seg-mini button {
-  border: none; background: transparent; border-radius: 6px;
-  height: 24px; min-width: 30px; padding: 0 8px;
-  font-size: 12px; font-weight: 500; color: var(--ink);
+.pslider::-webkit-slider-runnable-track { height: 2px; background: var(--fill); border-radius: 1px; }
+.pslider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; border: 1px solid rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-sm); margin-top: -6px;
 }
-.seg-mini button:hover { background: rgba(0, 0, 0, 0.04); }
-.seg-mini button.active {
-  background: #fff; font-weight: 600;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+.pslider::-moz-range-track { height: 2px; background: var(--fill); border-radius: 1px; }
+.pslider::-moz-range-thumb {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; border: 1px solid rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-sm);
 }
-.seg-mini button:disabled { opacity: 0.4; cursor: default; }
-.seg-mini button:disabled:hover { background: transparent; }
+.pslider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 9px; }
+.pslider-value { font-size: 12px; color: var(--grey); flex: none; width: 40px; text-align: right; font-variant-numeric: tabular-nums; }
 
-/* Bottom bar: the animation player, full width under the canvas. */
+/* Bottom bar: the animation player — Back, Play/Pause, Stop, Forward
+   on top, the timeline below. */
 #player {
-  flex: none; height: 56px; background: #fff;
+  flex: none; background: #fff;
   border-top: 1px solid var(--separator);
-  display: flex; align-items: center; gap: 12px; padding: 0 16px;
+  display: flex; flex-direction: column; justify-content: center; gap: 8px;
+  padding: 10px 16px 12px;
 }
-#play-btn {
-  border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 999px; height: 32px; padding: 0 16px;
-  background: #fff; color: var(--accent); font-size: 13px; font-weight: 600;
-  display: inline-flex; align-items: center; gap: 7px; box-shadow: var(--shadow-sm);
-  flex: none;
+#player-row { display: flex; align-items: center; gap: 2px; }
+.pctl {
+  border: none; background: transparent; border-radius: 9px;
+  width: 32px; height: 32px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--ink); flex: none;
 }
-#play-btn:hover { background: var(--bg-system); }
-#play-btn svg { width: 11px; height: 11px; fill: currentColor; }
+.pctl:hover { background: rgba(0, 0, 0, 0.05); }
+.pctl svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+#play-btn svg { width: 12px; height: 12px; fill: currentColor; stroke: none; }
+#play-btn.playing { color: var(--accent); }
+#timeline-row { display: flex; align-items: center; gap: 12px; }
 #progress-track {
   flex: 1; height: 4px; background: var(--fill); border-radius: 2px; overflow: hidden;
 }
 #progress-fill { height: 100%; width: 0%; background: var(--accent); border-radius: 2px; }
 #time-state { font-size: 13px; color: var(--grey); white-space: nowrap; }
-#player-state {
-  font-size: 13px; color: var(--grey); white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis; max-width: 240px;
-}
 
 /* Colour panel: hue ring + saturation/value square, hex,
    recent colours, saved palette. */
-.colour-back {
-  display: inline-flex; align-items: center; gap: 2px;
-  border: none; background: transparent; border-radius: 7px;
-  height: 28px; padding: 0 8px 0 2px; margin: 0 0 12px -4px;
-  font-size: 13px; font-weight: 500; color: var(--ink);
-}
-.colour-back:hover { background: rgba(0, 0, 0, 0.05); }
-.colour-back svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.hue-wrap { position: relative; width: 150px; height: 150px; margin: 4px auto 16px; }
+.hue-wrap { position: relative; width: 140px; height: 140px; margin: 8px auto 20px; }
 .hue-ring {
-  width: 150px; height: 150px; border-radius: 50%;
+  width: 140px; height: 140px; border-radius: 50%;
   background: conic-gradient(#ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000);
-  -webkit-mask: radial-gradient(circle, transparent 58%, #000 60%);
-  mask: radial-gradient(circle, transparent 58%, #000 60%);
+  -webkit-mask: radial-gradient(circle closest-side, transparent 68%, #000 70%);
+  mask: radial-gradient(circle closest-side, transparent 68%, #000 70%);
   touch-action: none; cursor: pointer;
 }
 .hue-marker {
   position: absolute; width: 12px; height: 12px; border-radius: 50%;
-  background: #fff; border: 2px solid rgba(0, 0, 0, 0.35);
-  box-shadow: var(--shadow-sm); pointer-events: none;
+  background: #fff; border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35); pointer-events: none;
 }
 .sv-square {
-  position: relative; width: 100%; height: 140px; border-radius: 9px;
+  position: relative; width: 100%; height: 110px; border-radius: 14px;
   background-image: linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, transparent);
-  touch-action: none; cursor: pointer; margin-bottom: 12px;
+  box-shadow: var(--shadow-sm), inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+  touch-action: none; cursor: pointer; margin-bottom: 16px;
 }
 .sv-marker {
-  position: absolute; width: 12px; height: 12px; border-radius: 50%;
-  background: #fff; border: 2px solid rgba(0, 0, 0, 0.35);
-  box-shadow: var(--shadow-sm); pointer-events: none;
+  position: absolute; width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; border: 2px solid rgba(0, 0, 0, 0.3);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35); pointer-events: none;
 }
-.hex-row { margin-bottom: 8px; }
+.hex-row { margin-bottom: 16px; }
 .hex-input {
   width: 100%; height: 32px; padding: 0 10px;
   border: 1px solid var(--hairline); border-radius: 9px; background: #fff;
@@ -331,6 +329,14 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 .colour-chip {
   width: 24px; height: 24px; border-radius: 50%;
   border: 1px solid rgba(0, 0, 0, 0.12); padding: 0;
+  box-shadow: var(--shadow-sm);
 }
 .colour-chip:hover { transform: scale(1.1); }
 .colour-empty { font-size: 13px; color: var(--grey); }
+.pbtn-quiet {
+  display: inline-block; width: auto; height: 32px; padding: 0 14px;
+  border: 1px solid var(--hairline); border-radius: 999px; background: #fff;
+  box-shadow: var(--shadow-sm);
+  font-size: 13px; font-weight: 500; color: var(--ink);
+}
+.pbtn-quiet:hover { background: var(--bg-system); }
