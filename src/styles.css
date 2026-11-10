@@ -86,8 +86,11 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
 }
 
-/* Body: centre column (toolbar + stage) and the right panel. */
-#body-row { flex: 1; display: flex; min-height: 0; }
+/* Body: a flex row of the main column (top bar + centre + player)
+   and the panel. The panel is full window height, so the top bar
+   ends at the panel's left edge. */
+#app-row { flex: 1; display: flex; min-height: 0; }
+#main-column { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 #main-row { flex: 1; display: flex; min-height: 0; min-width: 0; position: relative; }
 
 /* Floating frosted toolbar, centred vertically on the left edge —
@@ -116,18 +119,21 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 }
 .tool svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 #toolbar hr { width: 32px; border: none; border-top: 1px solid var(--separator); margin: 2px 0; flex: none; }
-/* Brush size: vertical slider, with the size preview circle BELOW it. */
+/* Brush size: no slider. A size preview circle (drag it to resize)
+   with a text input below to type the size, kept in sync both ways. */
 .size-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; }
-.brush-slider {
-  writing-mode: vertical-lr; direction: rtl;
-  width: 22px; height: 88px; margin: 0; accent-color: var(--ink);
-}
 .brush-preview {
   height: 40px; width: 40px;
   display: flex; align-items: center; justify-content: center;
+  cursor: ew-resize; touch-action: none; border-radius: 8px;
 }
-.brush-dot { background: var(--ink); border-radius: 50%; }
-.brush-size-label { font-size: 11px; color: var(--grey); }
+.brush-preview:hover { background: rgba(0, 0, 0, 0.04); }
+.brush-dot { background: var(--ink); border-radius: 50%; pointer-events: none; }
+.brush-size-input {
+  width: 40px; height: 24px; padding: 0 4px;
+  border: 1px solid var(--hairline); border-radius: 7px; background: #fff;
+  font: inherit; font-size: 12px; color: var(--ink); text-align: center;
+}
 /* Double swatches: front = foreground, back = background. */
 .double-swatches { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .double-swatches .pair { position: relative; width: 38px; height: 32px; }
@@ -147,16 +153,8 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 }
 .swap-btn:hover { background: rgba(0, 0, 0, 0.05); color: var(--ink); }
 .swap-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.swatches { display: flex; flex-direction: column; gap: 4px; align-items: center; }
-.swatch {
-  width: 22px; height: 22px; border-radius: 50%;
-  border: 1px solid rgba(0, 0, 0, 0.12); padding: 0;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-.swatch:hover { transform: scale(1.1); }
-.swatch.active {
-  box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px rgba(29, 29, 31, 0.85), var(--shadow-sm);
-}
+/* No palette under the double swatches: to change a colour, click a
+   swatch and the panel becomes the Colour panel. */
 
 /* Stage: a white card floating on the system background,
    with air around it. Same pixel sizes as before. */
@@ -211,28 +209,41 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
   box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px rgba(29, 29, 31, 0.85), var(--shadow-sm);
 }
 
-/* Behaviour grid, stacked for the narrow panel: label, cells, controls. */
-.dhead { display: flex; gap: 4px; font-size: 11px; color: var(--grey); margin-bottom: 2px; }
-.dhead .dcells span { flex: 1; text-align: center; }
-.dcells { display: flex; gap: 4px; flex: 1; }
-.dcells span { flex: 1; text-align: center; }
-.drow {
-  display: flex; flex-direction: column; gap: 6px;
-  padding: 10px 0; border-bottom: 1px solid var(--hairline);
+/* Behaviours as layers: one row per behaviour, with an on/off
+   toggle, a name, and a dropdown that reveals its motion graph. */
+.blayer { border-bottom: 1px solid var(--hairline); }
+.blayer:last-child { border-bottom: none; }
+.layer-head {
+  display: flex; align-items: center; gap: 10px;
+  height: 44px; cursor: pointer;
 }
-.drow:last-child { border-bottom: none; }
-.drow .dlabel { font-size: 13px; font-weight: 500; color: var(--ink); }
-/* Cells: off is a quiet fill with a hairline border; on is a
-   muted ink fill — readable at a glance, no saturated blocks. */
-.cell {
-  flex: 1; min-width: 0; height: 28px; border: 1px solid var(--hairline); border-radius: 9px;
-  background: var(--fill-2); padding: 0;
+.layer-toggle {
+  flex: none; width: 36px; height: 20px; border: none; border-radius: 999px;
+  background: var(--fill); padding: 0; position: relative;
+  transition: background 0.15s ease;
 }
-.cell:hover { background: rgba(120, 120, 128, 0.16); border-color: rgba(0, 0, 0, 0.12); }
-.cell.on { background: rgba(29, 29, 31, 0.88); border-color: transparent; }
-.cell.on:hover { background: rgba(29, 29, 31, 0.76); }
-.cell:disabled { opacity: 0.4; cursor: default; }
-.dcontrols { display: flex; gap: 8px 16px; flex-wrap: wrap; }
+.layer-toggle .knob {
+  position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: left 0.15s ease;
+}
+.layer-toggle.on { background: rgba(29, 29, 31, 0.88); }
+.layer-toggle.on .knob { left: 18px; }
+.layer-name { flex: 1; font-size: 13px; font-weight: 500; color: var(--ink); }
+.layer-chev {
+  flex: none; width: 28px; height: 28px; border: none; border-radius: 7px;
+  background: transparent; color: var(--grey);
+  display: flex; align-items: center; justify-content: center;
+}
+.layer-chev:hover { background: rgba(0, 0, 0, 0.05); color: var(--ink); }
+.layer-chev svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.15s ease; }
+.blayer.expanded .layer-chev svg { transform: rotate(180deg); }
+.layer-body { padding: 2px 0 12px; display: flex; flex-direction: column; gap: 8px; }
+.graph {
+  width: 248px; height: 48px; border-radius: 9px;
+  background: var(--fill-2); display: block;
+}
 .dctl { display: flex; align-items: center; gap: 6px; }
 .dctl-label { font-size: 12px; color: var(--grey); }
 /* Small segmented pills for Speed and Amount. */
@@ -267,18 +278,59 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 }
 #play-btn:hover { background: var(--bg-system); }
 #play-btn svg { width: 11px; height: 11px; fill: currentColor; }
-#beats { display: flex; gap: 6px; flex: none; }
-#beats span {
-  width: 8px; height: 8px; border-radius: 50%; background: rgba(120, 120, 128, 0.25); display: inline-block;
-}
-#beats span.on { background: var(--accent); }
 #progress-track {
   flex: 1; height: 4px; background: var(--fill); border-radius: 2px; overflow: hidden;
 }
 #progress-fill { height: 100%; width: 0%; background: var(--accent); border-radius: 2px; }
-#beat-state { font-size: 13px; font-weight: 500; color: var(--ink); white-space: nowrap; }
 #time-state { font-size: 13px; color: var(--grey); white-space: nowrap; }
 #player-state {
   font-size: 13px; color: var(--grey); white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; max-width: 240px;
 }
+
+/* Colour panel: hue ring + saturation/value square, hex,
+   recent colours, saved palette. */
+.colour-back {
+  display: inline-flex; align-items: center; gap: 2px;
+  border: none; background: transparent; border-radius: 7px;
+  height: 28px; padding: 0 8px 0 2px; margin: 0 0 12px -4px;
+  font-size: 13px; font-weight: 500; color: var(--ink);
+}
+.colour-back:hover { background: rgba(0, 0, 0, 0.05); }
+.colour-back svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.hue-wrap { position: relative; width: 150px; height: 150px; margin: 4px auto 16px; }
+.hue-ring {
+  width: 150px; height: 150px; border-radius: 50%;
+  background: conic-gradient(#ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000);
+  -webkit-mask: radial-gradient(circle, transparent 58%, #000 60%);
+  mask: radial-gradient(circle, transparent 58%, #000 60%);
+  touch-action: none; cursor: pointer;
+}
+.hue-marker {
+  position: absolute; width: 12px; height: 12px; border-radius: 50%;
+  background: #fff; border: 2px solid rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-sm); pointer-events: none;
+}
+.sv-square {
+  position: relative; width: 100%; height: 140px; border-radius: 9px;
+  background-image: linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, transparent);
+  touch-action: none; cursor: pointer; margin-bottom: 12px;
+}
+.sv-marker {
+  position: absolute; width: 12px; height: 12px; border-radius: 50%;
+  background: #fff; border: 2px solid rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-sm); pointer-events: none;
+}
+.hex-row { margin-bottom: 8px; }
+.hex-input {
+  width: 100%; height: 32px; padding: 0 10px;
+  border: 1px solid var(--hairline); border-radius: 9px; background: #fff;
+  font: inherit; font-size: 13px; color: var(--ink);
+}
+.colour-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.colour-chip {
+  width: 24px; height: 24px; border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.12); padding: 0;
+}
+.colour-chip:hover { transform: scale(1.1); }
+.colour-empty { font-size: 13px; color: var(--grey); }

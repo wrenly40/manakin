@@ -3,15 +3,13 @@ import './styles.css';
 type Pt = { x: number; y: number };
 type BehaviourName = 'Bob' | 'Sway' | 'Breathe' | 'Blink' | 'Spin' | 'Wander';
 const BEHAVIOURS: BehaviourName[] = ['Bob', 'Sway', 'Breathe', 'Blink', 'Spin', 'Wander'];
-const BEATS = 8;
 const LOOP_MS = 4000;
 
-type Pattern = boolean[][];
 type ItemBase = {
   id: string;
   color: string;
   width: number;
-  pattern: Pattern;
+  active: boolean[]; // one on/off layer per behaviour, on for the whole loop
   speeds: number[];
   amounts: number[];
 };
@@ -25,14 +23,6 @@ type ShapeItem = ItemBase & {
 type TextItem = ItemBase & { type: 'text'; x: number; y: number; text: string; size: number };
 type Item = StrokeItem | ShapeItem | TextItem;
 
-const COLORS = [
-  { name: 'Ink', value: '#1d1d1f' },
-  { name: 'Terracotta', value: '#d2592d' },
-  { name: 'Blue', value: '#007aff' },
-  { name: 'Green', value: '#2d9d5f' },
-  { name: 'Yellow', value: '#e8b93e' },
-  { name: 'Pink', value: '#d96a9b' },
-];
 const STAGE_BGS = [
   { id: 'white', label: 'White', value: '#ffffff' },
   { id: 'paper', label: 'Paper', value: '#f5f0e6' },
@@ -40,7 +30,7 @@ const STAGE_BGS = [
   { id: 'sky', label: 'Sky', value: '#dbe9f5' },
   { id: 'ink', label: 'Ink', value: '#1d1d1f' },
 ] as const;
-type StageBgId = (typeof STAGE_BGS)[number]['id'];
+type StageBgId = (typeof STAGE_BGS)[number]['id'] | 'custom';
 type GridMode = 'dots' | 'lines' | 'off';
 const STAGES = [
   { id: 'wide', label: '16:9', w: 960, h: 540 },
@@ -54,13 +44,11 @@ function nid(): string {
   uid += 1;
   return `i${Date.now().toString(36)}${uid}`;
 }
-function emptyPattern(): Pattern {
-  return BEHAVIOURS.map(() => Array<boolean>(BEATS).fill(false));
-}
+function defaultActive(): boolean[] { return [false, false, false, false, false, false]; }
 function defaultSpeeds(): number[] { return [1, 1, 1, 1, 1, 1]; }
 function defaultAmounts(): number[] { return [1, 1, 1, 1, 1, 1]; }
 function baseItem(color: string, width: number): ItemBase {
-  return { id: nid(), color, width, pattern: emptyPattern(), speeds: defaultSpeeds(), amounts: defaultAmounts() };
+  return { id: nid(), color, width, active: defaultActive(), speeds: defaultSpeeds(), amounts: defaultAmounts() };
 }
 
 // ---------- state ----------
@@ -68,16 +56,22 @@ let items: Item[] = [];
 let selectedId: string | null = null;
 type ToolId = 'select' | 'brush' | 'eraser' | 'shape' | 'text' | 'paint';
 let tool: ToolId = 'brush';
-let color = COLORS[0].value; // foreground
-let bgColour = COLORS[2].value; // background (secondary swatch)
+let color = '#1d1d1f'; // foreground
+let bgColour = '#007aff'; // background (secondary swatch)
 let activeSlot: 'fg' | 'bg' = 'fg';
 let penWidth = 4;
 let shapeKind: 'rect' | 'ellipse' = 'rect';
 let stageId: 'wide' | 'square' | 'portrait' = 'wide';
 let stageBgId: StageBgId = 'white';
+let stageBgCustom: string | null = null;
 let gridMode: GridMode = 'off';
 let projectName = 'Untitled';
 let panelOpen = true;
+let panelView: 'auto' | 'colour' = 'auto';
+let colourSlot: 'fg' | 'bg' = 'fg';
+let expandedBehaviour: number | null = null;
+let recentColours: string[] = [];
+let savedColours: string[] = [];
 let playing = false;
 let playTime = 0; // ms within the loop, frozen when paused
 let lastTs = 0;
@@ -93,27 +87,49 @@ function selected(): Item | null {
   return items.find((i) => i.id === selectedId) ?? null;
 }
 function stageBgValue(): string {
+  if (stageBgId === 'custom' && stageBgCustom) return stageBgCustom;
   return STAGE_BGS.find((b) => b.id === stageBgId)?.value ?? '#ffffff';
+}
+function slotColour(): string { return activeSlot === 'fg' ? color : bgColour; }
+function setSlotColour(hex: string): void {
+  if (activeSlot === 'fg') color = hex; else bgColour = hex;
+}
+function pushRecent(hex: string): void {
+  const h = hex.toLowerCase();
+  recentColours = [h, ...recentColours.filter((c) => c !== h)].slice(0, 8);
 }
 function save(): void {
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
-      items, stageId, projectName, stageBgId, gridMode, panelOpen,
-      fg: color, bg: bgColour, penWidth,
+      items, stageId, projectName, stageBgId, stageBgCustom, gridMode, panelOpen,
+      fg: color, bg: bgColour, penWidth, recent: recentColours, saved: savedColours,
     }));
   } catch { /* storage full or unavailable */ }
 }
-function snapshot(): string { return JSON.stringify(items); }
+function snapshot(): string {
+  return JSON.stringify({ items, stageBgId, stageBgCustom });
+}
 function pushHistory(): void {
   history.push(snapshot());
   if (history.length > 50) history.shift();
   redoStack = [];
 }
 function restore(json: string): void {
-  items = JSON.parse(json) as Item[];
+  try {
+    const data = JSON.parse(json) as unknown;
+    if (Array.isArray(data)) {
+      items = data as Item[];
+    } else if (data && typeof data === 'object') {
+      const d = data as { items?: Item[]; stageBgId?: StageBgId; stageBgCustom?: string | null };
+      if (Array.isArray(d.items)) items = d.items;
+      if (d.stageBgId) stageBgId = d.stageBgId;
+      stageBgCustom = typeof d.stageBgCustom === 'string' ? d.stageBgCustom : null;
+    }
+  } catch { /* corrupted history entry: keep current items */ }
   if (selectedId && !items.some((i) => i.id === selectedId)) selectedId = null;
   smoothed.clear();
   save();
+  resizeCanvas();
   renderPanel();
 }
 function undo(): void {
@@ -129,13 +145,49 @@ function redo(): void {
   restore(next);
 }
 
+// ---------- colour helpers ----------
+function hsvToHex(h: number, s: number, v: number): string {
+  const c = v * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = v - c;
+  let r = 0, g = 0, b = 0;
+  if (h < 60) { r = c; g = x; } else if (h < 120) { r = x; g = c; }
+  else if (h < 180) { g = c; b = x; } else if (h < 240) { g = x; b = c; }
+  else if (h < 300) { r = x; b = c; } else { r = c; b = x; }
+  const to = (n: number) => Math.round((n + m) * 255).toString(16).padStart(2, '0');
+  return `#${to(r)}${to(g)}${to(b)}`;
+}
+function hexToHsv(hex: string): { h: number; s: number; v: number } | null {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return null;
+  const r = parseInt(m[1].slice(0, 2), 16) / 255;
+  const g = parseInt(m[1].slice(2, 4), 16) / 255;
+  const b = parseInt(m[1].slice(4, 6), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const d = max - min;
+  let h = 0;
+  if (d > 0) {
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+    else if (max === g) h = ((b - r) / d + 2) * 60;
+    else h = ((r - g) / d + 4) * 60;
+  }
+  return { h, s: max === 0 ? 0 : d / max, v: max };
+}
+function normHex(s: string): string | null {
+  const t = s.trim().toLowerCase();
+  if (/^#[0-9a-f]{6}$/.test(t)) return t;
+  if (/^[0-9a-f]{6}$/.test(t)) return `#${t}`;
+  if (/^#[0-9a-f]{3}$/.test(t)) {
+    return `#${t[1]}${t[1]}${t[2]}${t[2]}${t[3]}${t[3]}`;
+  }
+  return null;
+}
+
 // ---------- sample ----------
 function sampleBird(): Item[] {
-  const pat = emptyPattern();
-  for (let b = 0; b < BEATS; b++) { pat[0][b] = true; pat[2][b] = true; }
-  for (const b of [0, 2, 4, 6]) pat[1][b] = true;
-  pat[3][0] = true; pat[3][4] = true;
-  const withPat = (it: Item): Item => { it.pattern = pat.map((r) => [...r]); return it; };
+  // Bob, Sway, Breathe, Blink on; Spin, Wander off.
+  const act = [true, true, true, true, false, false];
+  const withAct = (it: Item): Item => { it.active = [...act]; return it; };
   const body: ShapeItem = { ...baseItem('#1d1d1f', 4), type: 'shape', kind: 'ellipse', x: 370, y: 230, w: 220, h: 150, fillSolid: false };
   const head: ShapeItem = { ...baseItem('#1d1d1f', 4), type: 'shape', kind: 'ellipse', x: 545, y: 175, w: 95, h: 95, fillSolid: false };
   const eye: ShapeItem = { ...baseItem('#1d1d1f', 2), type: 'shape', kind: 'ellipse', x: 578, y: 208, w: 14, h: 14, fillSolid: true };
@@ -143,7 +195,20 @@ function sampleBird(): Item[] {
   const wing: StrokeItem = { ...baseItem('#007aff', 4), type: 'stroke', points: [{ x: 430, y: 285 }, { x: 480, y: 325 }, { x: 535, y: 288 }] };
   const leg1: StrokeItem = { ...baseItem('#1d1d1f', 4), type: 'stroke', points: [{ x: 450, y: 380 }, { x: 450, y: 415 }] };
   const leg2: StrokeItem = { ...baseItem('#1d1d1f', 4), type: 'stroke', points: [{ x: 510, y: 380 }, { x: 510, y: 415 }] };
-  return [body, head, eye, beak, wing, leg1, leg2].map(withPat);
+  return [body, head, eye, beak, wing, leg1, leg2].map(withAct);
+}
+
+function migrateItem(it: Item): void {
+  const anyIt = it as unknown as Record<string, unknown>;
+  // v2 saves stored a 6x8 beat grid; a row with any cell on becomes layer on.
+  if (Array.isArray(anyIt.pattern)) {
+    const grid = anyIt.pattern as boolean[][];
+    it.active = BEHAVIOURS.map((_, b) => Array.isArray(grid[b]) && grid[b].some(Boolean));
+    delete anyIt.pattern;
+  }
+  if (!Array.isArray(it.active) || it.active.length !== BEHAVIOURS.length) it.active = defaultActive();
+  if (!Array.isArray(it.speeds) || it.speeds.length !== BEHAVIOURS.length) it.speeds = defaultSpeeds();
+  if (!Array.isArray(it.amounts) || it.amounts.length !== BEHAVIOURS.length) it.amounts = defaultAmounts();
 }
 
 function load(): void {
@@ -152,19 +217,23 @@ function load(): void {
     if (raw) {
       const data = JSON.parse(raw) as {
         items: Item[]; stageId: typeof stageId; projectName?: string;
-        stageBgId?: StageBgId; gridMode?: GridMode; panelOpen?: boolean;
-        fg?: string; bg?: string; penWidth?: number;
+        stageBgId?: StageBgId; stageBgCustom?: string | null; gridMode?: GridMode; panelOpen?: boolean;
+        fg?: string; bg?: string; penWidth?: number; recent?: string[]; saved?: string[];
       };
       if (Array.isArray(data.items) && data.items.length > 0) {
         items = data.items;
+        items.forEach(migrateItem);
         if (data.stageId) stageId = data.stageId;
         if (typeof data.projectName === 'string' && data.projectName.trim()) projectName = data.projectName;
-        if (data.stageBgId && STAGE_BGS.some((b) => b.id === data.stageBgId)) stageBgId = data.stageBgId;
+        if (data.stageBgId && (STAGE_BGS.some((b) => b.id === data.stageBgId) || data.stageBgId === 'custom')) stageBgId = data.stageBgId;
+        if (typeof data.stageBgCustom === 'string') stageBgCustom = data.stageBgCustom;
         if (data.gridMode === 'dots' || data.gridMode === 'lines' || data.gridMode === 'off') gridMode = data.gridMode;
         if (typeof data.panelOpen === 'boolean') panelOpen = data.panelOpen;
         if (typeof data.fg === 'string') color = data.fg;
         if (typeof data.bg === 'string') bgColour = data.bg;
         if (typeof data.penWidth === 'number' && data.penWidth >= 2 && data.penWidth <= 32) penWidth = data.penWidth;
+        if (Array.isArray(data.recent)) recentColours = data.recent.filter((c) => typeof c === 'string').slice(0, 8);
+        if (Array.isArray(data.saved)) savedColours = data.saved.filter((c) => typeof c === 'string');
         return;
       }
     }
@@ -174,29 +243,40 @@ function load(): void {
 }
 
 // ---------- DOM ----------
+// Layout (Bowerbird-style): the panel is full window height —
+// body is a flex row of the main column (top bar + centre + player)
+// and the panel. The top bar ends at the panel's left edge.
 const app = document.getElementById('app')!;
 app.innerHTML = `
-<header>
-  <div class="header-left">
-    <h1>Manakin</h1>
-    <input id="project-name" value="Untitled" aria-label="Project name" spellcheck="false" />
-  </div>
-  <div class="header-actions">
-    <button class="hbtn" id="undo-btn" title="Undo" aria-label="Undo"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
-    <button class="hbtn" id="redo-btn" title="Redo" aria-label="Redo"><svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></svg></button>
-    <span class="vdiv"></span>
-    <button class="hbtn" id="panel-btn" title="Panel" aria-label="Toggle panel"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
-  </div>
-</header>
-<div id="body-row">
-  <div id="main-row">
-    <div id="toolbar" role="toolbar" aria-label="Tools"></div>
-    <div id="stage-area">
-      <div id="stage-wrap">
-        <canvas id="stage"></canvas>
-        <textarea id="text-editor" rows="1" aria-label="Text"></textarea>
+<div id="app-row">
+  <div id="main-column">
+    <header>
+      <div class="header-left">
+        <h1>Manakin</h1>
+        <input id="project-name" value="Untitled" aria-label="Project name" spellcheck="false" />
+      </div>
+      <div class="header-actions">
+        <button class="hbtn" id="undo-btn" title="Undo" aria-label="Undo"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
+        <button class="hbtn" id="redo-btn" title="Redo" aria-label="Redo"><svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></svg></button>
+        <span class="vdiv"></span>
+        <button class="hbtn" id="panel-btn" title="Panel" aria-label="Toggle panel"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
+      </div>
+    </header>
+    <div id="main-row">
+      <div id="toolbar" role="toolbar" aria-label="Tools"></div>
+      <div id="stage-area">
+        <div id="stage-wrap">
+          <canvas id="stage"></canvas>
+          <textarea id="text-editor" rows="1" aria-label="Text"></textarea>
+        </div>
       </div>
     </div>
+    <footer id="player">
+      <button id="play-btn"><svg viewBox="0 0 12 12"><path d="M3 1.5 10 6l-7 4.5z"/></svg><span>Play</span></button>
+      <div id="progress-track" aria-hidden="true"><div id="progress-fill"></div></div>
+      <span id="time-state">0.0 / 4.0s</span>
+      <span id="player-state"></span>
+    </footer>
   </div>
   <aside id="panel" aria-label="Panel">
     <div id="panel-head">
@@ -205,15 +285,7 @@ app.innerHTML = `
     </div>
     <div id="panel-body"></div>
   </aside>
-</div>
-<footer id="player">
-  <button id="play-btn"><svg viewBox="0 0 12 12"><path d="M3 1.5 10 6l-7 4.5z"/></svg><span>Play</span></button>
-  <div id="beats" aria-label="Beat"></div>
-  <div id="progress-track" aria-hidden="true"><div id="progress-fill"></div></div>
-  <span id="beat-state">Beat 1 / 8</span>
-  <span id="time-state">0.0 / 4.0s</span>
-  <span id="player-state"></span>
-</footer>`;
+</div>`;
 
 const canvas = document.getElementById('stage') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
@@ -224,18 +296,11 @@ const panelTitle = document.getElementById('panel-title')!;
 const panelState = document.getElementById('panel-state')!;
 const panelBody = document.getElementById('panel-body')!;
 const playerState = document.getElementById('player-state')!;
-const beatState = document.getElementById('beat-state')!;
 const timeState = document.getElementById('time-state')!;
 const progressFill = document.getElementById('progress-fill')!;
 const playBtn = document.getElementById('play-btn')!;
-const beatsEl = document.getElementById('beats')!;
 const projectInput = document.getElementById('project-name') as HTMLInputElement;
 const panelBtn = document.getElementById('panel-btn') as HTMLButtonElement;
-
-for (let b = 0; b < BEATS; b++) {
-  const dot = document.createElement('span');
-  beatsEl.appendChild(dot);
-}
 
 function applyPanelOpen(): void {
   panelEl.style.display = panelOpen ? 'flex' : 'none';
@@ -264,7 +329,8 @@ const TOOLS: { id: ToolId; label: string; key: string; svg: string }[] = [
   { id: 'eraser', label: 'Eraser', key: '', svg: '<path d="M7 20h10"/><path d="M5 15l8-8 4 4-5 5H9z"/>' },
   { id: 'shape', label: 'Geometry', key: 'E', svg: '<rect x="4" y="4" width="16" height="16" rx="2"/>' },
   { id: 'text', label: 'Text', key: 'T', svg: '<path d="M5 6h14M12 6v13"/>' },
-  { id: 'paint', label: 'Paint', key: 'B', svg: '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/>' },
+  // Paint bucket, tilted and pouring.
+  { id: 'paint', label: 'Paint', key: 'B', svg: '<path d="M5 12l2.5-5L17 11l-2 7.5-8 1.5z"/><path d="M7.5 7L17 11"/><path d="M18.5 4.5l.8 2M20.5 3.5l.6 1.8"/>' },
 ];
 const toolbar = document.getElementById('toolbar')!;
 function swapColors(): void {
@@ -273,6 +339,21 @@ function swapColors(): void {
   bgColour = t;
   save();
   renderToolbar();
+}
+function openColour(slot: 'fg' | 'bg'): void {
+  activeSlot = slot;
+  colourSlot = slot;
+  panelView = 'colour';
+  if (!panelOpen) {
+    panelOpen = true;
+    save();
+    applyPanelOpen();
+  }
+  renderToolbar();
+  renderPanel();
+}
+function clampSize(n: number): number {
+  return Math.max(2, Math.min(32, Math.round(n)));
 }
 function renderToolbar(): void {
   toolbar.innerHTML = '';
@@ -286,42 +367,69 @@ function renderToolbar(): void {
     toolbar.appendChild(b);
   }
   toolbar.appendChild(document.createElement('hr'));
-  // Brush size: vertical slider, with the size preview circle BELOW it.
+  // Brush size: no slider. A size preview circle (drag it to resize)
+  // with a text input below to type the size, kept in sync both ways.
   const sizeWrap = document.createElement('div');
   sizeWrap.className = 'size-wrap';
-  const slider = document.createElement('input');
-  slider.type = 'range';
-  slider.min = '2';
-  slider.max = '32';
-  slider.step = '1';
-  slider.value = String(penWidth);
-  slider.className = 'brush-slider';
-  slider.setAttribute('aria-label', 'Brush size');
   const preview = document.createElement('div');
   preview.className = 'brush-preview';
+  preview.title = 'Brush size — drag to resize';
+  preview.setAttribute('aria-label', 'Brush size preview, drag to resize');
   const dot = document.createElement('span');
   dot.className = 'brush-dot';
-  const sizeLabel = document.createElement('span');
-  sizeLabel.className = 'brush-size-label';
   const paintPreview = (): void => {
     dot.style.width = `${penWidth}px`;
     dot.style.height = `${penWidth}px`;
-    sizeLabel.textContent = `${penWidth} px`;
   };
   paintPreview();
-  slider.addEventListener('input', () => {
-    penWidth = Number(slider.value);
-    paintPreview();
+  let dragStartX = 0;
+  let dragStartSize = penWidth;
+  preview.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    dragStartX = e.clientX;
+    dragStartSize = penWidth;
+    try { preview.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
+    const onMove = (ev: PointerEvent): void => {
+      penWidth = clampSize(dragStartSize + (ev.clientX - dragStartX) / 3);
+      paintPreview();
+      sizeInput.value = String(penWidth);
+    };
+    const onUp = (): void => {
+      preview.removeEventListener('pointermove', onMove);
+      preview.removeEventListener('pointerup', onUp);
+      preview.removeEventListener('pointercancel', onUp);
+      save();
+    };
+    preview.addEventListener('pointermove', onMove);
+    preview.addEventListener('pointerup', onUp);
+    preview.addEventListener('pointercancel', onUp);
   });
-  slider.addEventListener('change', () => { penWidth = Number(slider.value); save(); });
   preview.appendChild(dot);
-  sizeWrap.appendChild(slider);
+  const sizeInput = document.createElement('input');
+  sizeInput.className = 'brush-size-input';
+  sizeInput.type = 'text';
+  sizeInput.inputMode = 'numeric';
+  sizeInput.value = String(penWidth);
+  sizeInput.setAttribute('aria-label', 'Brush size in pixels');
+  const commitSize = (): void => {
+    const n = parseInt(sizeInput.value, 10);
+    penWidth = Number.isFinite(n) ? clampSize(n) : penWidth;
+    sizeInput.value = String(penWidth);
+    paintPreview();
+    save();
+  };
+  sizeInput.addEventListener('change', commitSize);
+  sizeInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commitSize(); sizeInput.blur(); }
+    e.stopPropagation();
+  });
+  sizeInput.addEventListener('blur', commitSize);
   sizeWrap.appendChild(preview);
-  sizeWrap.appendChild(sizeLabel);
+  sizeWrap.appendChild(sizeInput);
   toolbar.appendChild(sizeWrap);
   toolbar.appendChild(document.createElement('hr'));
   // Double swatches: front = foreground, back = background.
-  // Clicking one makes it the active slot; the swap control (X) swaps them.
+  // Clicking one opens the Colour panel for that slot.
   const dbl = document.createElement('div');
   dbl.className = 'double-swatches';
   const pair = document.createElement('div');
@@ -331,13 +439,13 @@ function renderToolbar(): void {
   back.style.background = bgColour;
   back.title = 'Background colour';
   back.setAttribute('aria-label', 'Background colour');
-  back.addEventListener('click', () => { activeSlot = 'bg'; renderToolbar(); });
+  back.addEventListener('click', () => openColour('bg'));
   const front = document.createElement('button');
   front.className = 'dswatch front' + (activeSlot === 'fg' ? ' active' : '');
   front.style.background = color;
   front.title = 'Foreground colour';
   front.setAttribute('aria-label', 'Foreground colour');
-  front.addEventListener('click', () => { activeSlot = 'fg'; renderToolbar(); });
+  front.addEventListener('click', () => openColour('fg'));
   const swap = document.createElement('button');
   swap.className = 'swap-btn';
   swap.title = 'Swap colours (X)';
@@ -349,24 +457,6 @@ function renderToolbar(): void {
   dbl.appendChild(pair);
   dbl.appendChild(swap);
   toolbar.appendChild(dbl);
-  // Palette dots: set the active slot's colour.
-  const sw = document.createElement('div');
-  sw.className = 'swatches';
-  for (const c of COLORS) {
-    const b = document.createElement('button');
-    const slotValue = activeSlot === 'fg' ? color : bgColour;
-    b.className = 'swatch' + (slotValue === c.value ? ' active' : '');
-    b.style.background = c.value;
-    b.title = c.name;
-    b.setAttribute('aria-label', c.name);
-    b.addEventListener('click', () => {
-      if (activeSlot === 'fg') color = c.value; else bgColour = c.value;
-      save();
-      renderToolbar();
-    });
-    sw.appendChild(b);
-  }
-  toolbar.appendChild(sw);
 }
 function updateCursor(): void {
   canvas.classList.toggle('select-cursor', tool === 'select');
@@ -418,20 +508,22 @@ function hexToRgba(hex: string, alpha: number): string {
 }
 
 // ---------- animation ----------
+// A behaviour layer is on for the whole loop when toggled on.
+// All on layers superpose; amplitude eases in/out so toggling is smooth.
 function amountScale(a: number): number { return a === 0.5 ? 0.5 : a === 2 ? 1.8 : 1; }
-function smoothedAmps(it: Item, beat: number): number[] {
+function smoothedAmps(it: Item): number[] {
   let arr = smoothed.get(it.id);
   if (!arr) { arr = [0, 0, 0, 0, 0, 0]; smoothed.set(it.id, arr); }
   for (let b = 0; b < BEHAVIOURS.length; b++) {
-    const target = it.pattern[b][beat] ? 1 : 0;
+    const target = it.active[b] ? 1 : 0;
     arr[b] += (target - arr[b]) * 0.06;
     if (Math.abs(arr[b] - target) < 0.002) arr[b] = target;
   }
   return arr;
 }
 type Motion = { dx: number; dy: number; scale: number; rot: number; opacity: number };
-function motionFor(it: Item, t01: number, beat: number): Motion {
-  const amps = smoothedAmps(it, beat);
+function motionFor(it: Item, t01: number): Motion {
+  const amps = smoothedAmps(it);
   const twoPi = Math.PI * 2;
   let dx = 0, dy = 0, scale = 1, rot = 0, opacity = 1;
   for (let b = 0; b < BEHAVIOURS.length; b++) {
@@ -449,6 +541,14 @@ function motionFor(it: Item, t01: number, beat: number): Motion {
   }
   return { dx, dy, scale, rot, opacity: Math.max(0.05, Math.min(1, opacity)) };
 }
+// Motion value of one behaviour over the loop, for the layer graph.
+function behaviourValue(b: number, t01: number, speed: number, amount: number): number {
+  const twoPi = Math.PI * 2;
+  const am = amountScale(amount);
+  if (b === 3) return Math.sin(twoPi * speed * t01) > 0 ? am : -am; // Blink: square wave
+  if (b === 5) return am * (Math.sin(twoPi * 0.5 * speed * t01) + 0.7 * Math.sin(twoPi * 0.7 * speed * t01 + 1.3)) / 1.7; // Wander
+  return am * Math.sin(twoPi * speed * t01);
+}
 
 // ---------- render ----------
 function resizeCanvas(): void {
@@ -461,7 +561,6 @@ function resizeCanvas(): void {
   canvas.style.height = `${h}px`;
   canvas.style.maxWidth = '100%';
   canvas.style.maxHeight = '100%';
-  // Keep the displayed stage fitting the area: scale down via CSS if needed.
   const area = document.getElementById('stage-area')!;
   const aw = area.clientWidth - 48, ah = area.clientHeight - 48;
   const s = Math.min(1, aw / w, ah / h);
@@ -470,10 +569,10 @@ function resizeCanvas(): void {
     canvas.style.height = `${Math.floor(h * s)}px`;
   }
 }
-function drawItem(c: CanvasRenderingContext2D, it: Item, t01: number, beat: number): void {
+function drawItem(c: CanvasRenderingContext2D, it: Item, t01: number): void {
   const b = itemBBox(it);
   const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
-  const m = motionFor(it, t01, beat);
+  const m = motionFor(it, t01);
   c.save();
   c.translate(cx + m.dx, cy + m.dy);
   c.rotate(m.rot);
@@ -503,7 +602,7 @@ function drawItem(c: CanvasRenderingContext2D, it: Item, t01: number, beat: numb
   }
   c.restore();
 }
-function renderFrame(t01: number, beat: number, target: CanvasRenderingContext2D = ctx, dprOverride?: number): void {
+function renderFrame(t01: number, target: CanvasRenderingContext2D = ctx, dprOverride?: number): void {
   const { w, h } = stageSize();
   const dpr = dprOverride ?? Math.min(2, window.devicePixelRatio || 1);
   target.save();
@@ -528,10 +627,10 @@ function renderFrame(t01: number, beat: number, target: CanvasRenderingContext2D
       target.stroke();
     }
   }
-  for (const it of items) drawItem(target, it, t01, beat);
+  for (const it of items) drawItem(target, it, t01);
   if (target === ctx && selected()) {
     const b = itemBBox(selected()!);
-    const m = motionFor(selected()!, t01, beat);
+    const m = motionFor(selected()!, t01);
     target.save();
     target.setLineDash([5, 4]);
     target.strokeStyle = '#007aff';
@@ -542,10 +641,6 @@ function renderFrame(t01: number, beat: number, target: CanvasRenderingContext2D
   target.restore();
 }
 
-function currentBeat(): number {
-  const t01 = playTime / LOOP_MS;
-  return Math.min(BEATS - 1, Math.floor(t01 * BEATS));
-}
 function frame(ts: number): void {
   if (playing) {
     if (lastTs) playTime = (playTime + (ts - lastTs)) % LOOP_MS;
@@ -554,12 +649,8 @@ function frame(ts: number): void {
     lastTs = 0;
   }
   const t01 = playTime / LOOP_MS;
-  const beat = currentBeat();
-  renderWithPreview(t01, beat);
-  const dots = beatsEl.children;
-  for (let i = 0; i < dots.length; i++) dots[i].classList.toggle('on', i === beat);
+  renderWithPreview(t01);
   progressFill.style.width = `${(t01 * 100).toFixed(1)}%`;
-  beatState.textContent = `Beat ${beat + 1} / ${BEATS}`;
   timeState.textContent = `${(playTime / 1000).toFixed(1)} / ${(LOOP_MS / 1000).toFixed(1)}s`;
   requestAnimationFrame(frame);
 }
@@ -568,7 +659,6 @@ function frame(ts: number): void {
 function segMini(
   options: { value: number; label: string }[],
   current: number,
-  disabled: boolean,
   aria: string,
   onPick: (v: number) => void,
 ): HTMLDivElement {
@@ -580,7 +670,6 @@ function segMini(
     const b = document.createElement('button');
     b.type = 'button';
     b.className = o.value === current ? 'active' : '';
-    b.disabled = disabled;
     b.textContent = o.label;
     b.addEventListener('click', () => onPick(o.value));
     wrap.appendChild(b);
@@ -588,52 +677,103 @@ function segMini(
   return wrap;
 }
 
+function drawGraph(cv: HTMLCanvasElement, b: number, speed: number, amount: number): void {
+  const W = 248, H = 48;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = Math.round(W * dpr);
+  cv.height = Math.round(H * dpr);
+  cv.style.width = `${W}px`;
+  cv.style.height = `${H}px`;
+  const g = cv.getContext('2d')!;
+  g.scale(dpr, dpr);
+  g.clearRect(0, 0, W, H);
+  g.strokeStyle = 'rgba(0,0,0,0.08)';
+  g.lineWidth = 1;
+  g.beginPath();
+  g.moveTo(0, H / 2 + 0.5);
+  g.lineTo(W, H / 2 + 0.5);
+  g.stroke();
+  const N = 120;
+  const maxAmp = 1.8; // amountScale(2)
+  g.strokeStyle = '#1d1d1f';
+  g.lineWidth = 1.5;
+  g.lineJoin = 'round';
+  g.beginPath();
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    const v = behaviourValue(b, t, speed, amount) / maxAmp;
+    const x = (t * (W - 4)) + 2;
+    const y = H / 2 - v * (H / 2 - 5);
+    if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+  }
+  g.stroke();
+}
+
 function renderPanel(): void {
-  const sel = selected();
   const undoBtn = document.getElementById('undo-btn') as HTMLButtonElement;
   const redoBtn = document.getElementById('redo-btn') as HTMLButtonElement;
   undoBtn.disabled = history.length === 0;
   redoBtn.disabled = redoStack.length === 0;
   panelBody.innerHTML = '';
-  if (sel) {
-    panelTitle.textContent = 'Behaviours';
-    panelState.textContent = 'Selected part';
+  if (panelView === 'colour') { renderColourPanel(); return; }
+  const sel = selected();
+  if (sel) { renderBehavioursPanel(sel); return; }
+  renderCanvasPanel();
+}
+
+function renderBehavioursPanel(sel: Item): void {
+  panelTitle.textContent = 'Behaviours';
+  panelState.textContent = 'Selected part';
+  for (let b = 0; b < BEHAVIOURS.length; b++) {
+    const layer = document.createElement('div');
+    layer.className = 'blayer' + (expandedBehaviour === b ? ' expanded' : '');
     const head = document.createElement('div');
-    head.className = 'dhead';
-    const headCells = document.createElement('div');
-    headCells.className = 'dcells';
-    for (let i = 0; i < BEATS; i++) {
-      const s = document.createElement('span');
-      s.textContent = String(i + 1);
-      headCells.appendChild(s);
-    }
-    head.appendChild(headCells);
-    panelBody.appendChild(head);
-    for (let b = 0; b < BEHAVIOURS.length; b++) {
-      const row = document.createElement('div');
-      row.className = 'drow';
-      const label = document.createElement('span');
-      label.className = 'dlabel';
-      label.textContent = BEHAVIOURS[b];
-      row.appendChild(label);
-      const cells = document.createElement('div');
-      cells.className = 'dcells';
-      for (let beat = 0; beat < BEATS; beat++) {
-        const cell = document.createElement('button');
-        cell.className = 'cell' + (sel.pattern[b][beat] ? ' on' : '');
-        cell.setAttribute('aria-label', `${BEHAVIOURS[b]} beat ${beat + 1}`);
-        cell.addEventListener('click', () => {
-          const s = selected();
-          if (!s) return;
-          s.pattern[b][beat] = !s.pattern[b][beat];
-          save();
-          renderPanel();
-        });
-        cells.appendChild(cell);
-      }
-      row.appendChild(cells);
-      const controls = document.createElement('div');
-      controls.className = 'dcontrols';
+    head.className = 'layer-head';
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'layer-toggle' + (sel.active[b] ? ' on' : '');
+    toggle.setAttribute('aria-label', `${BEHAVIOURS[b]} on or off`);
+    toggle.setAttribute('aria-pressed', String(sel.active[b]));
+    toggle.innerHTML = '<span class="knob"></span>';
+    toggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const s = selected();
+      if (!s) return;
+      s.active[b] = !s.active[b];
+      save();
+      renderPanel();
+    });
+    const name = document.createElement('span');
+    name.className = 'layer-name';
+    name.textContent = BEHAVIOURS[b];
+    const chev = document.createElement('button');
+    chev.type = 'button';
+    chev.className = 'layer-chev';
+    chev.setAttribute('aria-label', expandedBehaviour === b ? `Collapse ${BEHAVIOURS[b]}` : `Expand ${BEHAVIOURS[b]}`);
+    chev.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>';
+    const toggleExpand = (): void => {
+      expandedBehaviour = expandedBehaviour === b ? null : b;
+      renderPanel();
+    };
+    chev.addEventListener('click', (e) => {
+      e.stopPropagation(); // the head row also toggles; without this it flips twice
+      toggleExpand();
+    });
+    head.appendChild(toggle);
+    head.appendChild(name);
+    head.appendChild(chev);
+    head.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('.layer-toggle')) return;
+      toggleExpand();
+    });
+    layer.appendChild(head);
+    if (expandedBehaviour === b) {
+      const body = document.createElement('div');
+      body.className = 'layer-body';
+      const graph = document.createElement('canvas');
+      graph.className = 'graph';
+      graph.setAttribute('aria-label', `${BEHAVIOURS[b]} motion graph`);
+      body.appendChild(graph);
       const speedGroup = document.createElement('div');
       speedGroup.className = 'dctl';
       const speedLabel = document.createElement('span');
@@ -643,7 +783,6 @@ function renderPanel(): void {
       speedGroup.appendChild(segMini(
         [{ value: 0.5, label: '0.5×' }, { value: 1, label: '1×' }, { value: 2, label: '2×' }],
         sel.speeds[b],
-        false,
         `${BEHAVIOURS[b]} speed`,
         (v) => {
           const s = selected(); if (!s) return;
@@ -659,21 +798,22 @@ function renderPanel(): void {
       amountGroup.appendChild(segMini(
         [{ value: 0.5, label: 'S' }, { value: 1, label: 'M' }, { value: 2, label: 'L' }],
         sel.amounts[b],
-        false,
         `${BEHAVIOURS[b]} amount`,
         (v) => {
           const s = selected(); if (!s) return;
           s.amounts[b] = v; save(); renderPanel();
         },
       ));
-      controls.appendChild(speedGroup);
-      controls.appendChild(amountGroup);
-      row.appendChild(controls);
-      panelBody.appendChild(row);
+      body.appendChild(speedGroup);
+      body.appendChild(amountGroup);
+      layer.appendChild(body);
+      drawGraph(graph, b, sel.speeds[b], sel.amounts[b]);
     }
-    return;
+    panelBody.appendChild(layer);
   }
-  // Nothing selected: canvas properties.
+}
+
+function renderCanvasPanel(): void {
   panelTitle.textContent = 'Canvas';
   panelState.textContent = items.length === 0 ? 'Empty stage' : `${items.length} part${items.length === 1 ? '' : 's'}`;
   const mkSection = (label: string): HTMLDivElement => {
@@ -708,6 +848,14 @@ function renderPanel(): void {
   const bgSec = mkSection('Background');
   const bgDots = document.createElement('div');
   bgDots.className = 'bg-dots';
+  if (stageBgId === 'custom' && stageBgCustom) {
+    const b = document.createElement('button');
+    b.className = 'bg-dot active';
+    b.style.background = stageBgCustom;
+    b.title = 'Custom';
+    b.setAttribute('aria-label', 'Background custom colour');
+    bgDots.appendChild(b);
+  }
   for (const bg of STAGE_BGS) {
     const b = document.createElement('button');
     b.className = 'bg-dot' + (stageBgId === bg.id ? ' active' : '');
@@ -716,6 +864,7 @@ function renderPanel(): void {
     b.setAttribute('aria-label', `Background ${bg.label}`);
     b.addEventListener('click', () => {
       stageBgId = bg.id;
+      stageBgCustom = null;
       save();
       resizeCanvas();
       renderPanel();
@@ -755,6 +904,201 @@ function renderPanel(): void {
   mkAction('Clear', 'clear-btn', clearStage);
   mkAction('Export PNG', 'png-btn', exportPNG);
   mkAction('Export Video', 'video-btn', exportVideo);
+}
+
+// ---------- colour panel ----------
+// Clicking a swatch opens this view for that slot: hue ring +
+// saturation/value square, hex, recent colours, saved palette.
+function renderColourPanel(): void {
+  const slotName = colourSlot === 'fg' ? 'Foreground' : 'Background';
+  panelTitle.textContent = 'Colour';
+  panelState.textContent = slotName;
+  const hsv = hexToHsv(slotColour()) ?? { h: 0, s: 0, v: 0.12 };
+  let hue = hsv.h;
+  let sat = hsv.s;
+  let val = hsv.v;
+  const back = document.createElement('button');
+  back.type = 'button';
+  back.className = 'colour-back';
+  back.innerHTML = '<svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg><span>Back</span>';
+  back.addEventListener('click', () => {
+    panelView = 'auto';
+    renderPanel();
+  });
+  panelBody.appendChild(back);
+  const applyDraft = (commit: boolean): void => {
+    const hex = hsvToHex(hue, sat, val);
+    if (activeSlot === 'fg') color = hex; else bgColour = hex;
+    const front = toolbar.querySelector('.dswatch.front') as HTMLElement | null;
+    const backSw = toolbar.querySelector('.dswatch.back') as HTMLElement | null;
+    if (front) front.style.background = color;
+    if (backSw) backSw.style.background = bgColour;
+    const hexInput = panelBody.querySelector('.hex-input') as HTMLInputElement | null;
+    if (hexInput && document.activeElement !== hexInput) hexInput.value = hex;
+    if (commit) {
+      pushRecent(hex);
+      save();
+      renderToolbar();
+      renderPanel();
+    }
+  };
+  // Hue ring.
+  const ringWrap = document.createElement('div');
+  ringWrap.className = 'hue-wrap';
+  const ring = document.createElement('div');
+  ring.className = 'hue-ring';
+  ring.setAttribute('aria-label', 'Hue');
+  const ringMarker = document.createElement('span');
+  ringMarker.className = 'hue-marker';
+  ringWrap.appendChild(ring);
+  ringWrap.appendChild(ringMarker);
+  const placeRingMarker = (): void => {
+    const rad = (hue * Math.PI) / 180;
+    const r = 62;
+    ringMarker.style.left = `${75 + r * Math.cos(rad) - 6}px`;
+    ringMarker.style.top = `${75 + r * Math.sin(rad) - 6}px`;
+  };
+  placeRingMarker();
+  const hueFromEvent = (e: PointerEvent): void => {
+    const rect = ring.getBoundingClientRect();
+    const dx = e.clientX - (rect.left + rect.width / 2);
+    const dy = e.clientY - (rect.top + rect.height / 2);
+    hue = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+    placeRingMarker();
+    svSquare.style.backgroundColor = `hsl(${Math.round(hue)}, 100%, 50%)`;
+    applyDraft(false);
+  };
+  ring.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    try { ring.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
+    hueFromEvent(e);
+    const onMove = (ev: PointerEvent): void => hueFromEvent(ev);
+    const onUp = (): void => {
+      ring.removeEventListener('pointermove', onMove);
+      ring.removeEventListener('pointerup', onUp);
+      ring.removeEventListener('pointercancel', onUp);
+      applyDraft(true);
+    };
+    ring.addEventListener('pointermove', onMove);
+    ring.addEventListener('pointerup', onUp);
+    ring.addEventListener('pointercancel', onUp);
+  });
+  panelBody.appendChild(ringWrap);
+  // Saturation / value square.
+  const svSquare = document.createElement('div');
+  svSquare.className = 'sv-square';
+  svSquare.setAttribute('aria-label', 'Saturation and value');
+  svSquare.style.backgroundColor = `hsl(${Math.round(hue)}, 100%, 50%)`;
+  const svMarker = document.createElement('span');
+  svMarker.className = 'sv-marker';
+  svSquare.appendChild(svMarker);
+  const placeSvMarker = (): void => {
+    svMarker.style.left = `calc(${sat * 100}% - 6px)`;
+    svMarker.style.top = `calc(${(1 - val) * 100}% - 6px)`;
+  };
+  placeSvMarker();
+  const svFromEvent = (e: PointerEvent): void => {
+    const rect = svSquare.getBoundingClientRect();
+    sat = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    val = Math.max(0, Math.min(1, 1 - (e.clientY - rect.top) / rect.height));
+    placeSvMarker();
+    applyDraft(false);
+  };
+  svSquare.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    try { svSquare.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
+    svFromEvent(e);
+    const onMove = (ev: PointerEvent): void => svFromEvent(ev);
+    const onUp = (): void => {
+      svSquare.removeEventListener('pointermove', onMove);
+      svSquare.removeEventListener('pointerup', onUp);
+      svSquare.removeEventListener('pointercancel', onUp);
+      applyDraft(true);
+    };
+    svSquare.addEventListener('pointermove', onMove);
+    svSquare.addEventListener('pointerup', onUp);
+    svSquare.addEventListener('pointercancel', onUp);
+  });
+  panelBody.appendChild(svSquare);
+  // Hex field.
+  const hexRow = document.createElement('div');
+  hexRow.className = 'hex-row';
+  const hexInput = document.createElement('input');
+  hexInput.className = 'hex-input';
+  hexInput.type = 'text';
+  hexInput.value = slotColour();
+  hexInput.setAttribute('aria-label', 'Hex colour');
+  hexInput.spellcheck = false;
+  const commitHex = (): void => {
+    const h = normHex(hexInput.value);
+    if (!h) { hexInput.value = slotColour(); return; }
+    const hsv2 = hexToHsv(h);
+    if (!hsv2) { hexInput.value = slotColour(); return; }
+    hue = hsv2.h; sat = hsv2.s; val = hsv2.v;
+    if (activeSlot === 'fg') color = h; else bgColour = h;
+    pushRecent(h);
+    save();
+    renderToolbar();
+    renderPanel();
+  };
+  hexInput.addEventListener('change', commitHex);
+  hexInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commitHex(); hexInput.blur(); }
+    e.stopPropagation();
+  });
+  hexRow.appendChild(hexInput);
+  panelBody.appendChild(hexRow);
+  // Recent colours.
+  const mkChips = (label: string, list: string[]): HTMLDivElement => {
+    const sec = document.createElement('div');
+    sec.className = 'psection';
+    const h = document.createElement('h3');
+    h.textContent = label;
+    sec.appendChild(h);
+    const row = document.createElement('div');
+    row.className = 'colour-chips';
+    if (list.length === 0) {
+      const empty = document.createElement('span');
+      empty.className = 'colour-empty';
+      empty.textContent = label === 'Saved palette' ? 'No saved colours' : 'No recent colours';
+      row.appendChild(empty);
+    }
+    for (const c of list) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'colour-chip';
+      chip.style.background = c;
+      chip.title = c;
+      chip.setAttribute('aria-label', `Use colour ${c}`);
+      chip.addEventListener('click', () => {
+        const hsv2 = hexToHsv(c);
+        if (hsv2) { hue = hsv2.h; sat = hsv2.s; val = hsv2.v; }
+        if (activeSlot === 'fg') color = c; else bgColour = c;
+        pushRecent(c);
+        save();
+        renderToolbar();
+        renderPanel();
+      });
+      row.appendChild(chip);
+    }
+    sec.appendChild(row);
+    panelBody.appendChild(sec);
+    return row;
+  };
+  mkChips('Recent', recentColours);
+  const savedRow = mkChips('Saved palette', savedColours);
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.className = 'pbtn';
+  saveBtn.textContent = 'Save current colour';
+  saveBtn.addEventListener('click', () => {
+    const hex = slotColour().toLowerCase();
+    if (!savedColours.includes(hex)) savedColours.push(hex);
+    save();
+    renderPanel();
+    void savedRow;
+  });
+  panelBody.appendChild(saveBtn);
 }
 
 // ---------- pointer ----------
@@ -834,10 +1178,20 @@ canvas.addEventListener('pointerup', (e) => {
   drag = null;
   renderPanel();
 });
+// Paint bucket: a shape fills solid with the foreground colour;
+// a stroke or text is recoloured; empty stage fills the stage
+// background with the foreground colour. Undo restores it.
 function paintAt(p: Pt): void {
   const hit = hitTest(p);
-  if (!hit) return; // nothing under the cursor: do nothing
   pushHistory();
+  if (!hit) {
+    stageBgCustom = color;
+    stageBgId = 'custom';
+    save();
+    resizeCanvas();
+    renderPanel();
+    return;
+  }
   hit.color = color;
   if (hit.type === 'shape') hit.fillSolid = true;
   save();
@@ -859,8 +1213,8 @@ function moveItem(it: Item, dx: number, dy: number): void {
 }
 
 // Draw the in-progress shape preview on top of the normal frame.
-function renderWithPreview(t01: number, beat: number): void {
-  renderFrame(t01, beat);
+function renderWithPreview(t01: number): void {
+  renderFrame(t01);
   if (previewShape) {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     ctx.save();
@@ -951,7 +1305,7 @@ function exportPNG(): void {
   const off = document.createElement('canvas');
   off.width = w; off.height = h;
   const octx = off.getContext('2d')!;
-  renderFrame(playTime / LOOP_MS, currentBeat(), octx, 1);
+  renderFrame(playTime / LOOP_MS, octx, 1);
   off.toBlob((blob) => {
     if (!blob) return;
     downloadBlob(blob, 'manakin.png');
