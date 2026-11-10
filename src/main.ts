@@ -33,7 +33,15 @@ const COLORS = [
   { name: 'Yellow', value: '#e8b93e' },
   { name: 'Pink', value: '#d96a9b' },
 ];
-const WIDTHS = [2, 4, 8];
+const STAGE_BGS = [
+  { id: 'white', label: 'White', value: '#ffffff' },
+  { id: 'paper', label: 'Paper', value: '#f5f0e6' },
+  { id: 'sage', label: 'Sage', value: '#dfe8dd' },
+  { id: 'sky', label: 'Sky', value: '#dbe9f5' },
+  { id: 'ink', label: 'Ink', value: '#1d1d1f' },
+] as const;
+type StageBgId = (typeof STAGE_BGS)[number]['id'];
+type GridMode = 'dots' | 'lines' | 'off';
 const STAGES = [
   { id: 'wide', label: '16:9', w: 960, h: 540 },
   { id: 'square', label: 'Square', w: 720, h: 720 },
@@ -58,12 +66,18 @@ function baseItem(color: string, width: number): ItemBase {
 // ---------- state ----------
 let items: Item[] = [];
 let selectedId: string | null = null;
-type ToolId = 'select' | 'pen' | 'eraser' | 'shape' | 'text';
-let tool: ToolId = 'pen';
-let color = COLORS[0].value;
+type ToolId = 'select' | 'brush' | 'eraser' | 'shape' | 'text' | 'paint';
+let tool: ToolId = 'brush';
+let color = COLORS[0].value; // foreground
+let bgColour = COLORS[2].value; // background (secondary swatch)
+let activeSlot: 'fg' | 'bg' = 'fg';
 let penWidth = 4;
 let shapeKind: 'rect' | 'ellipse' = 'rect';
 let stageId: 'wide' | 'square' | 'portrait' = 'wide';
+let stageBgId: StageBgId = 'white';
+let gridMode: GridMode = 'off';
+let projectName = 'Untitled';
+let panelOpen = true;
 let playing = false;
 let playTime = 0; // ms within the loop, frozen when paused
 let lastTs = 0;
@@ -78,9 +92,15 @@ function stageSize(): { w: number; h: number } {
 function selected(): Item | null {
   return items.find((i) => i.id === selectedId) ?? null;
 }
+function stageBgValue(): string {
+  return STAGE_BGS.find((b) => b.id === stageBgId)?.value ?? '#ffffff';
+}
 function save(): void {
   try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify({ items, stageId }));
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      items, stageId, projectName, stageBgId, gridMode, panelOpen,
+      fg: color, bg: bgColour, penWidth,
+    }));
   } catch { /* storage full or unavailable */ }
 }
 function snapshot(): string { return JSON.stringify(items); }
@@ -94,7 +114,7 @@ function restore(json: string): void {
   if (selectedId && !items.some((i) => i.id === selectedId)) selectedId = null;
   smoothed.clear();
   save();
-  renderDrumbox();
+  renderPanel();
 }
 function undo(): void {
   const prev = history.pop();
@@ -130,10 +150,21 @@ function load(): void {
   try {
     const raw = localStorage.getItem(SAVE_KEY);
     if (raw) {
-      const data = JSON.parse(raw) as { items: Item[]; stageId: typeof stageId };
+      const data = JSON.parse(raw) as {
+        items: Item[]; stageId: typeof stageId; projectName?: string;
+        stageBgId?: StageBgId; gridMode?: GridMode; panelOpen?: boolean;
+        fg?: string; bg?: string; penWidth?: number;
+      };
       if (Array.isArray(data.items) && data.items.length > 0) {
         items = data.items;
         if (data.stageId) stageId = data.stageId;
+        if (typeof data.projectName === 'string' && data.projectName.trim()) projectName = data.projectName;
+        if (data.stageBgId && STAGE_BGS.some((b) => b.id === data.stageBgId)) stageBgId = data.stageBgId;
+        if (data.gridMode === 'dots' || data.gridMode === 'lines' || data.gridMode === 'off') gridMode = data.gridMode;
+        if (typeof data.panelOpen === 'boolean') panelOpen = data.panelOpen;
+        if (typeof data.fg === 'string') color = data.fg;
+        if (typeof data.bg === 'string') bgColour = data.bg;
+        if (typeof data.penWidth === 'number' && data.penWidth >= 2 && data.penWidth <= 32) penWidth = data.penWidth;
         return;
       }
     }
@@ -148,120 +179,194 @@ app.innerHTML = `
 <header>
   <div class="header-left">
     <h1>Manakin</h1>
-    <span id="live-state"></span>
+    <input id="project-name" value="Untitled" aria-label="Project name" spellcheck="false" />
   </div>
-  <div id="stage-picker" class="seg" role="group" aria-label="Stage size"></div>
   <div class="header-actions">
     <button class="hbtn" id="undo-btn" title="Undo" aria-label="Undo"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
     <button class="hbtn" id="redo-btn" title="Redo" aria-label="Redo"><svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></svg></button>
     <span class="vdiv"></span>
-    <button class="hbtn" id="clear-btn" title="Clear" aria-label="Clear"><svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/></svg></button>
-    <button class="hbtn" id="png-btn" title="PNG" aria-label="Export PNG"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="m21 15-5-5-9 9"/></svg></button>
-    <button class="hbtn" id="video-btn" title="Video" aria-label="Export video"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg></button>
+    <button class="hbtn" id="panel-btn" title="Panel" aria-label="Toggle panel"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
   </div>
 </header>
-<div id="main-row">
-  <div id="toolbar" role="toolbar" aria-label="Tools"></div>
-  <div id="stage-area">
-    <div id="stage-wrap">
-      <canvas id="stage"></canvas>
-      <textarea id="text-editor" rows="1" aria-label="Text"></textarea>
+<div id="body-row">
+  <div id="main-row">
+    <div id="toolbar" role="toolbar" aria-label="Tools"></div>
+    <div id="stage-area">
+      <div id="stage-wrap">
+        <canvas id="stage"></canvas>
+        <textarea id="text-editor" rows="1" aria-label="Text"></textarea>
+      </div>
     </div>
   </div>
+  <aside id="panel" aria-label="Panel">
+    <div id="panel-head">
+      <h2 id="panel-title">Canvas</h2>
+      <span id="panel-state"></span>
+    </div>
+    <div id="panel-body"></div>
+  </aside>
 </div>
-<div id="drumbox">
-  <div id="drumbox-head">
-    <h2>Behaviours</h2>
-    <span id="drumbox-state">Select a part</span>
-    <span class="spacer"></span>
-    <div id="beats" aria-label="Beat"></div>
-    <button id="play-btn"><svg viewBox="0 0 12 12"><path d="M3 1.5 10 6l-7 4.5z"/></svg><span>Play</span></button>
-  </div>
-  <div id="grid"></div>
-</div>`;
+<footer id="player">
+  <button id="play-btn"><svg viewBox="0 0 12 12"><path d="M3 1.5 10 6l-7 4.5z"/></svg><span>Play</span></button>
+  <div id="beats" aria-label="Beat"></div>
+  <div id="progress-track" aria-hidden="true"><div id="progress-fill"></div></div>
+  <span id="beat-state">Beat 1 / 8</span>
+  <span id="time-state">0.0 / 4.0s</span>
+  <span id="player-state"></span>
+</footer>`;
 
 const canvas = document.getElementById('stage') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
 const stageWrap = document.getElementById('stage-wrap')!;
 const textEditor = document.getElementById('text-editor') as HTMLTextAreaElement;
-const liveState = document.getElementById('live-state')!;
-const drumboxState = document.getElementById('drumbox-state')!;
+const panelEl = document.getElementById('panel')!;
+const panelTitle = document.getElementById('panel-title')!;
+const panelState = document.getElementById('panel-state')!;
+const panelBody = document.getElementById('panel-body')!;
+const playerState = document.getElementById('player-state')!;
+const beatState = document.getElementById('beat-state')!;
+const timeState = document.getElementById('time-state')!;
+const progressFill = document.getElementById('progress-fill')!;
 const playBtn = document.getElementById('play-btn')!;
 const beatsEl = document.getElementById('beats')!;
-const gridEl = document.getElementById('grid')!;
-const stagePicker = document.getElementById('stage-picker')!;
+const projectInput = document.getElementById('project-name') as HTMLInputElement;
+const panelBtn = document.getElementById('panel-btn') as HTMLButtonElement;
 
 for (let b = 0; b < BEATS; b++) {
   const dot = document.createElement('span');
   beatsEl.appendChild(dot);
 }
 
-function renderStagePicker(): void {
-  stagePicker.innerHTML = '';
-  for (const s of STAGES) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = stageId === s.id ? 'active' : '';
-    b.textContent = s.label;
-    b.setAttribute('aria-label', `Stage ${s.label}`);
-    b.addEventListener('click', () => {
-      stageId = s.id;
-      renderStagePicker();
-      resizeCanvas();
-      save();
-    });
-    stagePicker.appendChild(b);
-  }
+function applyPanelOpen(): void {
+  panelEl.style.display = panelOpen ? 'flex' : 'none';
+  panelBtn.classList.toggle('active', panelOpen);
+  requestAnimationFrame(() => resizeCanvas());
 }
-renderStagePicker();
+panelBtn.addEventListener('click', () => {
+  panelOpen = !panelOpen;
+  save();
+  applyPanelOpen();
+});
+projectInput.addEventListener('change', () => {
+  const v = projectInput.value.trim();
+  projectName = v || 'Untitled';
+  projectInput.value = projectName;
+  save();
+});
+projectInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') projectInput.blur();
+});
 
 // ---------- toolbar ----------
 const TOOLS: { id: ToolId; label: string; key: string; svg: string }[] = [
   { id: 'select', label: 'Select', key: 'V', svg: '<path d="M5 3l14 7-6 2-3 6z"/>' },
-  { id: 'pen', label: 'Pen', key: 'P', svg: '<path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M13 8l3 3"/>' },
-  { id: 'eraser', label: 'Eraser', key: 'X', svg: '<path d="M7 20h10"/><path d="M5 15l8-8 4 4-5 5H9z"/>' },
-  { id: 'shape', label: 'Shape', key: 'E', svg: '<rect x="4" y="4" width="16" height="16" rx="2"/>' },
+  { id: 'brush', label: 'Brush', key: 'P', svg: '<path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M13 8l3 3"/>' },
+  { id: 'eraser', label: 'Eraser', key: '', svg: '<path d="M7 20h10"/><path d="M5 15l8-8 4 4-5 5H9z"/>' },
+  { id: 'shape', label: 'Geometry', key: 'E', svg: '<rect x="4" y="4" width="16" height="16" rx="2"/>' },
   { id: 'text', label: 'Text', key: 'T', svg: '<path d="M5 6h14M12 6v13"/>' },
+  { id: 'paint', label: 'Paint', key: 'B', svg: '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/>' },
 ];
 const toolbar = document.getElementById('toolbar')!;
+function swapColors(): void {
+  const t = color;
+  color = bgColour;
+  bgColour = t;
+  save();
+  renderToolbar();
+}
 function renderToolbar(): void {
   toolbar.innerHTML = '';
   for (const t of TOOLS) {
     const b = document.createElement('button');
     b.className = 'tool' + (tool === t.id ? ' active' : '');
-    b.title = `${t.label} (${t.key})`;
+    b.title = t.key ? `${t.label} (${t.key})` : t.label;
     b.setAttribute('aria-label', t.label);
     b.innerHTML = `<svg viewBox="0 0 24 24">${t.svg}</svg>`;
     b.addEventListener('click', () => { tool = t.id; renderToolbar(); updateCursor(); });
     toolbar.appendChild(b);
   }
-  const hr = document.createElement('hr');
-  toolbar.appendChild(hr);
+  toolbar.appendChild(document.createElement('hr'));
+  // Brush size: vertical slider, with the size preview circle BELOW it.
+  const sizeWrap = document.createElement('div');
+  sizeWrap.className = 'size-wrap';
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.min = '2';
+  slider.max = '32';
+  slider.step = '1';
+  slider.value = String(penWidth);
+  slider.className = 'brush-slider';
+  slider.setAttribute('aria-label', 'Brush size');
+  const preview = document.createElement('div');
+  preview.className = 'brush-preview';
+  const dot = document.createElement('span');
+  dot.className = 'brush-dot';
+  const sizeLabel = document.createElement('span');
+  sizeLabel.className = 'brush-size-label';
+  const paintPreview = (): void => {
+    dot.style.width = `${penWidth}px`;
+    dot.style.height = `${penWidth}px`;
+    sizeLabel.textContent = `${penWidth} px`;
+  };
+  paintPreview();
+  slider.addEventListener('input', () => {
+    penWidth = Number(slider.value);
+    paintPreview();
+  });
+  slider.addEventListener('change', () => { penWidth = Number(slider.value); save(); });
+  preview.appendChild(dot);
+  sizeWrap.appendChild(slider);
+  sizeWrap.appendChild(preview);
+  sizeWrap.appendChild(sizeLabel);
+  toolbar.appendChild(sizeWrap);
+  toolbar.appendChild(document.createElement('hr'));
+  // Double swatches: front = foreground, back = background.
+  // Clicking one makes it the active slot; the swap control (X) swaps them.
+  const dbl = document.createElement('div');
+  dbl.className = 'double-swatches';
+  const pair = document.createElement('div');
+  pair.className = 'pair';
+  const back = document.createElement('button');
+  back.className = 'dswatch back' + (activeSlot === 'bg' ? ' active' : '');
+  back.style.background = bgColour;
+  back.title = 'Background colour';
+  back.setAttribute('aria-label', 'Background colour');
+  back.addEventListener('click', () => { activeSlot = 'bg'; renderToolbar(); });
+  const front = document.createElement('button');
+  front.className = 'dswatch front' + (activeSlot === 'fg' ? ' active' : '');
+  front.style.background = color;
+  front.title = 'Foreground colour';
+  front.setAttribute('aria-label', 'Foreground colour');
+  front.addEventListener('click', () => { activeSlot = 'fg'; renderToolbar(); });
+  const swap = document.createElement('button');
+  swap.className = 'swap-btn';
+  swap.title = 'Swap colours (X)';
+  swap.setAttribute('aria-label', 'Swap colours');
+  swap.innerHTML = '<svg viewBox="0 0 24 24"><path d="M7 8h11l-3-3M17 16H6l3 3"/></svg>';
+  swap.addEventListener('click', swapColors);
+  pair.appendChild(back);
+  pair.appendChild(front);
+  dbl.appendChild(pair);
+  dbl.appendChild(swap);
+  toolbar.appendChild(dbl);
+  // Palette dots: set the active slot's colour.
   const sw = document.createElement('div');
   sw.className = 'swatches';
   for (const c of COLORS) {
     const b = document.createElement('button');
-    b.className = 'swatch' + (color === c.value ? ' active' : '');
+    const slotValue = activeSlot === 'fg' ? color : bgColour;
+    b.className = 'swatch' + (slotValue === c.value ? ' active' : '');
     b.style.background = c.value;
     b.title = c.name;
     b.setAttribute('aria-label', c.name);
-    b.addEventListener('click', () => { color = c.value; renderToolbar(); });
+    b.addEventListener('click', () => {
+      if (activeSlot === 'fg') color = c.value; else bgColour = c.value;
+      save();
+      renderToolbar();
+    });
     sw.appendChild(b);
   }
   toolbar.appendChild(sw);
-  const hr2 = document.createElement('hr');
-  toolbar.appendChild(hr2);
-  const wdiv = document.createElement('div');
-  wdiv.className = 'widths';
-  for (const w of WIDTHS) {
-    const b = document.createElement('button');
-    b.className = penWidth === w ? 'active' : '';
-    b.textContent = String(w);
-    b.title = `Width ${w}`;
-    b.addEventListener('click', () => { penWidth = w; renderToolbar(); });
-    wdiv.appendChild(b);
-  }
-  toolbar.appendChild(wdiv);
 }
 function updateCursor(): void {
   canvas.classList.toggle('select-cursor', tool === 'select');
@@ -347,6 +452,7 @@ function motionFor(it: Item, t01: number, beat: number): Motion {
 
 // ---------- render ----------
 function resizeCanvas(): void {
+  canvas.style.background = stageBgValue();
   const { w, h } = stageSize();
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   canvas.width = Math.round(w * dpr);
@@ -357,18 +463,11 @@ function resizeCanvas(): void {
   canvas.style.maxHeight = '100%';
   // Keep the displayed stage fitting the area: scale down via CSS if needed.
   const area = document.getElementById('stage-area')!;
-  const aw = area.clientWidth - 32, ah = area.clientHeight - 32;
+  const aw = area.clientWidth - 48, ah = area.clientHeight - 48;
   const s = Math.min(1, aw / w, ah / h);
   if (s < 1) {
     canvas.style.width = `${Math.floor(w * s)}px`;
     canvas.style.height = `${Math.floor(h * s)}px`;
-  }
-  // The drumbox card matches the stage as it is actually shown,
-  // never narrower than its own grid.
-  const drumbox = document.getElementById('drumbox');
-  if (drumbox) {
-    const shown = canvas.getBoundingClientRect().width;
-    drumbox.style.width = `${Math.max(640, Math.min(960, Math.round(shown)))}px`;
   }
 }
 function drawItem(c: CanvasRenderingContext2D, it: Item, t01: number, beat: number): void {
@@ -410,8 +509,25 @@ function renderFrame(t01: number, beat: number, target: CanvasRenderingContext2D
   target.save();
   target.scale(dpr, dpr);
   target.clearRect(0, 0, w, h);
-  target.fillStyle = '#ffffff';
+  target.fillStyle = stageBgValue();
   target.fillRect(0, 0, w, h);
+  if (gridMode !== 'off') {
+    const step = 24;
+    const gridCol = stageBgId === 'ink' ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.08)';
+    if (gridMode === 'dots') {
+      target.fillStyle = gridCol;
+      for (let x = step; x < w; x += step) {
+        for (let y = step; y < h; y += step) target.fillRect(x - 1, y - 1, 2, 2);
+      }
+    } else {
+      target.strokeStyle = gridCol;
+      target.lineWidth = 1;
+      target.beginPath();
+      for (let x = step; x < w; x += step) { target.moveTo(x, 0); target.lineTo(x, h); }
+      for (let y = step; y < h; y += step) { target.moveTo(0, y); target.lineTo(w, y); }
+      target.stroke();
+    }
+  }
   for (const it of items) drawItem(target, it, t01, beat);
   if (target === ctx && selected()) {
     const b = itemBBox(selected()!);
@@ -442,10 +558,13 @@ function frame(ts: number): void {
   renderWithPreview(t01, beat);
   const dots = beatsEl.children;
   for (let i = 0; i < dots.length; i++) dots[i].classList.toggle('on', i === beat);
+  progressFill.style.width = `${(t01 * 100).toFixed(1)}%`;
+  beatState.textContent = `Beat ${beat + 1} / ${BEATS}`;
+  timeState.textContent = `${(playTime / 1000).toFixed(1)} / ${(LOOP_MS / 1000).toFixed(1)}s`;
   requestAnimationFrame(frame);
 }
 
-// ---------- drumbox ----------
+// ---------- panel helpers ----------
 function segMini(
   options: { value: number; label: string }[],
   current: number,
@@ -469,62 +588,173 @@ function segMini(
   return wrap;
 }
 
-function renderDrumbox(): void {
+function renderPanel(): void {
   const sel = selected();
-  drumboxState.textContent = sel ? 'Selected part' : 'Select a part';
-  gridEl.innerHTML = '';
-  const head = document.createElement('div');
-  head.className = 'dhead';
-  head.innerHTML = `<span class="dlabel"></span>${Array.from({ length: BEATS }, (_, i) => `<span>${i + 1}</span>`).join('')}<span class="sp sp-speed">Speed</span><span class="sp sp-amount">Amount</span>`;
-  gridEl.appendChild(head);
-  for (let b = 0; b < BEHAVIOURS.length; b++) {
-    const row = document.createElement('div');
-    row.className = 'drow';
-    const label = document.createElement('span');
-    label.className = 'dlabel';
-    label.textContent = BEHAVIOURS[b];
-    row.appendChild(label);
-    for (let beat = 0; beat < BEATS; beat++) {
-      const cell = document.createElement('button');
-      cell.className = 'cell' + (sel && sel.pattern[b][beat] ? ' on' : '');
-      cell.disabled = !sel;
-      cell.setAttribute('aria-label', `${BEHAVIOURS[b]} beat ${beat + 1}`);
-      cell.addEventListener('click', () => {
-        const s = selected();
-        if (!s) return;
-        s.pattern[b][beat] = !s.pattern[b][beat];
-        save();
-        renderDrumbox();
-      });
-      row.appendChild(cell);
-    }
-    row.appendChild(segMini(
-      [{ value: 0.5, label: '0.5×' }, { value: 1, label: '1×' }, { value: 2, label: '2×' }],
-      sel ? sel.speeds[b] : 1,
-      !sel,
-      `${BEHAVIOURS[b]} speed`,
-      (v) => {
-        const s = selected(); if (!s) return;
-        s.speeds[b] = v; save(); renderDrumbox();
-      },
-    ));
-    row.appendChild(segMini(
-      [{ value: 0.5, label: 'S' }, { value: 1, label: 'M' }, { value: 2, label: 'L' }],
-      sel ? sel.amounts[b] : 1,
-      !sel,
-      `${BEHAVIOURS[b]} amount`,
-      (v) => {
-        const s = selected(); if (!s) return;
-        s.amounts[b] = v; save(); renderDrumbox();
-      },
-    ));
-    gridEl.appendChild(row);
-  }
   const undoBtn = document.getElementById('undo-btn') as HTMLButtonElement;
   const redoBtn = document.getElementById('redo-btn') as HTMLButtonElement;
   undoBtn.disabled = history.length === 0;
   redoBtn.disabled = redoStack.length === 0;
-  liveState.textContent = items.length === 0 ? 'Empty stage' : `${items.length} part${items.length === 1 ? '' : 's'}${sel ? ' · 1 selected' : ''}`;
+  panelBody.innerHTML = '';
+  if (sel) {
+    panelTitle.textContent = 'Behaviours';
+    panelState.textContent = 'Selected part';
+    const head = document.createElement('div');
+    head.className = 'dhead';
+    const headCells = document.createElement('div');
+    headCells.className = 'dcells';
+    for (let i = 0; i < BEATS; i++) {
+      const s = document.createElement('span');
+      s.textContent = String(i + 1);
+      headCells.appendChild(s);
+    }
+    head.appendChild(headCells);
+    panelBody.appendChild(head);
+    for (let b = 0; b < BEHAVIOURS.length; b++) {
+      const row = document.createElement('div');
+      row.className = 'drow';
+      const label = document.createElement('span');
+      label.className = 'dlabel';
+      label.textContent = BEHAVIOURS[b];
+      row.appendChild(label);
+      const cells = document.createElement('div');
+      cells.className = 'dcells';
+      for (let beat = 0; beat < BEATS; beat++) {
+        const cell = document.createElement('button');
+        cell.className = 'cell' + (sel.pattern[b][beat] ? ' on' : '');
+        cell.setAttribute('aria-label', `${BEHAVIOURS[b]} beat ${beat + 1}`);
+        cell.addEventListener('click', () => {
+          const s = selected();
+          if (!s) return;
+          s.pattern[b][beat] = !s.pattern[b][beat];
+          save();
+          renderPanel();
+        });
+        cells.appendChild(cell);
+      }
+      row.appendChild(cells);
+      const controls = document.createElement('div');
+      controls.className = 'dcontrols';
+      const speedGroup = document.createElement('div');
+      speedGroup.className = 'dctl';
+      const speedLabel = document.createElement('span');
+      speedLabel.className = 'dctl-label';
+      speedLabel.textContent = 'Speed';
+      speedGroup.appendChild(speedLabel);
+      speedGroup.appendChild(segMini(
+        [{ value: 0.5, label: '0.5×' }, { value: 1, label: '1×' }, { value: 2, label: '2×' }],
+        sel.speeds[b],
+        false,
+        `${BEHAVIOURS[b]} speed`,
+        (v) => {
+          const s = selected(); if (!s) return;
+          s.speeds[b] = v; save(); renderPanel();
+        },
+      ));
+      const amountGroup = document.createElement('div');
+      amountGroup.className = 'dctl';
+      const amountLabel = document.createElement('span');
+      amountLabel.className = 'dctl-label';
+      amountLabel.textContent = 'Amount';
+      amountGroup.appendChild(amountLabel);
+      amountGroup.appendChild(segMini(
+        [{ value: 0.5, label: 'S' }, { value: 1, label: 'M' }, { value: 2, label: 'L' }],
+        sel.amounts[b],
+        false,
+        `${BEHAVIOURS[b]} amount`,
+        (v) => {
+          const s = selected(); if (!s) return;
+          s.amounts[b] = v; save(); renderPanel();
+        },
+      ));
+      controls.appendChild(speedGroup);
+      controls.appendChild(amountGroup);
+      row.appendChild(controls);
+      panelBody.appendChild(row);
+    }
+    return;
+  }
+  // Nothing selected: canvas properties.
+  panelTitle.textContent = 'Canvas';
+  panelState.textContent = items.length === 0 ? 'Empty stage' : `${items.length} part${items.length === 1 ? '' : 's'}`;
+  const mkSection = (label: string): HTMLDivElement => {
+    const sec = document.createElement('div');
+    sec.className = 'psection';
+    const h = document.createElement('h3');
+    h.textContent = label;
+    sec.appendChild(h);
+    panelBody.appendChild(sec);
+    return sec;
+  };
+  const stageSec = mkSection('Stage');
+  const stageSeg = document.createElement('div');
+  stageSeg.className = 'seg';
+  stageSeg.setAttribute('role', 'group');
+  stageSeg.setAttribute('aria-label', 'Stage size');
+  for (const s of STAGES) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = stageId === s.id ? 'active' : '';
+    b.textContent = s.label;
+    b.setAttribute('aria-label', `Stage ${s.label}`);
+    b.addEventListener('click', () => {
+      stageId = s.id;
+      save();
+      resizeCanvas();
+      renderPanel();
+    });
+    stageSeg.appendChild(b);
+  }
+  stageSec.appendChild(stageSeg);
+  const bgSec = mkSection('Background');
+  const bgDots = document.createElement('div');
+  bgDots.className = 'bg-dots';
+  for (const bg of STAGE_BGS) {
+    const b = document.createElement('button');
+    b.className = 'bg-dot' + (stageBgId === bg.id ? ' active' : '');
+    b.style.background = bg.value;
+    b.title = bg.label;
+    b.setAttribute('aria-label', `Background ${bg.label}`);
+    b.addEventListener('click', () => {
+      stageBgId = bg.id;
+      save();
+      resizeCanvas();
+      renderPanel();
+    });
+    bgDots.appendChild(b);
+  }
+  bgSec.appendChild(bgDots);
+  const gridSec = mkSection('Grid');
+  const gridSeg = document.createElement('div');
+  gridSeg.className = 'seg';
+  gridSeg.setAttribute('role', 'group');
+  gridSeg.setAttribute('aria-label', 'Grid');
+  for (const g of [{ id: 'dots', label: 'Dots' }, { id: 'lines', label: 'Lines' }, { id: 'off', label: 'Off' }] as const) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = gridMode === g.id ? 'active' : '';
+    b.textContent = g.label;
+    b.addEventListener('click', () => {
+      gridMode = g.id;
+      save();
+      renderPanel();
+    });
+    gridSeg.appendChild(b);
+  }
+  gridSec.appendChild(gridSeg);
+  const actionsSec = mkSection('Actions');
+  const mkAction = (label: string, id: string, fn: () => void): HTMLButtonElement => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'pbtn';
+    b.id = id;
+    b.textContent = label;
+    b.addEventListener('click', fn);
+    actionsSec.appendChild(b);
+    return b;
+  };
+  mkAction('Clear', 'clear-btn', clearStage);
+  mkAction('Export PNG', 'png-btn', exportPNG);
+  mkAction('Export Video', 'video-btn', exportVideo);
 }
 
 // ---------- pointer ----------
@@ -534,7 +764,7 @@ function stagePoint(e: { clientX: number; clientY: number }): Pt {
   return { x: ((e.clientX - rect.left) / rect.width) * w, y: ((e.clientY - rect.top) / rect.height) * h };
 }
 let drag: {
-  kind: 'pen' | 'shape' | 'select' | 'erase';
+  kind: 'brush' | 'shape' | 'select' | 'erase';
   start: Pt; last: Pt; item: Item | null; moved: boolean;
 } | null = null;
 let previewShape: ShapeItem | null = null;
@@ -542,11 +772,14 @@ let previewShape: ShapeItem | null = null;
 canvas.addEventListener('pointerdown', (e) => {
   try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
   const p = stagePoint(e);
-  if (tool === 'pen') {
+  if (tool === 'brush') {
     pushHistory();
     const stroke: StrokeItem = { ...baseItem(color, penWidth), type: 'stroke', points: [p] };
     items.push(stroke);
-    drag = { kind: 'pen', start: p, last: p, item: stroke, moved: false };
+    drag = { kind: 'brush', start: p, last: p, item: stroke, moved: false };
+  } else if (tool === 'paint') {
+    paintAt(p);
+    drag = null;
   } else if (tool === 'shape') {
     drag = { kind: 'shape', start: p, last: p, item: null, moved: false };
   } else if (tool === 'eraser') {
@@ -557,11 +790,11 @@ canvas.addEventListener('pointerdown', (e) => {
     const hit = hitTest(p);
     if (hit) {
       selectedId = hit.id;
-      renderDrumbox();
+      renderPanel();
       drag = { kind: 'select', start: p, last: p, item: hit, moved: false };
     } else {
       selectedId = null;
-      renderDrumbox();
+      renderPanel();
       drag = null;
     }
   }
@@ -569,7 +802,7 @@ canvas.addEventListener('pointerdown', (e) => {
 canvas.addEventListener('pointermove', (e) => {
   if (!drag) return;
   const p = stagePoint(e);
-  if (drag.kind === 'pen' && drag.item?.type === 'stroke') {
+  if (drag.kind === 'brush' && drag.item?.type === 'stroke') {
     drag.item.points.push(p);
     drag.moved = true;
   } else if (drag.kind === 'shape') {
@@ -596,18 +829,27 @@ canvas.addEventListener('pointerup', (e) => {
     items.push(previewShape);
   }
   if (drag.kind === 'select' && drag.moved) save();
-  if (drag.kind === 'pen' || drag.kind === 'erase') save();
+  if (drag.kind === 'brush' || drag.kind === 'erase') save();
   previewShape = null;
   drag = null;
-  renderDrumbox();
+  renderPanel();
 });
+function paintAt(p: Pt): void {
+  const hit = hitTest(p);
+  if (!hit) return; // nothing under the cursor: do nothing
+  pushHistory();
+  hit.color = color;
+  if (hit.type === 'shape') hit.fillSolid = true;
+  save();
+  renderPanel();
+}
 function eraseAt(p: Pt): void {
   const hit = hitTest(p);
   if (hit) {
     items = items.filter((i) => i.id !== hit.id);
     if (selectedId === hit.id) selectedId = null;
     smoothed.delete(hit.id);
-    renderDrumbox();
+    renderPanel();
   }
 }
 function moveItem(it: Item, dx: number, dy: number): void {
@@ -655,7 +897,7 @@ function openTextEditor(it: TextItem | null, p: Pt): void {
         selectedId = item.id;
       }
       save();
-      renderDrumbox();
+      renderPanel();
     }
     textEditor.removeEventListener('blur', onBlur);
   };
@@ -682,18 +924,18 @@ canvas.addEventListener('pointerdown', (e) => {
   }
 });
 
-// ---------- header ----------
+// ---------- header / panel actions ----------
 (document.getElementById('undo-btn') as HTMLButtonElement).addEventListener('click', undo);
 (document.getElementById('redo-btn') as HTMLButtonElement).addEventListener('click', redo);
-(document.getElementById('clear-btn') as HTMLButtonElement).addEventListener('click', () => {
+function clearStage(): void {
   if (items.length === 0) return;
   pushHistory();
   items = [];
   selectedId = null;
   smoothed.clear();
   save();
-  renderDrumbox();
-});
+  renderPanel();
+}
 const PLAY_ICON = '<svg viewBox="0 0 12 12"><path d="M3 1.5 10 6l-7 4.5z"/></svg>';
 const PAUSE_ICON = '<svg viewBox="0 0 12 12"><path d="M2.5 2h2.6v8H2.5zM6.9 2h2.6v8H6.9z"/></svg>';
 function setPlayLabel(): void {
@@ -704,7 +946,7 @@ playBtn.addEventListener('click', () => {
   setPlayLabel();
   if (playing) lastTs = 0;
 });
-(document.getElementById('png-btn') as HTMLButtonElement).addEventListener('click', () => {
+function exportPNG(): void {
   const { w, h } = stageSize();
   const off = document.createElement('canvas');
   off.width = w; off.height = h;
@@ -714,13 +956,11 @@ playBtn.addEventListener('click', () => {
     if (!blob) return;
     downloadBlob(blob, 'manakin.png');
   }, 'image/png');
-});
-(document.getElementById('video-btn') as HTMLButtonElement).addEventListener('click', async () => {
-  const btn = document.getElementById('video-btn') as HTMLButtonElement;
-  btn.disabled = true;
-  btn.classList.add('busy');
-  btn.title = 'Recording…';
-  liveState.textContent = 'Recording video…';
+}
+async function exportVideo(): Promise<void> {
+  const btn = document.getElementById('video-btn') as HTMLButtonElement | null;
+  if (btn) { btn.disabled = true; btn.classList.add('busy'); btn.title = 'Recording…'; }
+  playerState.textContent = 'Recording video…';
   const wasPlaying = playing;
   if (!playing) { playing = true; setPlayLabel(); lastTs = 0; }
   const stream = canvas.captureStream(30);
@@ -736,12 +976,11 @@ playBtn.addEventListener('click', () => {
   await done;
   if (!wasPlaying) { playing = false; setPlayLabel(); }
   downloadBlob(new Blob(chunks, { type: 'video/webm' }), 'manakin.webm');
-  btn.disabled = false;
-  btn.classList.remove('busy');
-  btn.title = 'Video';
-});
+  const btn2 = document.getElementById('video-btn') as HTMLButtonElement | null;
+  if (btn2) { btn2.disabled = false; btn2.classList.remove('busy'); btn2.title = 'Video'; }
+}
 function downloadBlob(blob: Blob, filename: string): void {
-  liveState.textContent = `Downloading ${filename} (${blob.size} bytes)`;
+  playerState.textContent = `Downloading ${filename} (${blob.size} bytes)`;
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -761,12 +1000,13 @@ window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
   if (k === 'delete' || k === 'backspace') {
     const sel = selected();
-    if (sel) { pushHistory(); items = items.filter((i) => i.id !== sel.id); selectedId = null; save(); renderDrumbox(); }
+    if (sel) { pushHistory(); items = items.filter((i) => i.id !== sel.id); selectedId = null; save(); renderPanel(); }
     return;
   }
   if (k === 'v') tool = 'select';
-  else if (k === 'p') tool = 'pen';
-  else if (k === 'x') tool = 'eraser';
+  else if (k === 'p') tool = 'brush';
+  else if (k === 'b') tool = 'paint';
+  else if (k === 'x') { swapColors(); return; }
   else if (k === 'e') { if (tool === 'shape') shapeKind = shapeKind === 'rect' ? 'ellipse' : 'rect'; tool = 'shape'; }
   else if (k === 't') tool = 'text';
   else return;
@@ -775,11 +1015,10 @@ window.addEventListener('keydown', (e) => {
 });
 
 // ---------- init ----------
-// Drumbox first: resizeCanvas sizes the stage against the area left
-// after the drumbox, and syncs the drumbox width to the shown stage.
 load();
-renderStagePicker();
-renderDrumbox();
+projectInput.value = projectName;
+renderPanel();
+applyPanelOpen();
 resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
 requestAnimationFrame(frame);
