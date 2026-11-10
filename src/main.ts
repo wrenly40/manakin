@@ -146,15 +146,19 @@ function load(): void {
 const app = document.getElementById('app')!;
 app.innerHTML = `
 <header>
-  <h1>Manakin</h1>
-  <span id="live-state"></span>
-  <span class="spacer"></span>
-  <select id="stage-picker" aria-label="Stage size"></select>
-  <button class="hbtn" id="undo-btn">Undo</button>
-  <button class="hbtn" id="redo-btn">Redo</button>
-  <button class="hbtn" id="clear-btn">Clear</button>
-  <button class="hbtn" id="png-btn">PNG</button>
-  <button class="hbtn" id="video-btn">Video</button>
+  <div class="header-left">
+    <h1>Manakin</h1>
+    <span id="live-state"></span>
+  </div>
+  <div id="stage-picker" class="seg" role="group" aria-label="Stage size"></div>
+  <div class="header-actions">
+    <button class="hbtn" id="undo-btn" title="Undo" aria-label="Undo"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
+    <button class="hbtn" id="redo-btn" title="Redo" aria-label="Redo"><svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></svg></button>
+    <span class="vdiv"></span>
+    <button class="hbtn" id="clear-btn" title="Clear" aria-label="Clear"><svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/></svg></button>
+    <button class="hbtn" id="png-btn" title="PNG" aria-label="Export PNG"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="11" r="2"/><path d="m21 15-5-5-9 9"/></svg></button>
+    <button class="hbtn" id="video-btn" title="Video" aria-label="Export video"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg></button>
+  </div>
 </header>
 <div id="main-row">
   <div id="toolbar" role="toolbar" aria-label="Tools"></div>
@@ -171,7 +175,7 @@ app.innerHTML = `
     <span id="drumbox-state">Select a part</span>
     <span class="spacer"></span>
     <div id="beats" aria-label="Beat"></div>
-    <button id="play-btn">Play</button>
+    <button id="play-btn"><svg viewBox="0 0 12 12"><path d="M3 1.5 10 6l-7 4.5z"/></svg><span>Play</span></button>
   </div>
   <div id="grid"></div>
 </div>`;
@@ -185,20 +189,31 @@ const drumboxState = document.getElementById('drumbox-state')!;
 const playBtn = document.getElementById('play-btn')!;
 const beatsEl = document.getElementById('beats')!;
 const gridEl = document.getElementById('grid')!;
-const stagePicker = document.getElementById('stage-picker') as HTMLSelectElement;
+const stagePicker = document.getElementById('stage-picker')!;
 
 for (let b = 0; b < BEATS; b++) {
   const dot = document.createElement('span');
   beatsEl.appendChild(dot);
 }
 
-stagePicker.innerHTML = STAGES.map((s) => `<option value="${s.id}">${s.label}</option>`).join('');
-stagePicker.value = stageId;
-stagePicker.addEventListener('change', () => {
-  stageId = stagePicker.value as typeof stageId;
-  resizeCanvas();
-  save();
-});
+function renderStagePicker(): void {
+  stagePicker.innerHTML = '';
+  for (const s of STAGES) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = stageId === s.id ? 'active' : '';
+    b.textContent = s.label;
+    b.setAttribute('aria-label', `Stage ${s.label}`);
+    b.addEventListener('click', () => {
+      stageId = s.id;
+      renderStagePicker();
+      resizeCanvas();
+      save();
+    });
+    stagePicker.appendChild(b);
+  }
+}
+renderStagePicker();
 
 // ---------- toolbar ----------
 const TOOLS: { id: ToolId; label: string; key: string; svg: string }[] = [
@@ -348,6 +363,13 @@ function resizeCanvas(): void {
     canvas.style.width = `${Math.floor(w * s)}px`;
     canvas.style.height = `${Math.floor(h * s)}px`;
   }
+  // The drumbox card matches the stage as it is actually shown,
+  // never narrower than its own grid.
+  const drumbox = document.getElementById('drumbox');
+  if (drumbox) {
+    const shown = canvas.getBoundingClientRect().width;
+    drumbox.style.width = `${Math.max(640, Math.min(960, Math.round(shown)))}px`;
+  }
 }
 function drawItem(c: CanvasRenderingContext2D, it: Item, t01: number, beat: number): void {
   const b = itemBBox(it);
@@ -424,13 +446,36 @@ function frame(ts: number): void {
 }
 
 // ---------- drumbox ----------
+function segMini(
+  options: { value: number; label: string }[],
+  current: number,
+  disabled: boolean,
+  aria: string,
+  onPick: (v: number) => void,
+): HTMLDivElement {
+  const wrap = document.createElement('div');
+  wrap.className = 'seg-mini';
+  wrap.setAttribute('role', 'group');
+  wrap.setAttribute('aria-label', aria);
+  for (const o of options) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = o.value === current ? 'active' : '';
+    b.disabled = disabled;
+    b.textContent = o.label;
+    b.addEventListener('click', () => onPick(o.value));
+    wrap.appendChild(b);
+  }
+  return wrap;
+}
+
 function renderDrumbox(): void {
   const sel = selected();
   drumboxState.textContent = sel ? 'Selected part' : 'Select a part';
   gridEl.innerHTML = '';
   const head = document.createElement('div');
   head.className = 'dhead';
-  head.innerHTML = `<span class="dlabel"></span>${Array.from({ length: BEATS }, (_, i) => `<span>${i + 1}</span>`).join('')}<span class="sp">Speed</span><span class="sp">Amount</span>`;
+  head.innerHTML = `<span class="dlabel"></span>${Array.from({ length: BEATS }, (_, i) => `<span>${i + 1}</span>`).join('')}<span class="sp sp-speed">Speed</span><span class="sp sp-amount">Amount</span>`;
   gridEl.appendChild(head);
   for (let b = 0; b < BEHAVIOURS.length; b++) {
     const row = document.createElement('div');
@@ -453,34 +498,26 @@ function renderDrumbox(): void {
       });
       row.appendChild(cell);
     }
-    const speed = document.createElement('select');
-    speed.disabled = !sel;
-    speed.setAttribute('aria-label', `${BEHAVIOURS[b]} speed`);
-    for (const v of [0.5, 1, 2]) {
-      const o = document.createElement('option');
-      o.value = String(v); o.textContent = `${v}x`;
-      if (sel && sel.speeds[b] === v) o.selected = true;
-      speed.appendChild(o);
-    }
-    speed.addEventListener('change', () => {
-      const s = selected(); if (!s) return;
-      s.speeds[b] = Number(speed.value); save();
-    });
-    row.appendChild(speed);
-    const amount = document.createElement('select');
-    amount.disabled = !sel;
-    amount.setAttribute('aria-label', `${BEHAVIOURS[b]} amount`);
-    for (const [v, label] of [[0.5, 'S'], [1, 'M'], [2, 'L']] as const) {
-      const o = document.createElement('option');
-      o.value = String(v); o.textContent = label;
-      if (sel && sel.amounts[b] === v) o.selected = true;
-      amount.appendChild(o);
-    }
-    amount.addEventListener('change', () => {
-      const s = selected(); if (!s) return;
-      s.amounts[b] = Number(amount.value); save();
-    });
-    row.appendChild(amount);
+    row.appendChild(segMini(
+      [{ value: 0.5, label: '0.5×' }, { value: 1, label: '1×' }, { value: 2, label: '2×' }],
+      sel ? sel.speeds[b] : 1,
+      !sel,
+      `${BEHAVIOURS[b]} speed`,
+      (v) => {
+        const s = selected(); if (!s) return;
+        s.speeds[b] = v; save(); renderDrumbox();
+      },
+    ));
+    row.appendChild(segMini(
+      [{ value: 0.5, label: 'S' }, { value: 1, label: 'M' }, { value: 2, label: 'L' }],
+      sel ? sel.amounts[b] : 1,
+      !sel,
+      `${BEHAVIOURS[b]} amount`,
+      (v) => {
+        const s = selected(); if (!s) return;
+        s.amounts[b] = v; save(); renderDrumbox();
+      },
+    ));
     gridEl.appendChild(row);
   }
   const undoBtn = document.getElementById('undo-btn') as HTMLButtonElement;
@@ -657,9 +694,14 @@ canvas.addEventListener('pointerdown', (e) => {
   save();
   renderDrumbox();
 });
+const PLAY_ICON = '<svg viewBox="0 0 12 12"><path d="M3 1.5 10 6l-7 4.5z"/></svg>';
+const PAUSE_ICON = '<svg viewBox="0 0 12 12"><path d="M2.5 2h2.6v8H2.5zM6.9 2h2.6v8H6.9z"/></svg>';
+function setPlayLabel(): void {
+  playBtn.innerHTML = (playing ? PAUSE_ICON : PLAY_ICON) + `<span>${playing ? 'Pause' : 'Play'}</span>`;
+}
 playBtn.addEventListener('click', () => {
   playing = !playing;
-  playBtn.textContent = playing ? 'Pause' : 'Play';
+  setPlayLabel();
   if (playing) lastTs = 0;
 });
 (document.getElementById('png-btn') as HTMLButtonElement).addEventListener('click', () => {
@@ -676,9 +718,11 @@ playBtn.addEventListener('click', () => {
 (document.getElementById('video-btn') as HTMLButtonElement).addEventListener('click', async () => {
   const btn = document.getElementById('video-btn') as HTMLButtonElement;
   btn.disabled = true;
-  btn.textContent = 'Recording…';
+  btn.classList.add('busy');
+  btn.title = 'Recording…';
+  liveState.textContent = 'Recording video…';
   const wasPlaying = playing;
-  if (!playing) { playing = true; playBtn.textContent = 'Pause'; lastTs = 0; }
+  if (!playing) { playing = true; setPlayLabel(); lastTs = 0; }
   const stream = canvas.captureStream(30);
   const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
     ? 'video/webm;codecs=vp9' : 'video/webm';
@@ -690,10 +734,11 @@ playBtn.addEventListener('click', () => {
   await new Promise((r) => setTimeout(r, LOOP_MS + 200));
   rec.stop();
   await done;
-  if (!wasPlaying) { playing = false; playBtn.textContent = 'Play'; }
+  if (!wasPlaying) { playing = false; setPlayLabel(); }
   downloadBlob(new Blob(chunks, { type: 'video/webm' }), 'manakin.webm');
   btn.disabled = false;
-  btn.textContent = 'Video';
+  btn.classList.remove('busy');
+  btn.title = 'Video';
 });
 function downloadBlob(blob: Blob, filename: string): void {
   liveState.textContent = `Downloading ${filename} (${blob.size} bytes)`;
@@ -730,9 +775,11 @@ window.addEventListener('keydown', (e) => {
 });
 
 // ---------- init ----------
+// Drumbox first: resizeCanvas sizes the stage against the area left
+// after the drumbox, and syncs the drumbox width to the shown stage.
 load();
-stagePicker.value = stageId;
+renderStagePicker();
+renderDrumbox();
 resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
-renderDrumbox();
 requestAnimationFrame(frame);

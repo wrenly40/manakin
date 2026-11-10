@@ -1,57 +1,98 @@
+/* Manakin, styled like a macOS app: SF type, system colours,
+   frosted materials, soft shadows — no emoji icons, no flat
+   web-pill chrome. Blue is used sparingly: the active tool,
+   the current beat dot, and Play. Everything else is ink,
+   grey and quiet fill. */
 :root {
   --accent: #007aff;
   --ink: #1d1d1f;
   --grey: #86868b;
-  --bg-system: #f5f5f7;
+  --grey2: #aeaeb2;
   --hairline: rgba(0, 0, 0, 0.08);
+  --separator: rgba(0, 0, 0, 0.10);
   --fill: rgba(120, 120, 128, 0.12);
+  --fill-2: rgba(120, 120, 128, 0.08);
+  --bg-system: #f5f5f7;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.14), 0 2px 8px rgba(0, 0, 0, 0.06);
   --radius: 14px;
 }
 * { box-sizing: border-box; }
 html, body {
   margin: 0; height: 100%; overflow: hidden;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+    "Helvetica Neue", "Segoe UI", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
-  color: var(--ink); background: #fff;
+  text-rendering: optimizeLegibility;
+  letter-spacing: -0.01em;
+  color: var(--ink); background: var(--bg-system);
 }
 #app { display: flex; flex-direction: column; height: 100%; }
 button { font-family: inherit; cursor: pointer; }
-button:focus-visible, select:focus-visible, input:focus-visible {
+button:focus-visible, input:focus-visible, textarea:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px;
 }
 
-/* Header */
+/* Header: 48px, white, hairline underneath. Icon buttons only,
+   a segmented stage-size control in the centre, wordmark left. */
 header {
-  flex: none; height: 48px; display: flex; align-items: center; gap: 8px;
-  padding: 0 16px; background: #fff; border-bottom: 1px solid var(--hairline);
+  flex: none; height: 48px;
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+  gap: 12px; padding: 0 16px;
+  background: #fff; border-bottom: 1px solid var(--separator);
 }
-header h1 { font-size: 15px; font-weight: 600; margin: 0 8px 0 0; }
-header .spacer { flex: 1; }
+.header-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
+#live-state { font-size: 13px; color: var(--grey); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
 .hbtn {
-  border: none; background: transparent; border-radius: 9px; height: 32px;
-  padding: 0 10px; font-size: 13px; color: var(--ink);
-  display: inline-flex; align-items: center; gap: 6px;
+  border: none; background: transparent; border-radius: 9px;
+  width: 32px; height: 32px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--ink);
 }
 .hbtn:hover { background: rgba(0, 0, 0, 0.05); }
 .hbtn:disabled { opacity: 0.35; cursor: default; }
-.hbtn.primary { background: var(--accent); color: #fff; }
-.hbtn.primary:hover { background: #0066d6; }
-header select {
-  height: 32px; border: 1px solid var(--hairline); border-radius: 9px;
-  background: #fff; font-size: 13px; color: var(--ink); padding: 0 6px;
-}
-#live-state { font-size: 13px; color: var(--grey); white-space: nowrap; }
+.hbtn:disabled:hover { background: transparent; }
+.hbtn.busy { color: var(--accent); }
+.hbtn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.vdiv { width: 1px; height: 20px; background: var(--separator); margin: 0 6px; flex: none; }
 
-/* Main row */
-#main-row { flex: 1; display: flex; min-height: 0; }
+/* Segmented control: quiet grey fill, active is a white pill
+   with the toolbar shadow. No native selects anywhere. */
+.seg {
+  display: flex; gap: 2px; background: var(--fill);
+  border-radius: 9px; padding: 2px;
+}
+.seg button {
+  border: none; background: transparent; border-radius: 7px;
+  height: 28px; padding: 0 12px;
+  font-size: 13px; font-weight: 500; color: var(--ink);
+}
+.seg button:hover { background: rgba(0, 0, 0, 0.04); }
+.seg button.active {
+  background: #fff; font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+}
+
+/* Main row: the stage fills it; the toolbar floats over it. */
+#main-row { flex: 1; display: flex; min-height: 0; position: relative; }
+
+/* Floating frosted toolbar, centred vertically on the left edge —
+   a pill over the stage, not a full-height sidebar. */
 #toolbar {
-  flex: none; width: 64px; background: var(--bg-system);
-  border-right: 1px solid var(--hairline);
-  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 0;
-  overflow-y: auto;
+  position: absolute; top: 50%; left: 12px; transform: translateY(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 8px; width: 52px; z-index: 10;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 16px;
+  box-shadow: var(--shadow-md);
 }
 .tool {
-  width: 44px; height: 44px; border: none; border-radius: 9px; background: transparent;
+  width: 32px; height: 32px; border: none; border-radius: 9px; background: transparent;
   color: var(--ink); display: flex; align-items: center; justify-content: center;
 }
 .tool:hover { background: rgba(0, 0, 0, 0.05); }
@@ -60,71 +101,113 @@ header select {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
 }
 .tool svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-#toolbar hr { width: 32px; border: none; border-top: 1px solid var(--hairline); margin: 4px 0; }
-.swatches { display: flex; flex-direction: column; gap: 6px; }
+#toolbar hr { width: 32px; border: none; border-top: 1px solid var(--separator); margin: 2px 0; }
+.swatches { display: flex; flex-direction: column; gap: 4px; align-items: center; }
 .swatch {
-  width: 24px; height: 24px; border-radius: 50%; border: 2px solid transparent; padding: 0;
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.12); padding: 0;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
-.swatch.active { border-color: var(--ink); }
-.widths { display: flex; flex-direction: column; gap: 4px; }
+.swatch:hover { transform: scale(1.1); }
+.swatch.active {
+  box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px rgba(29, 29, 31, 0.85), var(--shadow-sm);
+}
+/* Widths as a small vertical segmented control. */
+.widths {
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--fill); border-radius: 10px; padding: 2px; width: 100%;
+}
 .widths button {
-  width: 32px; height: 24px; border: none; border-radius: 7px; background: transparent;
-  color: var(--ink); font-size: 12px;
+  width: 100%; height: 24px; border: none; border-radius: 7px; background: transparent;
+  color: var(--ink); font-size: 12px; font-weight: 500;
 }
-.widths button.active { background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+.widths button:hover { background: rgba(0, 0, 0, 0.04); }
+.widths button.active {
+  background: #fff; font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+}
 
-/* Stage */
+/* Stage: a white card floating on the system background,
+   with air around it. Same pixel sizes as before. */
 #stage-area {
   flex: 1; min-width: 0; background: var(--bg-system);
-  display: flex; align-items: center; justify-content: center; padding: 16px;
+  display: flex; align-items: center; justify-content: center; padding: 24px;
 }
 #stage-wrap { position: relative; line-height: 0; }
 #stage {
   background: #fff; border: 1px solid var(--hairline); border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
   display: block; touch-action: none; cursor: crosshair;
 }
 #stage.select-cursor { cursor: default; }
 #text-editor {
-  position: absolute; display: none; border: 1px solid var(--accent); border-radius: 6px;
+  position: absolute; display: none;
+  border: 1px solid rgba(0, 122, 255, 0.5); border-radius: 9px;
+  box-shadow: var(--shadow-md);
   font: inherit; font-size: 20px; color: var(--ink); background: #fff; padding: 2px 6px;
   line-height: 1.3; z-index: 5; resize: none; overflow: hidden;
 }
 
-/* Drumbox */
+/* Drumbox: a floating white card centred under the stage,
+   max-width matching the stage — not a full-width bar. */
 #drumbox {
-  flex: none; background: #fff; border-top: 1px solid var(--hairline);
-  padding: 10px 16px 12px;
+  flex: none; width: min(960px, calc(100% - 32px)); margin: 0 auto 16px;
+  background: #fff; border: 1px solid var(--hairline); border-radius: 16px;
+  box-shadow: var(--shadow-md); padding: 16px 20px 18px;
+  overflow-x: auto;
 }
-#drumbox-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+#drumbox-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 #drumbox-head h2 { font-size: 13px; font-weight: 600; margin: 0; }
 #drumbox-head .spacer { flex: 1; }
 #drumbox-state { font-size: 13px; color: var(--grey); }
+/* Play: a white pill with shadow and an accent icon — never
+   a solid blue block. */
 #play-btn {
-  border: none; border-radius: 9px; height: 32px; padding: 0 14px;
-  background: var(--accent); color: #fff; font-size: 13px; font-weight: 600;
+  border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 999px; height: 32px; padding: 0 16px;
+  background: #fff; color: var(--accent); font-size: 13px; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 7px; box-shadow: var(--shadow-sm);
 }
-#play-btn:hover { background: #0066d6; }
-#beats { display: flex; gap: 4px; }
+#play-btn:hover { background: var(--bg-system); }
+#play-btn svg { width: 11px; height: 11px; fill: currentColor; }
+#beats { display: flex; gap: 6px; }
 #beats span {
-  width: 10px; height: 10px; border-radius: 50%; background: var(--fill); display: inline-block;
+  width: 8px; height: 8px; border-radius: 50%; background: rgba(120, 120, 128, 0.25); display: inline-block;
 }
 #beats span.on { background: var(--accent); }
-#grid { display: flex; flex-direction: column; gap: 4px; }
+#grid { display: flex; flex-direction: column; gap: 6px; width: max-content; margin: 0 auto; }
 .drow { display: flex; align-items: center; gap: 4px; }
-.drow .dlabel { width: 64px; flex: none; font-size: 13px; text-align: right; padding-right: 8px; }
+.drow .dlabel { width: 64px; flex: none; font-size: 13px; color: var(--grey); text-align: right; padding-right: 8px; }
+/* Cells: off is a quiet fill with a hairline border; on is a
+   muted ink fill — readable at a glance, no saturated blocks. */
 .cell {
-  width: 32px; height: 28px; border: 1px solid var(--hairline); border-radius: 7px;
-  background: #fff; padding: 0;
+  width: 32px; height: 28px; border: 1px solid var(--hairline); border-radius: 9px;
+  background: var(--fill-2); padding: 0;
 }
-.cell:hover { border-color: var(--accent); }
-.cell.on { background: var(--accent); border-color: var(--accent); }
+.cell:hover { background: rgba(120, 120, 128, 0.16); border-color: rgba(0, 0, 0, 0.12); }
+.cell.on { background: rgba(29, 29, 31, 0.88); border-color: transparent; }
+.cell.on:hover { background: rgba(29, 29, 31, 0.76); }
 .cell:disabled { opacity: 0.4; cursor: default; }
-.drow select {
-  height: 28px; border: 1px solid var(--hairline); border-radius: 7px;
-  background: #fff; font-size: 12px; color: var(--ink); margin-left: 6px;
+.cell:disabled:hover { background: var(--fill-2); border-color: var(--hairline); }
+/* Small segmented pills for Speed and Amount. */
+.seg-mini {
+  display: inline-flex; gap: 2px; background: var(--fill);
+  border-radius: 8px; padding: 2px; margin-left: 8px; flex: none;
 }
-.drow select:disabled { opacity: 0.4; }
+.seg-mini button {
+  border: none; background: transparent; border-radius: 6px;
+  height: 24px; min-width: 30px; padding: 0 8px;
+  font-size: 12px; font-weight: 500; color: var(--ink);
+}
+.seg-mini button:hover { background: rgba(0, 0, 0, 0.04); }
+.seg-mini button.active {
+  background: #fff; font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+}
+.seg-mini button:disabled { opacity: 0.4; cursor: default; }
+.seg-mini button:disabled:hover { background: transparent; }
 .dhead { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--grey); }
 .dhead .dlabel { width: 64px; flex: none; text-align: right; padding-right: 8px; }
 .dhead span { width: 32px; text-align: center; }
-.dhead .sp { margin-left: 6px; width: 52px; text-align: left; }
+.dhead .sp { margin-left: 8px; text-align: left; font-size: 12px; }
+.dhead .sp-speed { width: 106px; }
+.dhead .sp-amount { width: 92px; }
