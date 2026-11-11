@@ -67,14 +67,15 @@ const ARRANGE_ICONS: string[] = [
   '<svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="11" height="11" rx="1.5" fill="currentColor" stroke="none"/><rect x="9.5" y="9.5" width="11" height="11" rx="1.5"/></svg>', // Send to Back
 ];
 // Align icons: a guide line plus a rectangle — the line is the edge
-// the items align to, the rectangle is the item.
+// the items align to, the rectangle is the item. The rectangles are
+// drawn large (10x9 in the 24 box) so they read at the row's 20px size.
 const ALIGN_ICONS: string[] = [
-  '<svg viewBox="0 0 24 24"><path d="M5 3v18"/><rect x="9" y="8" width="9" height="8" rx="1"/></svg>', // Left
-  '<svg viewBox="0 0 24 24"><path d="M12 3v18"/><rect x="8" y="8" width="8" height="8" rx="1"/></svg>', // Centre
-  '<svg viewBox="0 0 24 24"><path d="M19 3v18"/><rect x="6" y="8" width="9" height="8" rx="1"/></svg>', // Right
-  '<svg viewBox="0 0 24 24"><path d="M3 5h18"/><rect x="8" y="9" width="8" height="9" rx="1"/></svg>', // Top
-  '<svg viewBox="0 0 24 24"><path d="M3 12h18"/><rect x="8" y="8" width="8" height="8" rx="1"/></svg>', // Middle
-  '<svg viewBox="0 0 24 24"><path d="M3 19h18"/><rect x="8" y="6" width="8" height="9" rx="1"/></svg>', // Bottom
+  '<svg viewBox="0 0 24 24"><path d="M4 3v18"/><rect x="8" y="7.5" width="10" height="9" rx="1"/></svg>', // Left
+  '<svg viewBox="0 0 24 24"><path d="M12 3v18"/><rect x="7" y="7.5" width="10" height="9" rx="1"/></svg>', // Centre
+  '<svg viewBox="0 0 24 24"><path d="M20 3v18"/><rect x="6" y="7.5" width="10" height="9" rx="1"/></svg>', // Right
+  '<svg viewBox="0 0 24 24"><path d="M3 4h18"/><rect x="7" y="8" width="10" height="9" rx="1"/></svg>', // Top
+  '<svg viewBox="0 0 24 24"><path d="M3 12h18"/><rect x="7" y="7.5" width="10" height="9" rx="1"/></svg>', // Middle
+  '<svg viewBox="0 0 24 24"><path d="M3 20h18"/><rect x="7" y="7" width="10" height="9" rx="1"/></svg>', // Bottom
 ];
 
 
@@ -2553,7 +2554,7 @@ function renderArrangeSection(): HTMLDivElement {
   h.textContent = 'Arrange';
   sec.appendChild(h);
   const row = document.createElement('div');
-  row.className = 'icon-row';
+  row.className = 'seg';
   const units = selectionUnits();
   const unitIds = new Set(units.flatMap((u) => u.items.map((i) => i.id)));
   const idxs = items.map((it, i) => (unitIds.has(it.id) ? i : -1)).filter((i) => i >= 0);
@@ -2586,7 +2587,7 @@ function renderAlignSection(): HTMLDivElement {
   h.textContent = 'Align';
   sec.appendChild(h);
   const row = document.createElement('div');
-  row.className = 'icon-row';
+  row.className = 'seg';
   const defs: { mode: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom'; label: string }[] = [
     { mode: 'left', label: 'Align Left' },
     { mode: 'center', label: 'Align Centre' },

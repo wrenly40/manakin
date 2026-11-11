@@ -550,9 +550,15 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
   min-width: 44px; height: 28px; padding: 0 2px; text-align: center;
 }
 .zoom-label:hover { color: var(--ink); }
-/* Arrange / Align icon rows in the panel: small quiet icon buttons,
+/* Arrange / Align rows in the panel: the same segmented pill bar as
+   the stage picker and the export tabs — one grey bar holding the
+   icon cells, 28px high with the seg hover. The icons are 20px, the
+   toolbar size, so the glyphs read at a glance. These are momentary
+   actions, so no cell ever takes the seg active pill. */
+.seg .icon-btn { flex: 1; width: auto; height: 28px; padding: 0; }
+.seg .icon-btn svg { width: 20px; height: 20px; }
+/* Arrange / Align icon buttons: small quiet icon buttons,
    same 1.8-stroke ink language as the toolbar icons. */
-.icon-row { display: flex; align-items: center; gap: 6px; }
 .icon-btn {
   flex: none; width: 28px; height: 28px; border: none; border-radius: 7px;
   background: transparent; color: var(--ink); padding: 0;
