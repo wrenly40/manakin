@@ -287,6 +287,9 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 .pctl:hover { background: rgba(0, 0, 0, 0.05); }
 .pctl:active { background: rgba(0, 0, 0, 0.09); }
 .pctl svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+/* Solid transport icons (Back, Stop, Forward): filled ink shapes,
+   same visual weight as Play's solid triangle — no hollow outlines. */
+.pctl.solid svg { fill: currentColor; stroke: none; }
 /* Play/Pause is the primary: a white pill with shadow-md and an
    accent icon — the same app button language as the toolbar's
    active pill, never a solid blue block. */

@@ -274,10 +274,10 @@ app.innerHTML = `
     </div>
     <footer id="player">
       <div id="player-row">
-        <button id="back-btn" class="pctl" title="Back" aria-label="Back to start"><svg viewBox="0 0 24 24"><path d="M6 5v14"/><path d="M20 5v14l-9-7z"/></svg></button>
+        <button id="back-btn" class="pctl solid" title="Back" aria-label="Back to start"><svg viewBox="0 0 24 24"><path d="M6 5h2.5v14H6z"/><path d="M20 5v14l-9.5-7z"/></svg></button>
         <button id="play-btn" class="pctl" title="Play" aria-label="Play"><svg viewBox="0 0 12 12"><path d="M3 1.5 10 6l-7 4.5z"/></svg></button>
-        <button id="stop-btn" class="pctl" title="Stop" aria-label="Stop"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg></button>
-        <button id="forward-btn" class="pctl" title="Forward" aria-label="Forward to end"><svg viewBox="0 0 24 24"><path d="M18 5v14"/><path d="M4 5v14l9-7z"/></svg></button>
+        <button id="stop-btn" class="pctl solid" title="Stop" aria-label="Stop"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
+        <button id="forward-btn" class="pctl solid" title="Forward" aria-label="Forward to end"><svg viewBox="0 0 24 24"><path d="M15.5 5h2.5v14h-2.5z"/><path d="M4 5v14l9.5-7z"/></svg></button>
       </div>
       <div id="timeline-row">
         <div id="progress-track" aria-hidden="true"><div id="progress-fill"></div></div>
@@ -333,11 +333,15 @@ projectInput.addEventListener('keydown', (e) => {
 const TOOLS: { id: ToolId; label: string; key: string; svg: string }[] = [
   { id: 'select', label: 'Select', key: 'V', svg: '<path d="M5 3l14 7-6 2-3 6z"/>' },
   { id: 'brush', label: 'Brush', key: 'P', svg: '<path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M13 8l3 3"/>' },
-  { id: 'eraser', label: 'Eraser', key: '', svg: '<path d="M7 20h10"/><path d="M5 15l8-8 4 4-5 5H9z"/>' },
+  { id: 'eraser', label: 'Eraser', key: '', svg: '<path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/>' },
   { id: 'shape', label: 'Geometry', key: 'E', svg: '<rect x="4" y="4" width="16" height="16" rx="2"/>' },
   { id: 'text', label: 'Text', key: 'T', svg: '<path d="M5 6h14M12 6v13"/>' },
-  // Paint bucket: clean minimal tilted bucket outline, one pour line.
-  { id: 'paint', label: 'Paint', key: 'B', svg: '<path d="M4 12l6-6 8 8-6 6z"/><path d="M7 15l6-6"/><path d="M19 5l2-2"/>' },
+  // Paint bucket: trapezoid body tilted ~30° with an OPEN TOP (the
+  // mouth is the gap between the two top corners), a spout corner,
+  // a pour line falling from the spout and a drop below it. The
+  // gentler tilt keeps the bottom edge distinct from the walls, so
+  // the body reads as a container, not a checkmark.
+  { id: 'paint', label: 'Paint', key: 'B', svg: '<path d="M10.2 4.1 5.5 15.2 12.5 19.2 19.8 9.6"/><path d="M21 11.5 22.3 14"/><path d="M22 16c0.9 1.1 1.3 1.8 1.3 2.5a1.3 1.3 0 1 1-2.6 0c0-0.7 0.4-1.4 1.3-2.5z"/>' },
 ];
 const toolbar = document.getElementById('toolbar')!;
 function swapColors(): void {
