@@ -410,22 +410,23 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 }
 .add-picker-row:hover { background: rgba(0, 0, 0, 0.05); }
 .add-picker-row .layer-name { flex: 1; }
-/* Export menu: the same frosted popover as the Add behavior picker,
-   anchored to the Export button. */
-.export-menu {
-  position: fixed; z-index: 50; width: 240px; padding: 12px;
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 16px;
-  box-shadow: var(--shadow-md);
+/* Export toggle: the Export button carries a chevron — down when the
+   inline section is collapsed, up when it is expanded. */
+.export-toggle { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.export-toggle .chev { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.15s ease; }
+.export-toggle .chev.open { transform: rotate(180deg); }
+/* Export section: the Format / Scale / Frame controls expanded in
+   place under the Export button, inside the panel flow. */
+.export-section {
+  background: var(--fill-2); border: 1px solid var(--hairline);
+  border-radius: 9px; padding: 12px; margin-bottom: 8px;
 }
 .export-label {
   font-size: 12px; font-weight: 600; color: var(--grey); margin: 0 0 6px;
 }
-.export-menu .seg { margin-bottom: 12px; }
+.export-section .seg { margin-bottom: 12px; }
 .export-loop { font-size: 13px; color: var(--grey); padding: 2px 2px 12px; }
-.export-menu .pbtn { margin-bottom: 0; }
+.export-section .pbtn { margin-bottom: 0; }
 /* Grid tiles: six small preview tiles showing the pattern itself,
    name only in the title / aria-label. One row of six: the tiles flex
    to fill the 257px panel content width exactly (6 tiles + 5 x 6px

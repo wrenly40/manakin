@@ -174,11 +174,11 @@ let stageBgCustom: string | null = null;
 let gridMode: GridMode = 'empty';
 let projectName = 'Untitled';
 let panelOpen = true;
-// Export menu choices (persisted in the save, like panelOpen).
+// Export choices (persisted in the save, like panelOpen).
 let exportFormat: 'png' | 'webm' = 'png';
 let exportScale: 1 | 2 = 1;
 let exportFrame: 'current' | 'start' = 'current';
-let exportMenuOpen = false; // the Export popover is showing
+let exportOpen = false; // the inline export section under the Export button is expanded
 let exporting = false; // a video export is recording right now
 let panelView: 'auto' | 'colour' = 'auto';
 let colourSlot: 'fg' | 'bg' = 'fg';
@@ -1380,8 +1380,6 @@ function drawGraph(cv: HTMLCanvasElement, it: Item, layer: BehaviourLayer): void
 function renderPanel(): void {
   syncUndoButtons();
   closeAddPickerEl();
-  closeExportMenuEl();
-  exportMenuOpen = false;
   if (panelView !== 'auto' || !selected()) addPickerOpen = false;
   panelBody.innerHTML = '';
   if (panelView === 'colour') { renderColourPanel(); return; }
@@ -1855,24 +1853,19 @@ function renderAddPicker(anchorBtn: HTMLElement): void {
   pop.style.top = `${top}px`;
 }
 
-function closeExportMenuEl(): void {
-  document.querySelector('.export-menu')?.remove();
-}
-
-// The Export menu: a small frosted popover anchored to the Export button,
-// like the Add behavior picker. Format, scale, and — for PNG — which
-// frame to render; for video the loop length is live state, not a choice.
-// Choices are saved as they are picked and survive a reload.
-function renderExportMenu(anchorBtn: HTMLElement): void {
-  closeExportMenuEl();
-  const pop = document.createElement('div');
-  pop.className = 'export-menu';
-  pop.setAttribute('role', 'menu');
+// The Export section: the same Format / Scale / Frame controls the old
+// popover had, but expanded in place directly under the Export button,
+// inside the panel flow. It stays open after an export, and closes only
+// when the Export button is tapped again. Choices are saved as they are
+// picked and survive a reload; the open/collapsed state does not persist.
+function renderExportSection(): HTMLElement {
+  const sec = document.createElement('div');
+  sec.className = 'export-section';
   const mkLabel = (text: string): void => {
     const l = document.createElement('div');
     l.className = 'export-label';
     l.textContent = text;
-    pop.appendChild(l);
+    sec.appendChild(l);
   };
   const mkSeg = <T extends string | number>(options: { id: T; label: string }[], current: T, onPick: (v: T) => void): void => {
     const seg = document.createElement('div');
@@ -1882,15 +1875,14 @@ function renderExportMenu(anchorBtn: HTMLElement): void {
       b.type = 'button';
       b.className = current === o.id ? 'active' : '';
       b.textContent = o.label;
-      b.addEventListener('click', (e) => {
-        e.stopPropagation();
+      b.addEventListener('click', () => {
         onPick(o.id);
         save();
-        renderExportMenu(anchorBtn);
+        renderPanel();
       });
       seg.appendChild(b);
     }
-    pop.appendChild(seg);
+    sec.appendChild(seg);
   };
   mkLabel('Format');
   mkSeg([{ id: 'png', label: 'PNG' }, { id: 'webm', label: 'Video' }] as const, exportFormat, (v) => { exportFormat = v; });
@@ -1903,28 +1895,19 @@ function renderExportMenu(anchorBtn: HTMLElement): void {
     const loop = document.createElement('div');
     loop.className = 'export-loop';
     loop.textContent = `${(loopMs() / 1000).toFixed(1)}s loop`;
-    pop.appendChild(loop);
+    sec.appendChild(loop);
   }
   const go = document.createElement('button');
   go.type = 'button';
   go.className = 'pbtn';
-  go.textContent = 'Export';
-  go.addEventListener('click', (e) => {
-    e.stopPropagation();
-    exportMenuOpen = false;
-    closeExportMenuEl();
+  go.textContent = exportFormat === 'png' ? 'Export PNG' : 'Export Video';
+  go.disabled = exporting;
+  go.addEventListener('click', () => {
     if (exportFormat === 'png') exportPNG(exportScale, exportFrame);
     else void exportVideo(exportScale);
   });
-  pop.appendChild(go);
-  document.body.appendChild(pop);
-  const r = anchorBtn.getBoundingClientRect();
-  const w = pop.offsetWidth;
-  const h = pop.offsetHeight;
-  const left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
-  const top = (r.bottom + 6 + h > window.innerHeight) ? Math.max(8, r.top - 6 - h) : r.bottom + 6;
-  pop.style.left = `${left}px`;
-  pop.style.top = `${top}px`;
+  sec.appendChild(go);
+  return sec;
 }
 
 function renderBehavioursPanel(sel: Item): void {
@@ -2105,15 +2088,18 @@ function renderCanvasPanel(): void {
     saveTimer = setTimeout(() => { saveBtn.textContent = 'Save'; }, 1500);
   });
   const exportBtn = mkAction('Export', 'export-btn', () => {
-    exportMenuOpen = !exportMenuOpen;
-    if (exportMenuOpen) renderExportMenu(exportBtn);
-    else closeExportMenuEl();
+    exportOpen = !exportOpen;
+    renderPanel();
   });
+  exportBtn.classList.add('export-toggle');
+  exportBtn.innerHTML = `<span>Export</span><svg viewBox="0 0 24 24" class="chev${exportOpen ? ' open' : ''}"><path d="M6 9l6 6 6-6"/></svg>`;
+  exportBtn.setAttribute('aria-expanded', String(exportOpen));
   if (exporting) {
     exportBtn.disabled = true;
     exportBtn.classList.add('busy');
     exportBtn.title = 'Recording…';
   }
+  if (exportOpen) actionsSec.appendChild(renderExportSection());
   mkAction('Clear', 'clear-btn', clearStage);
 }
 
@@ -2708,7 +2694,6 @@ window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
   if (k === 'escape') {
     if (addPickerOpen) { addPickerOpen = false; closeAddPickerEl(); renderPanel(); return; }
-    if (exportMenuOpen) { exportMenuOpen = false; closeExportMenuEl(); return; }
     if (focusedId !== null) { focusedId = null; renderPanel(); return; }
     if (panelView === 'colour') { panelView = 'auto'; renderPanel(); }
     return;
@@ -2731,8 +2716,7 @@ window.addEventListener('keydown', (e) => {
 
 // The Add behavior picker closes on a click anywhere else, on Escape
 // (handled above), or when the panel scrolls / the window resizes —
-// its anchor moved, so the popover would point at nothing. The Export
-// menu closes the same way.
+// its anchor moved, so the popover would point at nothing.
 document.addEventListener('click', (e) => {
   const t = e.target as HTMLElement | null;
   if (addPickerOpen) {
@@ -2742,31 +2726,16 @@ document.addEventListener('click', (e) => {
     renderPanel();
     return;
   }
-  if (exportMenuOpen) {
-    if (t && t.closest('.export-menu, #export-btn')) return;
-    exportMenuOpen = false;
-    closeExportMenuEl();
-  }
 });
 panelBody.addEventListener('scroll', () => {
   if (!addPickerOpen) return;
   addPickerOpen = false;
   closeAddPickerEl();
 }, { passive: true });
-panelBody.addEventListener('scroll', () => {
-  if (!exportMenuOpen) return;
-  exportMenuOpen = false;
-  closeExportMenuEl();
-}, { passive: true });
 window.addEventListener('resize', () => {
   if (!addPickerOpen) return;
   addPickerOpen = false;
   closeAddPickerEl();
-});
-window.addEventListener('resize', () => {
-  if (!exportMenuOpen) return;
-  exportMenuOpen = false;
-  closeExportMenuEl();
 });
 
 // ---------- init ----------
