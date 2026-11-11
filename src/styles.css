@@ -533,19 +533,17 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 #progress-fill { height: 100%; width: 0%; background: var(--accent); border-radius: 2px; }
 #time-state { font-size: 13px; color: var(--grey); white-space: nowrap; }
 
-/* Colour panel: hue ring + saturation/value square, hex,
+/* Colour panel: saturation/value square + horizontal hue bar, hex,
    recent colours, saved palette. */
-.hue-wrap { position: relative; width: 140px; height: 140px; margin: 8px auto 20px; }
-.hue-ring {
-  width: 140px; height: 140px; border-radius: 50%;
-  background: conic-gradient(#ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000);
-  -webkit-mask: radial-gradient(circle closest-side, transparent 68%, #000 70%);
-  mask: radial-gradient(circle closest-side, transparent 68%, #000 70%);
-  touch-action: none; cursor: pointer;
+.hue-bar {
+  position: relative; width: 100%; height: 12px; border-radius: 999px;
+  background: linear-gradient(to right, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000);
+  box-shadow: var(--shadow-sm), inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+  touch-action: none; cursor: pointer; margin-bottom: 16px;
 }
-.hue-marker {
-  position: absolute; width: 12px; height: 12px; border-radius: 50%;
-  background: #fff; border: 2px solid #fff;
+.hue-thumb {
+  position: absolute; top: -1px; width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; border: 2px solid rgba(0, 0, 0, 0.3);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35); pointer-events: none;
 }
 .sv-square {

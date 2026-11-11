@@ -234,6 +234,10 @@ let checkedLayers: Set<string> = new Set(); // top-level layer ids picked for gr
 let checkedItemId: string | null = null; // the item the checked rows belong to
 let recentColours: string[] = [];
 let savedColours: string[] = [];
+// Hue 0 and 360 are the same red, but the hue bar's two ends are not:
+// dragging to the right end must leave the thumb there, not jump it to
+// the left when the panel rebuilds from the hex (which reads hue 0).
+let colourHue360 = false;
 let playing = false;
 let playTime = 0; // ms within the loop, frozen when paused
 let lastTs = 0;
@@ -834,6 +838,9 @@ function swapColors(): void {
   renderToolbar();
 }
 function openColour(slot: 'fg' | 'bg'): void {
+  // A fresh panel open reads the hue from the colour (0 = left end);
+  // the 360 state only lives within one open panel session.
+  colourHue360 = false;
   // Clicking the open swatch again closes the Colour view.
   if (panelView === 'colour' && colourSlot === slot) {
     panelView = 'auto';
@@ -2560,6 +2567,7 @@ function renderColourPanel(): void {
   panelTitle.textContent = 'Colour';
   const hsv = hexToHsv(slotColour()) ?? { h: 0, s: 0, v: 0.12 };
   let hue = hsv.h;
+  if (colourHue360 && hue === 0) hue = 360;
   let sat = hsv.s;
   let val = hsv.v;
   const applyDraft = (commit: boolean): void => {
@@ -2578,49 +2586,6 @@ function renderColourPanel(): void {
       renderPanel();
     }
   };
-  // Hue ring.
-  const ringWrap = document.createElement('div');
-  ringWrap.className = 'hue-wrap';
-  const ring = document.createElement('div');
-  ring.className = 'hue-ring';
-  ring.setAttribute('aria-label', 'Hue');
-  const ringMarker = document.createElement('span');
-  ringMarker.className = 'hue-marker';
-  ringWrap.appendChild(ring);
-  ringWrap.appendChild(ringMarker);
-  const placeRingMarker = (): void => {
-    const rad = (hue * Math.PI) / 180;
-    const r = 60;
-    ringMarker.style.left = `${70 + r * Math.cos(rad) - 6}px`;
-    ringMarker.style.top = `${70 + r * Math.sin(rad) - 6}px`;
-    ringMarker.style.background = `hsl(${Math.round(hue)}, 100%, 50%)`;
-  };
-  placeRingMarker();
-  const hueFromEvent = (e: PointerEvent): void => {
-    const rect = ring.getBoundingClientRect();
-    const dx = e.clientX - (rect.left + rect.width / 2);
-    const dy = e.clientY - (rect.top + rect.height / 2);
-    hue = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
-    placeRingMarker();
-    svSquare.style.backgroundColor = `hsl(${Math.round(hue)}, 100%, 50%)`;
-    applyDraft(false);
-  };
-  ring.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    try { ring.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
-    hueFromEvent(e);
-    const onMove = (ev: PointerEvent): void => hueFromEvent(ev);
-    const onUp = (): void => {
-      ring.removeEventListener('pointermove', onMove);
-      ring.removeEventListener('pointerup', onUp);
-      ring.removeEventListener('pointercancel', onUp);
-      applyDraft(true);
-    };
-    ring.addEventListener('pointermove', onMove);
-    ring.addEventListener('pointerup', onUp);
-    ring.addEventListener('pointercancel', onUp);
-  });
-  panelBody.appendChild(ringWrap);
   // Saturation / value square.
   const svSquare = document.createElement('div');
   svSquare.className = 'sv-square';
@@ -2657,6 +2622,42 @@ function renderColourPanel(): void {
     svSquare.addEventListener('pointercancel', onUp);
   });
   panelBody.appendChild(svSquare);
+  // Hue bar: a horizontal full-spectrum strip under the square, with a
+  // thumb showing the current hue. Dragging it changes hue only.
+  const hueBar = document.createElement('div');
+  hueBar.className = 'hue-bar';
+  hueBar.setAttribute('aria-label', 'Hue');
+  const hueThumb = document.createElement('span');
+  hueThumb.className = 'hue-thumb';
+  hueBar.appendChild(hueThumb);
+  const placeHueThumb = (): void => {
+    hueThumb.style.left = `calc(${(hue / 360) * 100}% - 7px)`;
+  };
+  placeHueThumb();
+  const hueFromEvent = (e: PointerEvent): void => {
+    const rect = hueBar.getBoundingClientRect();
+    hue = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) * 360;
+    colourHue360 = hue >= 360;
+    placeHueThumb();
+    svSquare.style.backgroundColor = `hsl(${Math.round(hue)}, 100%, 50%)`;
+    applyDraft(false);
+  };
+  hueBar.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    try { hueBar.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
+    hueFromEvent(e);
+    const onMove = (ev: PointerEvent): void => hueFromEvent(ev);
+    const onUp = (): void => {
+      hueBar.removeEventListener('pointermove', onMove);
+      hueBar.removeEventListener('pointerup', onUp);
+      hueBar.removeEventListener('pointercancel', onUp);
+      applyDraft(true);
+    };
+    hueBar.addEventListener('pointermove', onMove);
+    hueBar.addEventListener('pointerup', onUp);
+    hueBar.addEventListener('pointercancel', onUp);
+  });
+  panelBody.appendChild(hueBar);
   // Hex field.
   const hexRow = document.createElement('div');
   hexRow.className = 'hex-row';
@@ -2672,6 +2673,7 @@ function renderColourPanel(): void {
     const hsv2 = hexToHsv(h);
     if (!hsv2) { hexInput.value = slotColour(); return; }
     hue = hsv2.h; sat = hsv2.s; val = hsv2.v;
+    colourHue360 = false;
     if (activeSlot === 'fg') color = h; else bgColour = h;
     pushRecent(h);
     save();
@@ -2710,6 +2712,7 @@ function renderColourPanel(): void {
       chip.addEventListener('click', () => {
         const hsv2 = hexToHsv(c);
         if (hsv2) { hue = hsv2.h; sat = hsv2.s; val = hsv2.v; }
+        colourHue360 = false;
         if (activeSlot === 'fg') color = c; else bgColour = c;
         pushRecent(c);
         save();
