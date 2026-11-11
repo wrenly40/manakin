@@ -185,6 +185,7 @@ type ItemGroup = {
   id: string;
   memberIds: string[]; // item ids; a group has at least 2 members
   layers: BehaviourLayer[]; // the group's own behaviour stack, applied to every member
+  groups: BehaviourGroup[]; // behaviour groups on the group's stack, like an item's
 };
 let itemGroups: ItemGroup[] = [];
 // Ordered selection; empty = nothing selected. A click on a group
@@ -252,7 +253,7 @@ let expandedGroup: string | null = null; // id of the open group in the Behaviou
 let addPickerOpen = false; // the Add behavior popover is showing
 let exportDropdownOpen = false; // the Export dropdown (card in a popover) is showing
 let checkedLayers: Set<string> = new Set(); // top-level layer ids picked for grouping
-let checkedItemId: string | null = null; // the item the checked rows belong to
+let checkedHostId: string | null = null; // the host (item or item group) the checked rows belong to
 let recentColours: string[] = [];
 let savedColours: string[] = [];
 // Hue 0 and 360 are the same red, but the hue bar's two ends are not:
@@ -518,10 +519,29 @@ function migrateItemGroup(raw: unknown): ItemGroup | null {
     .filter((m): m is string => typeof m === 'string' && items.some((i) => i.id === m));
   const unique = [...new Set(memberIds)];
   if (unique.length < 2) return null;
+  const layers = cleanLayerArray(g.layers);
+  const ids = new Set(layers.map((l) => l.id));
+  const seenMember = new Set<string>();
+  const groups = (Array.isArray(g.groups) ? g.groups : []).map((r) => {
+    const bg = (r ?? {}) as Partial<BehaviourGroup>;
+    const members = (Array.isArray(bg.members) ? bg.members : [])
+      .filter((m): m is string => typeof m === 'string' && ids.has(m) && !seenMember.has(m));
+    members.forEach((m) => seenMember.add(m));
+    if (members.length === 0) return null;
+    return {
+      id: typeof bg.id === 'string' && bg.id ? bg.id : nid(),
+      name: behaviourGroupName(bg.name),
+      members: [...new Set(members)],
+      active: typeof bg.active === 'boolean' ? bg.active : true,
+      tempo: typeof bg.tempo === 'number' ? snapTempo(bg.tempo) : 1,
+      amplitude: typeof bg.amplitude === 'number' ? clampNum(bg.amplitude, 0, 1, 1) : 1,
+    };
+  }).filter((x): x is BehaviourGroup => x !== null);
   return {
     id: typeof g.id === 'string' && g.id ? g.id : nid(),
     memberIds: unique,
-    layers: cleanLayerArray(g.layers),
+    layers,
+    groups,
   };
 }
 function migrateItemGroups(raw: unknown): ItemGroup[] {
@@ -536,6 +556,17 @@ function migrateItemGroups(raw: unknown): ItemGroup[] {
     out.push(g);
   }
   return out;
+}
+
+// Behaviour-group display names: "Layer Group 1", … — the "Layer"
+// prefix keeps them distinct from item groups ("Group objects").
+// Old saves named them "Group N"; those are renamed on load so the
+// numbering stays consistent with newly created groups.
+function behaviourGroupName(raw: unknown): string {
+  const name = typeof raw === 'string' && raw.trim() ? raw.trim() : '';
+  const m = /^Group (\d+)$/.exec(name);
+  if (m) return `Layer Group ${m[1]}`;
+  return name || 'Layer Group';
 }
 
 function migrateItem(it: Item): void {
@@ -557,7 +588,7 @@ function migrateItem(it: Item): void {
       if (members.length === 0) return null;
       return {
         id: typeof g.id === 'string' && g.id ? g.id : nid(),
-        name: typeof g.name === 'string' && g.name.trim() ? g.name.trim() : 'Group',
+        name: behaviourGroupName(g.name),
         members: [...new Set(members)],
         active: typeof g.active === 'boolean' ? g.active : true,
         tempo: typeof g.tempo === 'number' ? snapTempo(g.tempo) : (typeof legacy.speed === 'number' ? snapTempo(legacy.speed) : 1),
@@ -623,7 +654,7 @@ function migrateItem(it: Item): void {
     members.forEach((m) => seen.add(m));
     return {
       id: typeof g.id === 'string' && g.id ? g.id : nid(),
-      name: typeof g.name === 'string' && g.name.trim() ? g.name.trim() : 'Group',
+      name: behaviourGroupName(g.name),
       members: [...members].sort((a, b) => a - b),
       active: typeof g.active === 'boolean' ? g.active : true,
       tempo: typeof g.tempo === 'number' ? snapTempo(g.tempo) : (typeof legacy.speed === 'number' ? snapTempo(legacy.speed) : 1),
@@ -1243,22 +1274,32 @@ function hexToRgba(hex: string, alpha: number): string {
 // ---------- groups ----------
 // A layer's effective parameters fold in its group's multipliers.
 // A member contributes only when both its own toggle and its group's toggle are on.
-function groupOf(it: Item, layer: BehaviourLayer): BehaviourGroup | undefined {
-  return it.groups.find((g) => g.members.includes(layer.id));
+function groupOfIn(groups: BehaviourGroup[], layer: BehaviourLayer): BehaviourGroup | undefined {
+  return groups.find((g) => g.members.includes(layer.id));
 }
-function effActive(it: Item, layer: BehaviourLayer): boolean {
-  const g = groupOf(it, layer);
-  // Only layers in the stack contribute; a member contributes only when
-  // both its own toggle and its group's toggle are on.
+function groupOf(it: Item, layer: BehaviourLayer): BehaviourGroup | undefined {
+  return groupOfIn(it.groups, layer);
+}
+function effActiveIn(groups: BehaviourGroup[], layer: BehaviourLayer): boolean {
+  const g = groupOfIn(groups, layer);
   return layer.on && (!g || g.active);
 }
-function effTempo(it: Item, layer: BehaviourLayer): number {
-  const g = groupOf(it, layer);
+function effActive(it: Item, layer: BehaviourLayer): boolean {
+  return effActiveIn(it.groups, layer);
+}
+function effTempoIn(groups: BehaviourGroup[], layer: BehaviourLayer): number {
+  const g = groupOfIn(groups, layer);
   return layer.tempo * (g ? g.tempo : 1);
 }
-function effAmplitude(it: Item, layer: BehaviourLayer): number {
-  const g = groupOf(it, layer);
+function effTempo(it: Item, layer: BehaviourLayer): number {
+  return effTempoIn(it.groups, layer);
+}
+function effAmplitudeIn(groups: BehaviourGroup[], layer: BehaviourLayer): number {
+  const g = groupOfIn(groups, layer);
   return layer.amplitude * (g ? g.amplitude : 1);
+}
+function effAmplitude(it: Item, layer: BehaviourLayer): number {
+  return effAmplitudeIn(it.groups, layer);
 }
 function amplitudeScale(a: number): number {
   // Amplitudes are fractions (0-1); the 1.8 is the peak scale so a
@@ -1281,11 +1322,11 @@ function minContributingTempo(): number | null {
     if (!effActive(it, layer) || layer.amplitude <= 0) continue;
     consider(effTempo(it, layer));
   }
-  // An item group's layers count like any other contributing behaviour:
-  // they stand alone (no behaviour group to fold in).
+  // An item group's layers count like any other contributing behaviour,
+  // folding in the group's behaviour groups the same way an item's do.
   for (const g of itemGroups) for (const layer of g.layers) {
-    if (!layer.on || layer.amplitude <= 0) continue;
-    consider(layer.tempo);
+    if (!effActiveIn(g.groups, layer) || layer.amplitude <= 0) continue;
+    consider(effTempoIn(g.groups, layer));
   }
   return min;
 }
@@ -1341,8 +1382,8 @@ function wanderTerms(layer: BehaviourLayer, cycles: number, t01: number): { x: n
 }
 // A layer's effective parameters, resolved through a context: an
 // item's layers fold in their behaviour group (v9); an item group's
-// layers stand alone. Motion and graphs read through the same context,
-// so the two agree.
+// layers fold in theirs the same way. Motion and graphs read through
+// the same context, so the two agree.
 type LayerCtx = {
   tempo: (l: BehaviourLayer) => number;
   amplitude: (l: BehaviourLayer) => number;
@@ -1351,17 +1392,20 @@ type LayerCtx = {
 function itemCtx(it: Item): LayerCtx {
   return { tempo: (l) => effTempo(it, l), amplitude: (l) => effAmplitude(it, l), active: (l) => effActive(it, l) };
 }
-function groupCtx(): LayerCtx {
-  return { tempo: (l) => l.tempo, amplitude: (l) => l.amplitude, active: (l) => l.on };
+function groupCtx(g: ItemGroup): LayerCtx {
+  return { tempo: (l) => effTempoIn(g.groups, l), amplitude: (l) => effAmplitudeIn(g.groups, l), active: (l) => effActiveIn(g.groups, l) };
 }
 // A behaviour stack lives on an item or on an item group. The panel's
-// layer cards work on either; behaviour groups (v9) only exist on items.
+// layer cards work on either, and behaviour groups (v9) exist on either too.
 type LayerHost = { kind: 'item'; item: Item } | { kind: 'group'; group: ItemGroup };
 function hostLayers(h: LayerHost): BehaviourLayer[] {
   return h.kind === 'item' ? h.item.layers : h.group.layers;
 }
+function hostGroups(h: LayerHost): BehaviourGroup[] {
+  return h.kind === 'item' ? h.item.groups : h.group.groups;
+}
 function hostCtx(h: LayerHost): LayerCtx {
-  return h.kind === 'item' ? itemCtx(h.item) : groupCtx();
+  return h.kind === 'item' ? itemCtx(h.item) : groupCtx(h.group);
 }
 function hostFindLayer(h: LayerHost, id: string): BehaviourLayer | undefined {
   return hostLayers(h).find((l) => l.id === id);
@@ -1389,7 +1433,7 @@ function motionFor(it: Item, t01: number): Motion {
 }
 // An item group's own stack, applied to every member.
 function groupMotion(g: ItemGroup, t01: number): Motion {
-  return motionForLayers(g.layers, groupCtx(), t01);
+  return motionForLayers(g.layers, groupCtx(g), t01);
 }
 // An item's full motion: its own stack superposed with its item
 // group's stack (if any). Offsets and rotation add, scale multiplies,
@@ -1781,7 +1825,7 @@ function renderPanelInner(): void {
 // fixed to the sum of the members' own amplitudes (before the group
 // multiplier), so changing the group's Amplitude visibly shrinks the curve
 // instead of re-normalising it away.
-function drawGroupGraph(cv: HTMLCanvasElement, it: Item, group: BehaviourGroup): void {
+function drawGroupGraph(cv: HTMLCanvasElement, host: LayerHost, group: BehaviourGroup): void {
   const W = 232, H = 48;
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   cv.width = Math.round(W * dpr);
@@ -1798,15 +1842,16 @@ function drawGroupGraph(cv: HTMLCanvasElement, it: Item, group: BehaviourGroup):
   g.lineTo(W, H / 2 + 0.5);
   g.stroke();
   const N = 120;
-  const members = group.members.map((id) => it.layers.find((l) => l.id === id)).filter((l): l is BehaviourLayer => !!l);
+  const ctx = hostCtx(host);
+  const members = group.members.map((id) => hostFindLayer(host, id)).filter((l): l is BehaviourLayer => !!l);
   const vals: number[] = [];
   let scale = 0;
-  for (const layer of members) if (effActive(it, layer)) scale += amplitudeScale(layer.amplitude);
+  for (const layer of members) if (ctx.active(layer)) scale += amplitudeScale(layer.amplitude);
   if (scale < 0.01) scale = 1;
   for (let i = 0; i <= N; i++) {
     const t = i / N;
     let v = 0;
-    for (const layer of members) if (effActive(it, layer)) v += behaviourValue(layer, itemCtx(it), t);
+    for (const layer of members) if (ctx.active(layer)) v += behaviourValue(layer, ctx, t);
     vals.push(v);
   }
   g.strokeStyle = '#1d1d1f';
@@ -2008,7 +2053,7 @@ function behaviourLayer(host: LayerHost, inst: BehaviourLayer, opts: { checkable
 // One group row: chevron, name (click to rename inline), on/off toggle,
 // ungroup button. When expanded: combined graph, the group's Tempo and
 // Amplitude sliders, then the member rows with their own controls.
-function groupLayer(sel: Item, group: BehaviourGroup): HTMLDivElement {
+function groupLayer(host: LayerHost, group: BehaviourGroup): HTMLDivElement {
   const open = expandedGroup === group.id;
   const layer = document.createElement('div');
   layer.className = 'blayer group' + (open ? ' expanded' : '');
@@ -2037,7 +2082,7 @@ function groupLayer(sel: Item, group: BehaviourGroup): HTMLDivElement {
     input.type = 'text';
     input.className = 'group-rename';
     input.value = group.name;
-    input.setAttribute('aria-label', 'Group name');
+    input.setAttribute('aria-label', 'Layer group name');
     input.spellcheck = false;
     let done = false;
     const finish = (commit: boolean): void => {
@@ -2068,9 +2113,7 @@ function groupLayer(sel: Item, group: BehaviourGroup): HTMLDivElement {
   toggle.innerHTML = '<span class="knob"></span>';
   toggle.addEventListener('click', (e) => {
     e.stopPropagation();
-    const s = selected();
-    if (!s) return;
-    const g = s.groups.find((gg) => gg.id === group.id);
+    const g = hostGroups(host).find((gg) => gg.id === group.id);
     if (!g) return;
     pushHistory();
     g.active = !g.active;
@@ -2080,15 +2123,17 @@ function groupLayer(sel: Item, group: BehaviourGroup): HTMLDivElement {
   const ungroup = document.createElement('button');
   ungroup.type = 'button';
   ungroup.className = 'ungroup-btn';
-  ungroup.title = 'Ungroup';
+  ungroup.title = 'Ungroup behaviours';
   ungroup.setAttribute('aria-label', `Ungroup ${group.name}`);
-  ungroup.innerHTML = '<svg viewBox="0 0 24 24"><rect x="3" y="6" width="7" height="12" rx="2"/><rect x="14" y="6" width="7" height="12" rx="2"/></svg>';
+  // Breaking apart: two rounded squares with a zigzag crack between
+  // them — the group icon, broken. The old two tall rects read "00".
+  ungroup.innerHTML = '<svg viewBox="0 0 24 24"><rect x="2" y="8" width="7" height="8" rx="2"/><rect x="15" y="8" width="7" height="8" rx="2"/><path d="M12 6l-1.6 3.4 2.4 2.6-1.6 3.4L12 18"/></svg>';
   ungroup.addEventListener('click', (e) => {
     e.stopPropagation();
-    const s = selected();
-    if (!s) return;
     pushHistory();
-    s.groups = s.groups.filter((g) => g.id !== group.id);
+    const gs = hostGroups(host);
+    const i = gs.findIndex((g) => g.id === group.id);
+    if (i >= 0) gs.splice(i, 1);
     if (expandedGroup === group.id) expandedGroup = null;
     save();
     renderPanel();
@@ -2113,40 +2158,35 @@ function groupLayer(sel: Item, group: BehaviourGroup): HTMLDivElement {
     body.appendChild(graph);
     const memberGraphs = new Map<string, HTMLCanvasElement>();
     const redrawGroupGraph = (): void => {
-      const s = selected();
-      if (s) {
-        const g = s.groups.find((gg) => gg.id === group.id);
-        if (g) drawGroupGraph(graph, s, g);
-      }
+      const g = hostGroups(host).find((gg) => gg.id === group.id);
+      if (g) drawGroupGraph(graph, host, g);
     };
     const redrawMemberGraphs = (): void => {
-      const s = selected();
-      if (!s) return;
       for (const [id, cv] of memberGraphs) {
-        const l = s.layers.find((x) => x.id === id);
-        if (l) drawGraph(cv, l, itemCtx(s));
+        const l = hostFindLayer(host, id);
+        if (l) drawGraph(cv, l, hostCtx(host));
       }
     };
     body.appendChild(paramSlider({
       label: 'Tempo', min: 0, max: TEMPO_STOPS.length - 1, step: 1, value: tempoStopIndex(group.tempo),
       format: (v) => formatTempoStop(stopAt(v)),
       aria: `${group.name} tempo`,
-      onInput: (v) => { const s = selected(); if (!s) return; const g = s.groups.find((gg) => gg.id === group.id); if (!g) return; g.tempo = stopAt(v); redrawGroupGraph(); redrawMemberGraphs(); },
+      onInput: (v) => { const g = hostGroups(host).find((gg) => gg.id === group.id); if (!g) return; g.tempo = stopAt(v); redrawGroupGraph(); redrawMemberGraphs(); },
       onCommit: () => save(),
     }));
     body.appendChild(paramSlider({
       label: 'Amplitude', min: 0, max: 1, step: 0.01, value: group.amplitude,
       format: (v) => v.toFixed(2),
       aria: `${group.name} amplitude`,
-      onInput: (v) => { const s = selected(); if (!s) return; const g = s.groups.find((gg) => gg.id === group.id); if (!g) return; g.amplitude = v; redrawGroupGraph(); redrawMemberGraphs(); },
+      onInput: (v) => { const g = hostGroups(host).find((gg) => gg.id === group.id); if (!g) return; g.amplitude = v; redrawGroupGraph(); redrawMemberGraphs(); },
       onCommit: () => save(),
     }));
     const membersWrap = document.createElement('div');
     membersWrap.className = 'group-members';
     for (const memberId of group.members) {
-      const member = sel.layers.find((l) => l.id === memberId);
+      const member = hostFindLayer(host, memberId);
       if (!member) continue;
-      const { layer: mLayer, graph: mGraph } = behaviourLayer({ kind: 'item', item: sel }, member, {
+      const { layer: mLayer, graph: mGraph } = behaviourLayer(host, member, {
         checkable: false,
         onParamChange: () => redrawGroupGraph(),
       });
@@ -2156,7 +2196,7 @@ function groupLayer(sel: Item, group: BehaviourGroup): HTMLDivElement {
     }
     body.appendChild(membersWrap);
     layer.appendChild(body);
-    drawGroupGraph(graph, sel, group);
+    drawGroupGraph(graph, host, group);
   }
   return layer;
 }
@@ -2167,11 +2207,16 @@ function groupLayer(sel: Item, group: BehaviourGroup): HTMLDivElement {
 // most recently removed instance. Other instances of the same behaviour
 // are untouched. A grouped member leaves its behaviour group; an
 // emptied behaviour group is removed. An item group's stack has no
-// stash and no behaviour groups: the layer is just gone.
+// stash, but it has behaviour groups: a removed member leaves its
+// group the same way.
 function removeBehaviourLayer(host: LayerHost, layerId: string): void {
   if (host.kind === 'group') {
     pushHistory();
     host.group.layers = host.group.layers.filter((l) => l.id !== layerId);
+    for (const g of host.group.groups) g.members = g.members.filter((m) => m !== layerId);
+    host.group.groups = host.group.groups.filter((g) => g.members.length > 0);
+    if (expandedGroup && !host.group.groups.some((g) => g.id === expandedGroup)) expandedGroup = null;
+    checkedLayers.delete(layerId);
     if (expandedLayerId === layerId) expandedLayerId = null;
     save();
     renderPanel();
@@ -2267,67 +2312,88 @@ function reanchorAddPicker(): void {
   pop.style.top = `${top}px`;
 }
 
+// Group the checked layers of a host's stack into one behaviour
+// group: the group's Tempo/Amplitude multiply its members'. Same
+// flow on an item and on an item group.
+function createBehaviourGroup(host: LayerHost): void {
+  if (checkedLayers.size < 2) return;
+  pushHistory();
+  const layers = hostLayers(host);
+  const groups = hostGroups(host);
+  const members = [...checkedLayers].sort((a, b) => layers.findIndex((l) => l.id === a) - layers.findIndex((l) => l.id === b));
+  let n = 1;
+  for (const g of groups) {
+    const m = /^Layer Group (\d+)$/.exec(g.name);
+    if (m) n = Math.max(n, parseInt(m[1], 10) + 1);
+  }
+  const group: BehaviourGroup = { id: nid(), name: `Layer Group ${n}`, members, active: true, tempo: 1, amplitude: 1 };
+  groups.push(group);
+  checkedLayers.clear();
+  expandedLayerId = null;
+  expandedGroup = group.id;
+  save();
+  renderPanel();
+}
+
+// The checkable stack for a host: the grouping checks reset when the
+// host changes, checks drop for layers that left the stack or joined
+// a group, and the rows and behaviour-group cards render in stack
+// order — a group takes its first member's place, so ungrouping
+// restores members to their original positions.
+function appendStackEntries(host: LayerHost): void {
+  const layers = hostLayers(host);
+  const groups = hostGroups(host);
+  const hostId = host.kind === 'item' ? host.item.id : host.group.id;
+  if (checkedHostId !== hostId) { checkedLayers.clear(); checkedHostId = hostId; addPickerOpen = false; }
+  const grouped = new Set(groups.flatMap((g) => g.members));
+  // Drop checks for layers that left the stack or joined a group.
+  for (const id of [...checkedLayers]) if (!layers.some((l) => l.id === id) || grouped.has(id)) checkedLayers.delete(id);
+  type Entry = { pos: number; render: () => HTMLElement };
+  const entries: Entry[] = [];
+  for (const layer of layers) {
+    if (!grouped.has(layer.id)) entries.push({ pos: layers.indexOf(layer), render: () => behaviourLayer(host, layer, { checkable: true }).layer });
+  }
+  for (const g of groups) {
+    const idxs = g.members.map((id) => layers.findIndex((l) => l.id === id)).filter((i) => i >= 0);
+    entries.push({ pos: idxs.length ? Math.min(...idxs) : Number.POSITIVE_INFINITY, render: () => groupLayer(host, g) });
+  }
+  entries.sort((a, b) => a.pos - b.pos);
+  for (const e of entries) panelBody.appendChild(e.render());
+}
+
+// The "Group behaviours" pill, shown when 2+ layers of the host's
+// stack are checked. Same flow on an item and on an item group.
+function appendGroupBehavioursAction(host: LayerHost): void {
+  if (checkedLayers.size < 2) return;
+  panelBody.appendChild(panelDivider());
+  const action = document.createElement('div');
+  action.className = 'group-action';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'pbtn-quiet';
+  btn.textContent = 'Group behaviours';
+  btn.setAttribute('aria-label', `Group ${checkedLayers.size} behaviours`);
+  btn.addEventListener('click', () => createBehaviourGroup(host));
+  action.appendChild(btn);
+  panelBody.appendChild(action);
+}
+
 function renderBehavioursPanel(sel: Item): void {
   panelTitle.textContent = 'Behaviours';
   panelBody.appendChild(renderArrangeSection());
   panelBody.appendChild(panelDivider());
-  if (checkedItemId !== sel.id) { checkedLayers.clear(); checkedItemId = sel.id; addPickerOpen = false; }
-  const grouped = new Set(sel.groups.flatMap((g) => g.members));
-  // Drop checks for layers that left the stack or joined a group.
-  for (const id of [...checkedLayers]) if (!sel.layers.some((l) => l.id === id) || grouped.has(id)) checkedLayers.delete(id);
-  // Order: each entry sits at its position in the stack, so a group takes
-  // the first selected member's place and ungrouping restores members to
-  // their original positions.
-  type Entry = { pos: number; render: () => HTMLElement };
-  const entries: Entry[] = [];
-  for (const layer of sel.layers) {
-    if (!grouped.has(layer.id)) entries.push({ pos: sel.layers.indexOf(layer), render: () => behaviourLayer({ kind: 'item', item: sel }, layer, { checkable: true }).layer });
-  }
-  for (const g of sel.groups) {
-    const idxs = g.members.map((id) => sel.layers.findIndex((l) => l.id === id)).filter((i) => i >= 0);
-    entries.push({ pos: idxs.length ? Math.min(...idxs) : Number.POSITIVE_INFINITY, render: () => groupLayer(sel, g) });
-  }
-  entries.sort((a, b) => a.pos - b.pos);
-  for (const e of entries) panelBody.appendChild(e.render());
+  const host: LayerHost = { kind: 'item', item: sel };
+  appendStackEntries(host);
   if (sel.layers.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'no-behaviours';
     empty.textContent = 'No behaviours';
     panelBody.appendChild(empty);
   }
-  if (checkedLayers.size >= 2) {
-    panelBody.appendChild(panelDivider());
-    const action = document.createElement('div');
-    action.className = 'group-action';
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'pbtn-quiet';
-    btn.textContent = 'Group';
-    btn.setAttribute('aria-label', `Group ${checkedLayers.size} behaviours`);
-    btn.addEventListener('click', () => {
-      const s = selected();
-      if (!s || checkedLayers.size < 2) return;
-      pushHistory();
-      const members = [...checkedLayers].sort((a, b) => s.layers.findIndex((l) => l.id === a) - s.layers.findIndex((l) => l.id === b));
-      let n = 1;
-      for (const g of s.groups) {
-        const m = /^Group (\d+)$/.exec(g.name);
-        if (m) n = Math.max(n, parseInt(m[1], 10) + 1);
-      }
-      const group: BehaviourGroup = { id: nid(), name: `Group ${n}`, members, active: true, tempo: 1, amplitude: 1 };
-      s.groups.push(group);
-      checkedLayers.clear();
-      expandedLayerId = null;
-      expandedGroup = group.id;
-      save();
-      renderPanel();
-    });
-    action.appendChild(btn);
-    panelBody.appendChild(action);
-  }
+  appendGroupBehavioursAction(host);
   // Add behavior: a quiet pill at the bottom of the stack. Always
   // enabled — adding the same behaviour again creates another instance.
-  panelBody.appendChild(renderAddBehaviourButton({ kind: 'item', item: sel }));
+  panelBody.appendChild(renderAddBehaviourButton(host));
 }
 
 // The Add behavior pill, shared by the item stack and the item-group
@@ -2361,7 +2427,7 @@ function groupSelection(): void {
   const memberIds = [...selectedIds];
   for (const g of itemGroups) g.memberIds = g.memberIds.filter((m) => !memberIds.includes(m));
   itemGroups = itemGroups.filter((g) => g.memberIds.length >= 2);
-  itemGroups.push({ id: nid(), memberIds, layers: [] });
+  itemGroups.push({ id: nid(), memberIds, layers: [], groups: [] });
   selectedIds = memberIds;
   save();
   renderPanel();
@@ -2420,10 +2486,17 @@ function duplicateSelection(): void {
   }
   const grp = selectedItemGroup();
   if (grp) {
+    const layerMap = new Map<string, string>();
+    const layers = grp.layers.map((l) => { const id = nid(); layerMap.set(l.id, id); return { ...l, id }; });
     itemGroups.push({
       id: nid(),
       memberIds: grp.memberIds.map((m) => copies.get(m)?.id).filter((m): m is string => typeof m === 'string'),
-      layers: grp.layers.map((l) => ({ ...l, id: nid() })),
+      layers,
+      groups: grp.groups.map((g) => ({
+        ...g,
+        id: nid(),
+        members: g.members.map((m) => layerMap.get(m)).filter((m): m is string => typeof m === 'string'),
+      })).filter((g) => g.members.length > 0),
     });
   }
   selectedIds = [...copies.values()].map((c) => c.id);
@@ -2459,10 +2532,17 @@ function pasteClipboard(): void {
     items.push(c);
   }
   for (const g of clipboard.groups) {
+    const layerMap = new Map<string, string>();
+    const layers = g.layers.map((l) => { const id = nid(); layerMap.set(l.id, id); return { ...l, id }; });
     itemGroups.push({
       id: nid(),
       memberIds: g.memberIds.map((m) => copies.get(m)?.id).filter((m): m is string => typeof m === 'string'),
-      layers: g.layers.map((l) => ({ ...l, id: nid() })),
+      layers,
+      groups: g.groups.map((bg) => ({
+        ...bg,
+        id: nid(),
+        members: bg.members.map((m) => layerMap.get(m)).filter((m): m is string => typeof m === 'string'),
+      })).filter((bg) => bg.members.length > 0),
     });
   }
   selectedIds = [...copies.values()].map((c) => c.id);
@@ -2680,39 +2760,39 @@ function renderMultiSelectPanel(sel: Item[]): void {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'pbtn-quiet';
-  btn.textContent = 'Group';
-  btn.setAttribute('aria-label', `Group ${sel.length} items`);
+  btn.textContent = 'Group objects';
+  btn.setAttribute('aria-label', `Group ${sel.length} objects`);
   btn.addEventListener('click', () => { groupSelection(); });
   action.appendChild(btn);
   panelBody.appendChild(action);
 }
 
 // A selected item group: its own behaviour layer stack — the same
-// layer cards, Add behavior picker, sliders and toggles as an item's
-// stack — plus an Ungroup button. No behaviour-group checkboxes here:
-// the two kinds of group stay visually distinct.
+// layer cards, checkable grouping flow and Add behavior picker as an
+// item's stack — plus an Ungroup button for the item group itself.
+// The two kinds of group stay distinct by label: "Group behaviours"
+// groups layers, "Ungroup objects" dissolves the item group.
 function renderItemGroupPanel(group: ItemGroup): void {
   panelTitle.textContent = 'Behaviours';
   panelBody.appendChild(renderArrangeSection());
   panelBody.appendChild(panelDivider());
   const host: LayerHost = { kind: 'group', group };
-  for (const layer of group.layers) {
-    panelBody.appendChild(behaviourLayer(host, layer, { checkable: false }).layer);
-  }
+  appendStackEntries(host);
   if (group.layers.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'no-behaviours';
     empty.textContent = 'No behaviours';
     panelBody.appendChild(empty);
   }
+  appendGroupBehavioursAction(host);
   panelBody.appendChild(panelDivider());
   const action = document.createElement('div');
   action.className = 'group-action';
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'pbtn-quiet';
-  btn.textContent = 'Ungroup';
-  btn.setAttribute('aria-label', 'Ungroup');
+  btn.textContent = 'Ungroup objects';
+  btn.setAttribute('aria-label', 'Ungroup objects');
   btn.addEventListener('click', () => { ungroupItemGroup(group); });
   action.appendChild(btn);
   panelBody.appendChild(action);
