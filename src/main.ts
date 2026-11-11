@@ -4,6 +4,16 @@ type Pt = { x: number; y: number };
 type BehaviourName = 'Bob' | 'Sway' | 'Breathe' | 'Blink' | 'Spin' | 'Wander';
 const BEHAVIOURS: BehaviourName[] = ['Bob', 'Sway', 'Breathe', 'Blink', 'Spin', 'Wander'];
 const LOOP_MS = 4000;
+// One small icon per behaviour, same 1.8-stroke, 20px, ink language as the
+// toolbar icons — each distinct at a glance in the layer stack.
+const LAYER_ICONS: string[] = [
+  '<svg viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M8 7l4-4 4 4"/><path d="M8 17l4 4 4-4"/></svg>', // Bob: vertical double arrow
+  '<svg viewBox="0 0 24 24"><path d="M3 12h18"/><path d="M7 8l-4 4 4 4"/><path d="M17 8l4 4-4 4"/></svg>', // Sway: horizontal double arrow
+  '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.5"/><circle cx="12" cy="12" r="8"/></svg>', // Breathe: concentric circles
+  '<svg viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/></svg>', // Blink: eye outline with a dot
+  '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 3v4h-4"/></svg>', // Spin: circular arrow
+  '<svg viewBox="0 0 24 24"><path d="M3 16c2.5-5 5 2 7.5-3s5 2 7.5-3" stroke-dasharray="0.5 3.5"/></svg>', // Wander: dotted squiggle
+];
 
 type BehaviourGroup = {
   id: string;
@@ -24,6 +34,7 @@ type ItemBase = {
   blinkDuration: number; // % of the cycle the blink bump spans (Blink only)
   spinReverse: boolean; // Spin only: run the spin backwards
   wanderSmooth: number; // 0-100% (Wander only); 50+ is the smooth drift
+  layers: number[]; // ordered behaviour stack, top-to-bottom as shown in the panel; only these are listed and contribute to the motion
   groups: BehaviourGroup[]; // per-item behaviour groups; flat only, no groups in groups
 };
 type StrokeItem = ItemBase & { type: 'stroke'; points: Pt[] };
@@ -63,7 +74,7 @@ function defaultAmounts(): number[] { return [66, 66, 66, 66, 66, 66]; }
 function defaultPhases(): number[] { return [0, 0, 0, 0, 0, 0]; }
 function defaultBlinkDuration(): number { return 26; } // raised-cosine bump whose half-depth width (13%) matches the old sin^8 blink
 function baseItem(color: string, width: number): ItemBase {
-  return { id: nid(), color, width, active: defaultActive(), speeds: defaultSpeeds(), amounts: defaultAmounts(), phases: defaultPhases(), blinkDuration: defaultBlinkDuration(), spinReverse: false, wanderSmooth: 50, groups: [] };
+  return { id: nid(), color, width, active: defaultActive(), speeds: defaultSpeeds(), amounts: defaultAmounts(), phases: defaultPhases(), blinkDuration: defaultBlinkDuration(), spinReverse: false, wanderSmooth: 50, layers: [], groups: [] };
 }
 
 // ---------- state ----------
@@ -86,6 +97,7 @@ let panelView: 'auto' | 'colour' = 'auto';
 let colourSlot: 'fg' | 'bg' = 'fg';
 let expandedBehaviour: number | null = null;
 let expandedGroup: string | null = null; // id of the open group in the Behaviours panel
+let addPickerOpen = false; // the Add behavior popover is showing
 let checkedBehaviours: Set<number> = new Set(); // top-level rows picked for grouping
 let checkedItemId: string | null = null; // the item the checked rows belong to
 let recentColours: string[] = [];
@@ -255,6 +267,26 @@ function migrateItem(it: Item): void {
       };
     }).filter((g) => g.members.length > 0);
   }
+  // Layer stack: a behaviour is in the stack when it is on or has any
+  // non-default parameter. Off + fully-default behaviours drop out — they
+  // contribute nothing to the motion, so dropping them changes nothing,
+  // and they show as available in the Add behavior picker. Group members
+  // are always in the stack, whatever their own state.
+  const hasCustom = (b: number): boolean =>
+    (it.speeds[b] ?? 1) !== 1 || (it.amounts[b] ?? 66) !== 66 || (it.phases?.[b] ?? 0) !== 0 ||
+    (b === 3 && (it.blinkDuration ?? 26) !== 26) ||
+    (b === 4 && it.spinReverse === true) ||
+    (b === 5 && (it.wanderSmooth ?? 50) !== 50);
+  if (Array.isArray(it.layers)) {
+    const clean: number[] = [];
+    for (const m of it.layers) {
+      if (Number.isInteger(m) && m >= 0 && m < BEHAVIOURS.length && !clean.includes(m)) clean.push(m);
+    }
+    it.layers = clean;
+  } else {
+    it.layers = BEHAVIOURS.map((_, b) => b).filter((b) => it.active[b] || hasCustom(b));
+  }
+  for (const g of it.groups) for (const m of g.members) if (!it.layers.includes(m)) it.layers.push(m);
 }
 
 function load(): void {
@@ -285,6 +317,10 @@ function load(): void {
     }
   } catch { /* corrupted save: fall through to sample */ }
   items = sampleBird();
+  // first launch: build each item's layer stack from its on/non-default behaviours.
+  // baseItem() pre-populates layers: [] for new items, so drop it first —
+  // otherwise migrateItem treats the empty array as an already-migrated stack.
+  items.forEach((it) => { delete (it as Partial<Item>).layers; migrateItem(it); });
   save();
 }
 
@@ -578,7 +614,9 @@ function groupOf(it: Item, b: number): BehaviourGroup | undefined {
 }
 function effActive(it: Item, b: number): boolean {
   const g = groupOf(it, b);
-  return it.active[b] && (!g || g.active);
+  // Only behaviours in the stack contribute — removing a layer stops its
+  // motion even though its parameters (and on/off) stay stored.
+  return (it.layers ?? []).includes(b) && it.active[b] && (!g || g.active);
 }
 function effSpeed(it: Item, b: number): number {
   const g = groupOf(it, b);
@@ -809,7 +847,7 @@ function paramSlider(opts: {
 }
 
 function drawGraph(cv: HTMLCanvasElement, it: Item, b: number): void {
-  const W = 248, H = 48;
+  const W = 232, H = 48;
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   cv.width = Math.round(W * dpr);
   cv.height = Math.round(H * dpr);
@@ -845,6 +883,8 @@ function renderPanel(): void {
   const redoBtn = document.getElementById('redo-btn') as HTMLButtonElement;
   undoBtn.disabled = history.length === 0;
   redoBtn.disabled = redoStack.length === 0;
+  closeAddPickerEl();
+  if (panelView !== 'auto' || !selected()) addPickerOpen = false;
   panelBody.innerHTML = '';
   if (panelView === 'colour') { renderColourPanel(); return; }
   const sel = selected();
@@ -859,7 +899,7 @@ function renderPanel(): void {
 // multiplier), so changing the group's Amount visibly shrinks the curve
 // instead of re-normalising it away.
 function drawGroupGraph(cv: HTMLCanvasElement, it: Item, group: BehaviourGroup): void {
-  const W = 248, H = 48;
+  const W = 232, H = 48;
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   cv.width = Math.round(W * dpr);
   cv.height = Math.round(H * dpr);
@@ -922,6 +962,9 @@ function behaviourLayer(sel: Item, b: number, opts: { checkable: boolean; onPara
     });
     head.appendChild(check);
   }
+  const icon = document.createElement('span');
+  icon.className = 'layer-icon';
+  icon.innerHTML = LAYER_ICONS[b];
   const toggle = document.createElement('button');
   toggle.type = 'button';
   toggle.className = 'layer-toggle' + (sel.active[b] ? ' on' : '');
@@ -939,6 +982,18 @@ function behaviourLayer(sel: Item, b: number, opts: { checkable: boolean; onPara
   const name = document.createElement('span');
   name.className = 'layer-name';
   name.textContent = BEHAVIOURS[b];
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'layer-remove';
+  remove.title = 'Remove';
+  remove.setAttribute('aria-label', `Remove ${BEHAVIOURS[b]}`);
+  remove.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  remove.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const s = selected();
+    if (!s) return;
+    removeBehaviourLayer(s, b);
+  });
   const chev = document.createElement('button');
   chev.type = 'button';
   chev.className = 'layer-chev';
@@ -952,11 +1007,13 @@ function behaviourLayer(sel: Item, b: number, opts: { checkable: boolean; onPara
     e.stopPropagation(); // the head row also toggles; without this it flips twice
     toggleExpand();
   });
-  head.appendChild(toggle);
+  head.appendChild(icon);
   head.appendChild(name);
+  head.appendChild(toggle);
   head.appendChild(chev);
+  head.appendChild(remove);
   head.addEventListener('click', (e) => {
-    if ((e.target as HTMLElement).closest('.layer-toggle, .layer-check')) return;
+    if ((e.target as HTMLElement).closest('.layer-toggle, .layer-check, .layer-remove')) return;
     toggleExpand();
   });
   layer.appendChild(head);
@@ -1196,23 +1253,102 @@ function groupLayer(sel: Item, group: BehaviourGroup): HTMLDivElement {
   return layer;
 }
 
+// Remove a layer from the stack. Its parameters and on/off stay stored in
+// the item, so adding it again from the picker restores them exactly.
+// A grouped member leaves its group; an emptied group is removed.
+function removeBehaviourLayer(sel: Item, b: number): void {
+  pushHistory();
+  sel.layers = sel.layers.filter((m) => m !== b);
+  for (const g of sel.groups) g.members = g.members.filter((m) => m !== b);
+  sel.groups = sel.groups.filter((g) => g.members.length > 0);
+  if (expandedGroup && !sel.groups.some((g) => g.id === expandedGroup)) expandedGroup = null;
+  checkedBehaviours.delete(b);
+  if (expandedBehaviour === b) expandedBehaviour = null;
+  save();
+  renderPanel();
+}
+
+// Add a behaviour to the stack. It turns on; its stored parameters are
+// kept, so a re-added layer comes back with its previous settings (a
+// never-added behaviour has the defaults).
+function addBehaviour(sel: Item, b: number): void {
+  if (sel.layers.includes(b)) return;
+  pushHistory();
+  sel.layers.push(b);
+  sel.active[b] = true;
+  addPickerOpen = false;
+  save();
+  renderPanel();
+}
+
+function closeAddPickerEl(): void {
+  document.querySelector('.add-picker')?.remove();
+}
+
+// The Add behavior picker: a small popover anchored to the Add button,
+// listing all six behaviours with their icons. In-stack ones show a check
+// and are disabled. Fixed-position so the panel's scroll cannot clip it;
+// flips above the button when there is no room below.
+function renderAddPicker(anchorBtn: HTMLElement, sel: Item): void {
+  closeAddPickerEl();
+  const pop = document.createElement('div');
+  pop.className = 'add-picker';
+  pop.setAttribute('role', 'menu');
+  for (let b = 0; b < BEHAVIOURS.length; b++) {
+    const inStack = sel.layers.includes(b);
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'add-picker-row' + (inStack ? ' in-stack' : '');
+    row.disabled = inStack;
+    row.setAttribute('role', 'menuitem');
+    row.setAttribute('aria-label', inStack ? `${BEHAVIOURS[b]} already added` : `Add ${BEHAVIOURS[b]}`);
+    row.innerHTML = `<span class="layer-icon">${LAYER_ICONS[b]}</span><span class="layer-name">${BEHAVIOURS[b]}</span>${inStack ? '<svg class="pick-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>' : ''}`;
+    if (!inStack) {
+      row.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const s = selected();
+        if (!s) return;
+        addBehaviour(s, b);
+      });
+    }
+    pop.appendChild(row);
+  }
+  document.body.appendChild(pop);
+  const r = anchorBtn.getBoundingClientRect();
+  const w = pop.offsetWidth;
+  const h = pop.offsetHeight;
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
+  const top = (r.bottom + 6 + h > window.innerHeight) ? Math.max(8, r.top - 6 - h) : r.bottom + 6;
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
+}
+
 function renderBehavioursPanel(sel: Item): void {
   panelTitle.textContent = 'Behaviours';
-  if (checkedItemId !== sel.id) { checkedBehaviours.clear(); checkedItemId = sel.id; }
-  // Order: each entry sits at the position of its earliest behaviour, so a
-  // group takes the first selected member's place and ungrouping restores
-  // members to their original positions.
+  if (checkedItemId !== sel.id) { checkedBehaviours.clear(); checkedItemId = sel.id; addPickerOpen = false; }
+  const grouped = new Set(sel.groups.flatMap((g) => g.members));
+  // Drop checks for behaviours that left the stack or joined a group.
+  for (const b of [...checkedBehaviours]) if (!sel.layers.includes(b) || grouped.has(b)) checkedBehaviours.delete(b);
+  // Order: each entry sits at its position in the stack, so a group takes
+  // the first selected member's place and ungrouping restores members to
+  // their original positions.
   type Entry = { pos: number; render: () => HTMLElement };
   const entries: Entry[] = [];
-  const grouped = new Set(sel.groups.flatMap((g) => g.members));
-  for (let b = 0; b < BEHAVIOURS.length; b++) {
-    if (!grouped.has(b)) entries.push({ pos: b, render: () => behaviourLayer(sel, b, { checkable: true }).layer });
+  for (const b of sel.layers) {
+    if (!grouped.has(b)) entries.push({ pos: sel.layers.indexOf(b), render: () => behaviourLayer(sel, b, { checkable: true }).layer });
   }
   for (const g of sel.groups) {
-    entries.push({ pos: Math.min(...g.members), render: () => groupLayer(sel, g) });
+    const idxs = g.members.map((m) => sel.layers.indexOf(m)).filter((i) => i >= 0);
+    entries.push({ pos: idxs.length ? Math.min(...idxs) : Number.POSITIVE_INFINITY, render: () => groupLayer(sel, g) });
   }
   entries.sort((a, b) => a.pos - b.pos);
   for (const e of entries) panelBody.appendChild(e.render());
+  if (sel.layers.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'no-behaviours';
+    empty.textContent = 'No behaviours';
+    panelBody.appendChild(empty);
+  }
   if (checkedBehaviours.size >= 2) {
     const action = document.createElement('div');
     action.className = 'group-action';
@@ -1242,6 +1378,26 @@ function renderBehavioursPanel(sel: Item): void {
     action.appendChild(btn);
     panelBody.appendChild(action);
   }
+  // Add behavior: a quiet pill at the bottom of the stack. Dimmed once
+  // all six behaviours are in the stack.
+  const wrap = document.createElement('div');
+  wrap.className = 'add-wrap';
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'add-btn';
+  addBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Add behavior</span>';
+  addBtn.setAttribute('aria-label', 'Add behavior');
+  addBtn.setAttribute('aria-expanded', String(addPickerOpen));
+  addBtn.disabled = sel.layers.length >= BEHAVIOURS.length;
+  addBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (sel.layers.length >= BEHAVIOURS.length) return;
+    addPickerOpen = !addPickerOpen;
+    renderPanel();
+  });
+  wrap.appendChild(addBtn);
+  panelBody.appendChild(wrap);
+  if (addPickerOpen) renderAddPicker(addBtn, sel);
 }
 
 function renderCanvasPanel(): void {
@@ -1593,7 +1749,7 @@ canvas.addEventListener('pointerup', (e) => {
     items.push(previewShape);
   }
   if (drag.kind === 'select' && drag.moved) save();
-  if (drag.kind === 'brush' || drag.kind === 'erase') save();
+  if (drag.kind === 'brush' || drag.kind === 'erase' || drag.kind === 'shape') save(); // shapes were lost on reload until the next save — they never saved on creation
   previewShape = null;
   drag = null;
   renderPanel();
@@ -1781,6 +1937,7 @@ window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
   if ((e.ctrlKey || e.metaKey) && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
   if (k === 'escape') {
+    if (addPickerOpen) { addPickerOpen = false; closeAddPickerEl(); renderPanel(); return; }
     if (panelView === 'colour') { panelView = 'auto'; renderPanel(); }
     return;
   }
@@ -1798,6 +1955,28 @@ window.addEventListener('keydown', (e) => {
   else return;
   renderToolbar();
   updateCursor();
+});
+
+// The Add behavior picker closes on a click anywhere else, on Escape
+// (handled above), or when the panel scrolls / the window resizes —
+// its anchor moved, so the popover would point at nothing.
+document.addEventListener('click', (e) => {
+  if (!addPickerOpen) return;
+  const t = e.target as HTMLElement | null;
+  if (t && t.closest('.add-picker, .add-btn')) return;
+  addPickerOpen = false;
+  closeAddPickerEl();
+  renderPanel();
+});
+panelBody.addEventListener('scroll', () => {
+  if (!addPickerOpen) return;
+  addPickerOpen = false;
+  closeAddPickerEl();
+}, { passive: true });
+window.addEventListener('resize', () => {
+  if (!addPickerOpen) return;
+  addPickerOpen = false;
+  closeAddPickerEl();
 });
 
 // ---------- init ----------

@@ -210,14 +210,31 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
   box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px rgba(29, 29, 31, 0.85), var(--shadow-sm);
 }
 
-/* Behaviours as layers: one row per behaviour, with an on/off
-   toggle, a name, and a dropdown that reveals its motion graph. */
-.blayer { border-bottom: 1px solid var(--hairline); }
-.blayer:last-child { border-bottom: none; }
-.layer-head {
-  display: flex; align-items: center; gap: 10px;
-  height: 44px; cursor: pointer;
+/* Behaviours as a layer stack: each behaviour is a distinct white
+   card — icon, name, on/off toggle, expand chevron, remove on hover —
+   with its graph and sliders inside when expanded. */
+.blayer {
+  background: #fff; border: 1px solid var(--hairline); border-radius: 9px;
+  margin-bottom: 8px; overflow: hidden;
 }
+.layer-head {
+  display: flex; align-items: center; gap: 8px;
+  height: 44px; padding: 0 4px 0 10px; cursor: pointer;
+}
+.layer-icon {
+  flex: none; width: 20px; height: 20px;
+  display: flex; align-items: center; justify-content: center; color: var(--ink);
+}
+.layer-icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+/* Remove layer: small ×, visible on hover (and on keyboard focus). */
+.layer-remove {
+  flex: none; width: 24px; height: 24px; border: none; border-radius: 7px;
+  background: transparent; color: var(--grey);
+  display: flex; align-items: center; justify-content: center; opacity: 0;
+}
+.blayer:hover .layer-remove, .layer-remove:focus-visible { opacity: 1; }
+.layer-remove:hover { background: rgba(0, 0, 0, 0.05); color: var(--ink); }
+.layer-remove svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 .layer-toggle {
   flex: none; width: 36px; height: 20px; border: none; border-radius: 999px;
   background: var(--fill); padding: 0; position: relative;
@@ -242,9 +259,9 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 .layer-check svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; visibility: hidden; }
 .layer-check.checked { background: var(--ink); border-color: transparent; }
 .layer-check.checked svg { visibility: visible; }
-/* Groups read as one layer: a quiet fill while expanded, members
-   nested under a hairline. The ungroup icon is always visible. */
-.blayer.group.expanded { background: var(--fill-2); border-radius: 12px; }
+/* Groups read as one layer: a quiet fill, members nested under a
+   hairline as white cards. The ungroup icon is always visible. */
+.blayer.group { background: var(--fill-2); }
 .group-head .layer-name { cursor: text; }
 .group-rename {
   flex: 1; min-width: 0; height: 28px; padding: 0 6px;
@@ -259,8 +276,44 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 .ungroup-btn:hover { background: rgba(0, 0, 0, 0.05); color: var(--ink); }
 .ungroup-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .group-members { border-left: 1px solid var(--hairline); margin: 4px 0 0 2px; padding-left: 6px; }
-.group-members .blayer:last-child { border-bottom: none; }
+.group-members .blayer:last-child { margin-bottom: 0; }
 .group-action { display: flex; justify-content: center; padding: 14px 0 4px; }
+/* Empty stack: one live-state line above the Add button. */
+.no-behaviours { font-size: 13px; color: var(--grey); padding: 8px 2px 12px; }
+/* Add behavior: a quiet full-width pill at the bottom of the stack. */
+.add-wrap { margin-top: 12px; }
+.add-btn {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: 100%; height: 32px;
+  border: 1px solid var(--hairline); border-radius: 999px; background: #fff;
+  box-shadow: var(--shadow-sm);
+  font-size: 13px; font-weight: 500; color: var(--ink);
+}
+.add-btn:hover { background: var(--bg-system); }
+.add-btn:disabled { opacity: 0.35; cursor: default; }
+.add-btn:disabled:hover { background: #fff; }
+.add-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+/* Add behavior picker: a small frosted popover like Bowerbird's
+   shape-picker flyout, anchored to the Add button. */
+.add-picker {
+  position: fixed; z-index: 50; width: 220px; padding: 6px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 16px;
+  box-shadow: var(--shadow-md);
+}
+.add-picker-row {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; height: 36px; padding: 0 10px;
+  border: none; border-radius: 9px; background: transparent;
+  font-size: 13px; font-weight: 500; color: var(--ink); text-align: left;
+}
+.add-picker-row:hover { background: rgba(0, 0, 0, 0.05); }
+.add-picker-row.in-stack { opacity: 0.45; cursor: default; }
+.add-picker-row.in-stack:hover { background: transparent; }
+.add-picker-row .layer-name { flex: 1; }
+.pick-check { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .layer-chev {
   flex: none; width: 28px; height: 28px; border: none; border-radius: 7px;
   background: transparent; color: var(--grey);
@@ -269,9 +322,9 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 .layer-chev:hover { background: rgba(0, 0, 0, 0.05); color: var(--ink); }
 .layer-chev svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.15s ease; }
 .blayer.expanded > .layer-head > .layer-chev svg { transform: rotate(180deg); }
-.layer-body { padding: 2px 0 12px; display: flex; flex-direction: column; gap: 8px; }
+.layer-body { padding: 2px 10px 12px; display: flex; flex-direction: column; gap: 8px; }
 .graph {
-  width: 248px; height: 48px; border-radius: 9px;
+  width: 232px; height: 48px; border-radius: 9px;
   background: var(--fill-2); display: block;
 }
 /* Behaviour parameter sliders: custom thin track, small round thumb —
