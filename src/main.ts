@@ -214,12 +214,12 @@ let gridMode: GridMode = 'empty';
 let projectName = 'Untitled';
 let panelOpen = true;
 let exporting = false; // an export (PNG sequence or video) is running right now
-let exportOpen = true; // the Export options (PNG / Video) are showing below the Export button
+let exportTab: 'png' | 'video' = 'png'; // the active tab in the Export card, persisted like videoFormat
 let exportProgress: { text: string; target: 'png' | 'video' } | null = null;
 // "Exporting 45/120" while an offline export runs, on the button doing it.
 function setExportProgress(text: string, target: 'png' | 'video'): void {
   exportProgress = { text, target };
-  const b = document.getElementById(target === 'png' ? 'export-png-option' : 'export-video-option');
+  const b = document.getElementById(target === 'png' ? 'export-png-btn' : 'export-video-btn');
   if (b) b.textContent = text;
 }
 type VideoFormat = 'gif' | 'webm' | 'mp4';
@@ -261,7 +261,7 @@ function save(): void {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
       items, itemGroups, stageId, projectName, stageBgId, stageBgCustom, gridMode, panelOpen,
       fg: color, bg: bgColour, penWidth, recent: recentColours, saved: savedColours,
-      videoFormat,
+      videoFormat, exportTab,
     }));
   } catch { /* storage full or unavailable */ }
 }
@@ -621,7 +621,7 @@ function load(): void {
         items: Item[]; itemGroups?: unknown; stageId: typeof stageId; projectName?: string;
         stageBgId?: StageBgId; stageBgCustom?: string | null; gridMode?: unknown; panelOpen?: boolean;
         fg?: string; bg?: string; penWidth?: number; recent?: string[]; saved?: string[];
-        videoFormat?: unknown;
+        videoFormat?: unknown; exportTab?: unknown;
       };
       if (Array.isArray(data.items) && data.items.length > 0) {
         items = data.items;
@@ -634,6 +634,7 @@ function load(): void {
         const gm = migrateGridMode(data.gridMode);
         if (gm !== null) gridMode = gm;
         if (data.videoFormat === 'gif' || data.videoFormat === 'webm' || data.videoFormat === 'mp4') videoFormat = data.videoFormat;
+        if (data.exportTab === 'png' || data.exportTab === 'video') exportTab = data.exportTab;
         if (typeof data.panelOpen === 'boolean') panelOpen = data.panelOpen;
         if (typeof data.fg === 'string') color = data.fg;
         if (typeof data.bg === 'string') bgColour = data.bg;
@@ -2322,35 +2323,47 @@ function renderCanvasPanel(): void {
     if (saveTimer !== null) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => { saveBtn.textContent = 'Save'; }, 1500);
   });
-  // One Export button; the PNG and Video options expand in place
-  // below it. No Scale, no Frame, no popover — just PNG / Video.
-  const exportBtn = document.createElement('button');
-  exportBtn.type = 'button';
-  exportBtn.className = 'pbtn' + (exportOpen ? ' open' : '');
-  exportBtn.id = 'export-btn';
-  exportBtn.setAttribute('aria-expanded', exportOpen ? 'true' : 'false');
-  exportBtn.innerHTML = 'Export<span class="exp-chev"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span>';
-  exportBtn.addEventListener('click', () => { exportOpen = !exportOpen; renderPanel(); });
-  actionsSec.appendChild(exportBtn);
-  let pngOpt: HTMLButtonElement | null = null;
-  let videoOpt: HTMLButtonElement | null = null;
-  if (exportOpen) {
-    const opts = document.createElement('div');
-    opts.id = 'export-options';
-    const mkOpt = (label: string, id: string, fn: () => void): HTMLButtonElement => {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'pbtn';
-      b.id = id;
-      b.textContent = label;
-      b.addEventListener('click', fn);
-      opts.appendChild(b);
-      return b;
-    };
-    pngOpt = mkOpt('PNG', 'export-png-option', () => { void exportPNGSequence(); });
-    videoOpt = mkOpt('Video', 'export-video-option', () => { void exportVideo(); });
-    // Video format: a small segmented control directly below the Video
-    // option. The choice persists (videoFormat) like before.
+  // Export is one bordered card: PNG and Video are tabs at its top,
+  // and the active tab's content sits below them. No toggle, no
+  // chevron, no Scale, no Frame, no popover.
+  const card = document.createElement('div');
+  card.id = 'export-card';
+  const tabs = document.createElement('div');
+  tabs.className = 'seg';
+  tabs.id = 'export-tabs';
+  tabs.setAttribute('role', 'tablist');
+  tabs.setAttribute('aria-label', 'Export');
+  const tabBtns: HTMLButtonElement[] = [];
+  for (const t of [{ id: 'png', label: 'PNG' }, { id: 'video', label: 'Video' }] as const) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = exportTab === t.id ? 'active' : '';
+    b.textContent = t.label;
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', exportTab === t.id ? 'true' : 'false');
+    b.addEventListener('click', () => {
+      if (exportTab === t.id) return;
+      exportTab = t.id;
+      save();
+      renderPanel();
+    });
+    tabs.appendChild(b);
+    tabBtns.push(b);
+  }
+  card.appendChild(tabs);
+  let actionBtn: HTMLButtonElement | null = null;
+  const fmtBtns: HTMLButtonElement[] = [];
+  if (exportTab === 'png') {
+    actionBtn = document.createElement('button');
+    actionBtn.type = 'button';
+    actionBtn.className = 'pbtn';
+    actionBtn.id = 'export-png-btn';
+    actionBtn.textContent = 'Export PNG';
+    actionBtn.addEventListener('click', () => { void exportPNGSequence(); });
+    card.appendChild(actionBtn);
+  } else {
+    // Video format: the small segmented control above the action
+    // button. The choice persists (videoFormat) like before.
     const fmtSeg = document.createElement('div');
     fmtSeg.className = 'seg';
     fmtSeg.id = 'video-format-seg';
@@ -2369,18 +2382,26 @@ function renderCanvasPanel(): void {
         renderPanel();
       });
       fmtSeg.appendChild(b);
+      fmtBtns.push(b);
     }
-    opts.appendChild(fmtSeg);
-    actionsSec.appendChild(opts);
+    card.appendChild(fmtSeg);
+    actionBtn = document.createElement('button');
+    actionBtn.type = 'button';
+    actionBtn.className = 'pbtn';
+    actionBtn.id = 'export-video-btn';
+    actionBtn.textContent = `Export ${videoFormat === 'gif' ? 'GIF' : videoFormat === 'webm' ? 'WebM' : 'MP4'}`;
+    actionBtn.addEventListener('click', () => { void exportVideo(); });
+    card.appendChild(actionBtn);
   }
+  actionsSec.appendChild(card);
   if (exporting) {
-    if (pngOpt) pngOpt.disabled = true;
-    if (videoOpt) videoOpt.disabled = true;
+    for (const b of tabBtns) b.disabled = true;
+    for (const b of fmtBtns) b.disabled = true;
+    if (actionBtn) actionBtn.disabled = true;
     // An offline export (PNG sequence, GIF, MP4) shows its progress on
-    // the option doing it; a WebM recording has no progress to show.
-    if (exportProgress?.target === 'png' && pngOpt) pngOpt.textContent = exportProgress.text;
-    else if (exportProgress?.target === 'video' && videoOpt) videoOpt.textContent = exportProgress.text;
-    else if (videoOpt) videoOpt.textContent = 'Recording…';
+    // the action button; a WebM recording has no progress to show.
+    if (exportProgress && actionBtn) actionBtn.textContent = exportProgress.text;
+    else if (actionBtn && exportTab === 'video') actionBtn.textContent = 'Recording…';
   }
   mkAction('Clear', 'clear-btn', clearStage);
 }
