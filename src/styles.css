@@ -314,6 +314,23 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 }
 #export-card .seg { margin-bottom: 8px; }
 #export-card .pbtn { margin-bottom: 0; }
+/* Export dropdown: the card in a frosted popover anchored below the
+   Export button, like the Add behavior picker. Fixed-position, so it
+   floats above the panel content and never pushes it down. */
+.export-dropdown {
+  position: fixed; z-index: 50; width: 257px; padding: 6px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 16px;
+  box-shadow: var(--shadow-md);
+}
+.export-dropdown #export-card { margin-bottom: 0; }
+/* Export button: label left, chevron right; the chevron turns up
+   while the dropdown is open. */
+.export-btn { display: flex; align-items: center; justify-content: space-between; padding: 0 10px; }
+.export-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.15s ease; }
+.export-btn.open svg { transform: rotate(180deg); }
 .bg-dots { display: flex; gap: 8px; }
 .bg-dot {
   width: 24px; height: 24px; border-radius: 50%;

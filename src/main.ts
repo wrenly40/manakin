@@ -229,6 +229,7 @@ let colourSlot: 'fg' | 'bg' = 'fg';
 let expandedLayerId: string | null = null;
 let expandedGroup: string | null = null; // id of the open group in the Behaviours panel
 let addPickerOpen = false; // the Add behavior popover is showing
+let exportDropdownOpen = false; // the Export dropdown (card in a popover) is showing
 let checkedLayers: Set<string> = new Set(); // top-level layer ids picked for grouping
 let checkedItemId: string | null = null; // the item the checked rows belong to
 let recentColours: string[] = [];
@@ -1576,9 +1577,13 @@ function drawGraph(cv: HTMLCanvasElement, layer: BehaviourLayer, ctx: LayerCtx):
 function renderPanel(): void {
   syncUndoButtons();
   closeAddPickerEl();
+  closeExportDropdownEl();
   const grp = selectedItemGroup();
   const sel = selected();
   if (panelView !== 'auto' || (!grp && !sel)) addPickerOpen = false;
+  // The Export dropdown is anchored to a button that only exists on
+  // the Canvas panel; any other view closes it.
+  if (panelView !== 'auto' || grp || sel || selectedIds.length >= 2) exportDropdownOpen = false;
   panelBody.innerHTML = '';
   if (panelView === 'colour') { renderColourPanel(); return; }
   if (grp) { renderItemGroupPanel(grp); return; }
@@ -2221,6 +2226,114 @@ function renderItemGroupPanel(group: ItemGroup): void {
   panelBody.appendChild(renderAddBehaviourButton(host));
 }
 
+function closeExportDropdownEl(): void {
+  document.querySelector('.export-dropdown')?.remove();
+}
+
+// The Export card itself, unchanged from the bordered-card round:
+// PNG and Video are tabs at its top, the active tab's content sits
+// below them. No Scale, no Frame. Built fresh on every render, so
+// tab switches and format picks re-render through renderPanel.
+function renderExportCard(): HTMLDivElement {
+  const card = document.createElement('div');
+  card.id = 'export-card';
+  const tabs = document.createElement('div');
+  tabs.className = 'seg';
+  tabs.id = 'export-tabs';
+  tabs.setAttribute('role', 'tablist');
+  tabs.setAttribute('aria-label', 'Export');
+  const tabBtns: HTMLButtonElement[] = [];
+  for (const t of [{ id: 'png', label: 'PNG' }, { id: 'video', label: 'Video' }] as const) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = exportTab === t.id ? 'active' : '';
+    b.textContent = t.label;
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-selected', exportTab === t.id ? 'true' : 'false');
+    b.addEventListener('click', () => {
+      if (exportTab === t.id) return;
+      exportTab = t.id;
+      save();
+      renderPanel();
+    });
+    tabs.appendChild(b);
+    tabBtns.push(b);
+  }
+  card.appendChild(tabs);
+  let actionBtn: HTMLButtonElement | null = null;
+  const fmtBtns: HTMLButtonElement[] = [];
+  if (exportTab === 'png') {
+    actionBtn = document.createElement('button');
+    actionBtn.type = 'button';
+    actionBtn.className = 'pbtn';
+    actionBtn.id = 'export-png-btn';
+    actionBtn.textContent = 'Export PNG';
+    actionBtn.addEventListener('click', () => { void exportPNGSequence(); });
+    card.appendChild(actionBtn);
+  } else {
+    // Video format: the small segmented control above the action
+    // button. The choice persists (videoFormat) like before.
+    const fmtSeg = document.createElement('div');
+    fmtSeg.className = 'seg';
+    fmtSeg.id = 'video-format-seg';
+    fmtSeg.setAttribute('role', 'group');
+    fmtSeg.setAttribute('aria-label', 'Video format');
+    for (const f of [{ id: 'gif', label: 'GIF' }, { id: 'webm', label: 'WebM' }, { id: 'mp4', label: 'MP4' }] as const) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = videoFormat === f.id ? 'active' : '';
+      b.textContent = f.label;
+      b.setAttribute('aria-label', `Video format ${f.label}`);
+      b.addEventListener('click', () => {
+        if (videoFormat === f.id) return;
+        videoFormat = f.id;
+        save();
+        renderPanel();
+      });
+      fmtSeg.appendChild(b);
+      fmtBtns.push(b);
+    }
+    card.appendChild(fmtSeg);
+    actionBtn = document.createElement('button');
+    actionBtn.type = 'button';
+    actionBtn.className = 'pbtn';
+    actionBtn.id = 'export-video-btn';
+    actionBtn.textContent = `Export ${videoFormat === 'gif' ? 'GIF' : videoFormat === 'webm' ? 'WebM' : 'MP4'}`;
+    actionBtn.addEventListener('click', () => { void exportVideo(); });
+    card.appendChild(actionBtn);
+  }
+  if (exporting) {
+    for (const b of tabBtns) b.disabled = true;
+    for (const b of fmtBtns) b.disabled = true;
+    if (actionBtn) actionBtn.disabled = true;
+    // An offline export (PNG sequence, GIF, MP4) shows its progress on
+    // the action button; a WebM recording has no progress to show.
+    if (exportProgress && actionBtn) actionBtn.textContent = exportProgress.text;
+    else if (actionBtn && exportTab === 'video') actionBtn.textContent = 'Recording…';
+  }
+  return card;
+}
+
+// The Export dropdown: the card in a frosted popover anchored below
+// the Export button, like the Add behavior picker. Fixed-position so
+// it floats above the panel content and never pushes it down; flips
+// above the button when there is no room below.
+function renderExportDropdown(anchorBtn: HTMLElement): void {
+  closeExportDropdownEl();
+  const pop = document.createElement('div');
+  pop.className = 'export-dropdown';
+  pop.setAttribute('role', 'menu');
+  pop.appendChild(renderExportCard());
+  document.body.appendChild(pop);
+  const r = anchorBtn.getBoundingClientRect();
+  const w = pop.offsetWidth;
+  const h = pop.offsetHeight;
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
+  const top = (r.bottom + 6 + h > window.innerHeight) ? Math.max(8, r.top - 6 - h) : r.bottom + 6;
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
+}
+
 function renderCanvasPanel(): void {
   panelTitle.textContent = 'Canvas';
   const mkSection = (label: string): HTMLDivElement => {
@@ -2323,86 +2436,23 @@ function renderCanvasPanel(): void {
     if (saveTimer !== null) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => { saveBtn.textContent = 'Save'; }, 1500);
   });
-  // Export is one bordered card: PNG and Video are tabs at its top,
-  // and the active tab's content sits below them. No toggle, no
-  // chevron, no Scale, no Frame, no popover.
-  const card = document.createElement('div');
-  card.id = 'export-card';
-  const tabs = document.createElement('div');
-  tabs.className = 'seg';
-  tabs.id = 'export-tabs';
-  tabs.setAttribute('role', 'tablist');
-  tabs.setAttribute('aria-label', 'Export');
-  const tabBtns: HTMLButtonElement[] = [];
-  for (const t of [{ id: 'png', label: 'PNG' }, { id: 'video', label: 'Video' }] as const) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = exportTab === t.id ? 'active' : '';
-    b.textContent = t.label;
-    b.setAttribute('role', 'tab');
-    b.setAttribute('aria-selected', exportTab === t.id ? 'true' : 'false');
-    b.addEventListener('click', () => {
-      if (exportTab === t.id) return;
-      exportTab = t.id;
-      save();
-      renderPanel();
-    });
-    tabs.appendChild(b);
-    tabBtns.push(b);
-  }
-  card.appendChild(tabs);
-  let actionBtn: HTMLButtonElement | null = null;
-  const fmtBtns: HTMLButtonElement[] = [];
-  if (exportTab === 'png') {
-    actionBtn = document.createElement('button');
-    actionBtn.type = 'button';
-    actionBtn.className = 'pbtn';
-    actionBtn.id = 'export-png-btn';
-    actionBtn.textContent = 'Export PNG';
-    actionBtn.addEventListener('click', () => { void exportPNGSequence(); });
-    card.appendChild(actionBtn);
-  } else {
-    // Video format: the small segmented control above the action
-    // button. The choice persists (videoFormat) like before.
-    const fmtSeg = document.createElement('div');
-    fmtSeg.className = 'seg';
-    fmtSeg.id = 'video-format-seg';
-    fmtSeg.setAttribute('role', 'group');
-    fmtSeg.setAttribute('aria-label', 'Video format');
-    for (const f of [{ id: 'gif', label: 'GIF' }, { id: 'webm', label: 'WebM' }, { id: 'mp4', label: 'MP4' }] as const) {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = videoFormat === f.id ? 'active' : '';
-      b.textContent = f.label;
-      b.setAttribute('aria-label', `Video format ${f.label}`);
-      b.addEventListener('click', () => {
-        if (videoFormat === f.id) return;
-        videoFormat = f.id;
-        save();
-        renderPanel();
-      });
-      fmtSeg.appendChild(b);
-      fmtBtns.push(b);
-    }
-    card.appendChild(fmtSeg);
-    actionBtn = document.createElement('button');
-    actionBtn.type = 'button';
-    actionBtn.className = 'pbtn';
-    actionBtn.id = 'export-video-btn';
-    actionBtn.textContent = `Export ${videoFormat === 'gif' ? 'GIF' : videoFormat === 'webm' ? 'WebM' : 'MP4'}`;
-    actionBtn.addEventListener('click', () => { void exportVideo(); });
-    card.appendChild(actionBtn);
-  }
-  actionsSec.appendChild(card);
-  if (exporting) {
-    for (const b of tabBtns) b.disabled = true;
-    for (const b of fmtBtns) b.disabled = true;
-    if (actionBtn) actionBtn.disabled = true;
-    // An offline export (PNG sequence, GIF, MP4) shows its progress on
-    // the action button; a WebM recording has no progress to show.
-    if (exportProgress && actionBtn) actionBtn.textContent = exportProgress.text;
-    else if (actionBtn && exportTab === 'video') actionBtn.textContent = 'Recording…';
-  }
+  // Export is a button with a chevron; clicking it opens a dropdown
+  // holding the bordered card (PNG / Video tabs). The dropdown is an
+  // overlay, so Clear never moves when it opens.
+  const exportBtn = document.createElement('button');
+  exportBtn.type = 'button';
+  exportBtn.className = 'pbtn export-btn' + (exportDropdownOpen ? ' open' : '');
+  exportBtn.id = 'export-btn';
+  exportBtn.setAttribute('aria-haspopup', 'true');
+  exportBtn.setAttribute('aria-expanded', String(exportDropdownOpen));
+  exportBtn.innerHTML = '<span>Export</span><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>';
+  exportBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    exportDropdownOpen = !exportDropdownOpen;
+    renderPanel();
+  });
+  actionsSec.appendChild(exportBtn);
+  if (exportDropdownOpen) renderExportDropdown(exportBtn);
   mkAction('Clear', 'clear-btn', clearStage);
 }
 
@@ -3211,6 +3261,10 @@ function downloadBlob(blob: Blob, filename: string): void {
   a.href = url;
   a.download = filename;
   document.body.appendChild(a);
+  // The synthetic click must not bubble to the document: the
+  // outside-click handler would read it as a click outside the
+  // Export dropdown and close it mid-download.
+  a.addEventListener('click', (e) => e.stopPropagation());
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
@@ -3225,6 +3279,7 @@ window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
   if (k === 'escape') {
     if (addPickerOpen) { addPickerOpen = false; closeAddPickerEl(); renderPanel(); return; }
+    if (exportDropdownOpen) { exportDropdownOpen = false; closeExportDropdownEl(); renderPanel(); return; }
     if (focusedId !== null) { focusedId = null; renderPanel(); return; }
     if (selectedIds.length > 0) { selectedIds = []; renderPanel(); return; }
     if (panelView === 'colour') { panelView = 'auto'; renderPanel(); }
@@ -3256,7 +3311,8 @@ window.addEventListener('keydown', (e) => {
 
 // The Add behavior picker closes on a click anywhere else, on Escape
 // (handled above), or when the panel scrolls / the window resizes —
-// its anchor moved, so the popover would point at nothing.
+// its anchor moved, so the popover would point at nothing. The Export
+// dropdown closes the same way.
 document.addEventListener('click', (e) => {
   const t = e.target as HTMLElement | null;
   if (addPickerOpen) {
@@ -3266,16 +3322,35 @@ document.addEventListener('click', (e) => {
     renderPanel();
     return;
   }
+  if (exportDropdownOpen) {
+    if (t && t.closest('.export-dropdown, #export-btn')) return;
+    exportDropdownOpen = false;
+    closeExportDropdownEl();
+    renderPanel();
+    return;
+  }
 });
 panelBody.addEventListener('scroll', () => {
   if (!addPickerOpen) return;
   addPickerOpen = false;
   closeAddPickerEl();
 }, { passive: true });
+panelBody.addEventListener('scroll', () => {
+  if (!exportDropdownOpen) return;
+  exportDropdownOpen = false;
+  closeExportDropdownEl();
+  renderPanel();
+}, { passive: true });
 window.addEventListener('resize', () => {
   if (!addPickerOpen) return;
   addPickerOpen = false;
   closeAddPickerEl();
+});
+window.addEventListener('resize', () => {
+  if (!exportDropdownOpen) return;
+  exportDropdownOpen = false;
+  closeExportDropdownEl();
+  renderPanel();
 });
 
 // ---------- init ----------
