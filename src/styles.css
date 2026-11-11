@@ -410,6 +410,35 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 }
 .add-picker-row:hover { background: rgba(0, 0, 0, 0.05); }
 .add-picker-row .layer-name { flex: 1; }
+/* Export menu: the same frosted popover as the Add behavior picker,
+   anchored to the Export button. */
+.export-menu {
+  position: fixed; z-index: 50; width: 240px; padding: 12px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 16px;
+  box-shadow: var(--shadow-md);
+}
+.export-label {
+  font-size: 12px; font-weight: 600; color: var(--grey); margin: 0 0 6px;
+}
+.export-menu .seg { margin-bottom: 12px; }
+.export-loop { font-size: 13px; color: var(--grey); padding: 2px 2px 12px; }
+.export-menu .pbtn { margin-bottom: 0; }
+/* Grid tiles: six small preview tiles showing the pattern itself,
+   name only in the title / aria-label. Two rows of three. */
+.grid-tiles { display: flex; flex-wrap: wrap; gap: 8px; }
+.grid-tile {
+  width: 40px; height: 30px; padding: 0; overflow: hidden;
+  border: 1px solid var(--hairline); border-radius: 8px; background: #fff;
+  display: flex; align-items: center; justify-content: center;
+}
+.grid-tile:hover { background: var(--bg-system); }
+.grid-tile.active {
+  box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px rgba(29, 29, 31, 0.85);
+}
+.grid-tile svg { width: 40px; height: 30px; display: block; }
 .layer-chev {
   flex: none; width: 28px; height: 28px; border: none; border-radius: 7px;
   background: transparent; color: var(--grey);

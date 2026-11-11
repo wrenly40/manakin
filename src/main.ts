@@ -106,7 +106,27 @@ const STAGE_BGS = [
   { id: 'ink', label: 'Ink', value: '#1d1d1f' },
 ] as const;
 type StageBgId = (typeof STAGE_BGS)[number]['id'] | 'custom';
-type GridMode = 'dots' | 'lines' | 'off';
+// Composition grids for drawing: one overlay style per option, drawn on
+// the stage canvas only — never in PNG/WebM exports (renderFrame gates
+// the grid on the on-screen canvas). 'grid' is the dots pattern (24px
+// step, 2px dots) — the default grid was Off, so Dots, Bowerbird's
+// default, is the one drawing grid.
+type GridMode = 'empty' | 'grid' | 'thirds' | 'horizon' | 'centre' | 'golden';
+function migrateGridMode(v: unknown): GridMode | null {
+  if (v === 'empty' || v === 'grid' || v === 'thirds' || v === 'horizon' || v === 'centre' || v === 'golden') return v;
+  if (v === 'dots' || v === 'lines') return 'grid'; // old three-way options
+  if (v === 'off') return 'empty';
+  return null;
+}
+// Mini previews for the grid tiles: the pattern itself, drawn small.
+const GRID_OPTIONS: { id: GridMode; label: string; svg: string }[] = [
+  { id: 'empty', label: 'Empty', svg: '<svg viewBox="0 0 40 30" aria-hidden="true"></svg>' },
+  { id: 'grid', label: 'Grid', svg: '<svg viewBox="0 0 40 30" aria-hidden="true"><g fill="rgba(29,29,31,0.55)"><circle cx="8" cy="7.5" r="1"/><circle cx="16" cy="7.5" r="1"/><circle cx="24" cy="7.5" r="1"/><circle cx="32" cy="7.5" r="1"/><circle cx="8" cy="15" r="1"/><circle cx="16" cy="15" r="1"/><circle cx="24" cy="15" r="1"/><circle cx="32" cy="15" r="1"/><circle cx="8" cy="22.5" r="1"/><circle cx="16" cy="22.5" r="1"/><circle cx="24" cy="22.5" r="1"/><circle cx="32" cy="22.5" r="1"/></g></svg>' },
+  { id: 'thirds', label: 'Thirds', svg: '<svg viewBox="0 0 40 30" aria-hidden="true"><g stroke="rgba(29,29,31,0.55)" stroke-width="1"><path d="M13.3 2v26M26.7 2v26M2 10h36M2 20h36"/></g></svg>' },
+  { id: 'horizon', label: 'Horizon', svg: '<svg viewBox="0 0 40 30" aria-hidden="true"><g stroke="rgba(29,29,31,0.55)" stroke-width="1"><path d="M2 10h36M2 20h36"/></g></svg>' },
+  { id: 'centre', label: 'Centre', svg: '<svg viewBox="0 0 40 30" aria-hidden="true"><g stroke="rgba(29,29,31,0.55)" stroke-width="1"><path d="M20 2v26M2 15h36"/></g></svg>' },
+  { id: 'golden', label: 'Golden', svg: '<svg viewBox="0 0 40 30" aria-hidden="true"><g stroke="rgba(29,29,31,0.55)" stroke-width="1"><path d="M15.3 2v26M24.7 2v26M2 11.5h36M2 18.5h36"/></g></svg>' },
+];
 const STAGES = [
   { id: 'wide', label: '16:9', w: 960, h: 540 },
   { id: 'square', label: 'Square', w: 720, h: 720 },
@@ -137,7 +157,6 @@ let selectedId: string | null = null;
 // Double-click focus (view state only — never saved, never an undo entry):
 // the focused part renders full, every other part at 0.1.
 let focusedId: string | null = null;
-let lastFocusExitAt = 0; // when focus was last exited by a single click on empty stage
 // Double-click pair tracking: the second press of a pair must not fire
 // paint or open the text editor a second time.
 let lastDown: { t: number; x: number; y: number } | null = null;
@@ -152,9 +171,15 @@ let shapeKind: 'rect' | 'ellipse' = 'rect';
 let stageId: 'wide' | 'square' | 'portrait' = 'wide';
 let stageBgId: StageBgId = 'white';
 let stageBgCustom: string | null = null;
-let gridMode: GridMode = 'off';
+let gridMode: GridMode = 'empty';
 let projectName = 'Untitled';
 let panelOpen = true;
+// Export menu choices (persisted in the save, like panelOpen).
+let exportFormat: 'png' | 'webm' = 'png';
+let exportScale: 1 | 2 = 1;
+let exportFrame: 'current' | 'start' = 'current';
+let exportMenuOpen = false; // the Export popover is showing
+let exporting = false; // a video export is recording right now
 let panelView: 'auto' | 'colour' = 'auto';
 let colourSlot: 'fg' | 'bg' = 'fg';
 let expandedLayerId: string | null = null;
@@ -195,6 +220,7 @@ function save(): void {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
       items, stageId, projectName, stageBgId, stageBgCustom, gridMode, panelOpen,
       fg: color, bg: bgColour, penWidth, recent: recentColours, saved: savedColours,
+      exportFormat, exportScale, exportFrame,
     }));
   } catch { /* storage full or unavailable */ }
 }
@@ -243,13 +269,14 @@ function restore(json: string): void {
     } else if (data && typeof data === 'object') {
       const d = data as {
         items?: Item[]; stageId?: typeof stageId; stageBgId?: StageBgId;
-        stageBgCustom?: string | null; gridMode?: GridMode;
+        stageBgCustom?: string | null; gridMode?: unknown;
       };
       if (Array.isArray(d.items)) items = d.items;
       if (d.stageId === 'wide' || d.stageId === 'square' || d.stageId === 'portrait') stageId = d.stageId;
       if (d.stageBgId) stageBgId = d.stageBgId;
       stageBgCustom = typeof d.stageBgCustom === 'string' ? d.stageBgCustom : null;
-      if (d.gridMode === 'dots' || d.gridMode === 'lines' || d.gridMode === 'off') gridMode = d.gridMode;
+      const gm = migrateGridMode(d.gridMode);
+      if (gm !== null) gridMode = gm;
     }
   } catch { /* corrupted history entry: keep current items */ }
   items.forEach(migrateItem); // undo snapshots from older saves may lack the newer parameter fields
@@ -512,8 +539,9 @@ function load(): void {
     if (raw) {
       const data = JSON.parse(raw) as {
         items: Item[]; stageId: typeof stageId; projectName?: string;
-        stageBgId?: StageBgId; stageBgCustom?: string | null; gridMode?: GridMode; panelOpen?: boolean;
+        stageBgId?: StageBgId; stageBgCustom?: string | null; gridMode?: unknown; panelOpen?: boolean;
         fg?: string; bg?: string; penWidth?: number; recent?: string[]; saved?: string[];
+        exportFormat?: unknown; exportScale?: unknown; exportFrame?: unknown;
       };
       if (Array.isArray(data.items) && data.items.length > 0) {
         items = data.items;
@@ -522,7 +550,11 @@ function load(): void {
         if (typeof data.projectName === 'string' && data.projectName.trim()) projectName = data.projectName;
         if (data.stageBgId && (STAGE_BGS.some((b) => b.id === data.stageBgId) || data.stageBgId === 'custom')) stageBgId = data.stageBgId;
         if (typeof data.stageBgCustom === 'string') stageBgCustom = data.stageBgCustom;
-        if (data.gridMode === 'dots' || data.gridMode === 'lines' || data.gridMode === 'off') gridMode = data.gridMode;
+        const gm = migrateGridMode(data.gridMode);
+        if (gm !== null) gridMode = gm;
+        if (data.exportFormat === 'png' || data.exportFormat === 'webm') exportFormat = data.exportFormat;
+        if (data.exportScale === 1 || data.exportScale === 2) exportScale = data.exportScale;
+        if (data.exportFrame === 'current' || data.exportFrame === 'start') exportFrame = data.exportFrame;
         if (typeof data.panelOpen === 'boolean') panelOpen = data.panelOpen;
         if (typeof data.fg === 'string') color = data.fg;
         if (typeof data.bg === 'string') bgColour = data.bg;
@@ -1198,20 +1230,32 @@ function renderFrame(t01: number, target: CanvasRenderingContext2D = ctx, dprOve
   target.clearRect(0, 0, w, h);
   target.fillStyle = stageBgValue();
   target.fillRect(0, 0, w, h);
-  if (gridMode !== 'off') {
-    const step = 24;
+  // The grid is a drawing/composition overlay: it renders on the
+  // on-screen canvas only, never in exports (offscreen targets).
+  if (target === ctx && gridMode !== 'empty') {
     const gridCol = stageBgId === 'ink' ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.08)';
-    if (gridMode === 'dots') {
+    if (gridMode === 'grid') {
+      const step = 24;
       target.fillStyle = gridCol;
       for (let x = step; x < w; x += step) {
         for (let y = step; y < h; y += step) target.fillRect(x - 1, y - 1, 2, 2);
       }
     } else {
+      // Composition lines: thin, subtle, same hairline language.
+      const phi = (1 + Math.sqrt(5)) / 2;
+      const g1 = 1 / phi; // ≈0.382
+      const g2 = 1 - g1; // ≈0.618
+      const vlines: number[] = [];
+      const hlines: number[] = [];
+      if (gridMode === 'thirds') { vlines.push(w / 3, (2 * w) / 3); hlines.push(h / 3, (2 * h) / 3); }
+      if (gridMode === 'horizon') { hlines.push(h / 3, (2 * h) / 3); }
+      if (gridMode === 'centre') { vlines.push(w / 2); hlines.push(h / 2); }
+      if (gridMode === 'golden') { vlines.push(w * g1, w * g2); hlines.push(h * g1, h * g2); }
       target.strokeStyle = gridCol;
       target.lineWidth = 1;
       target.beginPath();
-      for (let x = step; x < w; x += step) { target.moveTo(x, 0); target.lineTo(x, h); }
-      for (let y = step; y < h; y += step) { target.moveTo(0, y); target.lineTo(w, y); }
+      for (const x of vlines) { target.moveTo(x, 0); target.lineTo(x, h); }
+      for (const y of hlines) { target.moveTo(0, y); target.lineTo(w, y); }
       target.stroke();
     }
   }
@@ -1336,6 +1380,8 @@ function drawGraph(cv: HTMLCanvasElement, it: Item, layer: BehaviourLayer): void
 function renderPanel(): void {
   syncUndoButtons();
   closeAddPickerEl();
+  closeExportMenuEl();
+  exportMenuOpen = false;
   if (panelView !== 'auto' || !selected()) addPickerOpen = false;
   panelBody.innerHTML = '';
   if (panelView === 'colour') { renderColourPanel(); return; }
@@ -1809,6 +1855,78 @@ function renderAddPicker(anchorBtn: HTMLElement): void {
   pop.style.top = `${top}px`;
 }
 
+function closeExportMenuEl(): void {
+  document.querySelector('.export-menu')?.remove();
+}
+
+// The Export menu: a small frosted popover anchored to the Export button,
+// like the Add behavior picker. Format, scale, and — for PNG — which
+// frame to render; for video the loop length is live state, not a choice.
+// Choices are saved as they are picked and survive a reload.
+function renderExportMenu(anchorBtn: HTMLElement): void {
+  closeExportMenuEl();
+  const pop = document.createElement('div');
+  pop.className = 'export-menu';
+  pop.setAttribute('role', 'menu');
+  const mkLabel = (text: string): void => {
+    const l = document.createElement('div');
+    l.className = 'export-label';
+    l.textContent = text;
+    pop.appendChild(l);
+  };
+  const mkSeg = <T extends string | number>(options: { id: T; label: string }[], current: T, onPick: (v: T) => void): void => {
+    const seg = document.createElement('div');
+    seg.className = 'seg';
+    for (const o of options) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = current === o.id ? 'active' : '';
+      b.textContent = o.label;
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        onPick(o.id);
+        save();
+        renderExportMenu(anchorBtn);
+      });
+      seg.appendChild(b);
+    }
+    pop.appendChild(seg);
+  };
+  mkLabel('Format');
+  mkSeg([{ id: 'png', label: 'PNG' }, { id: 'webm', label: 'Video' }] as const, exportFormat, (v) => { exportFormat = v; });
+  mkLabel('Scale');
+  mkSeg([{ id: 1, label: '1×' }, { id: 2, label: '2×' }] as const, exportScale, (v) => { exportScale = v; });
+  if (exportFormat === 'png') {
+    mkLabel('Frame');
+    mkSeg([{ id: 'current', label: 'Current' }, { id: 'start', label: 'Start' }] as const, exportFrame, (v) => { exportFrame = v; });
+  } else {
+    const loop = document.createElement('div');
+    loop.className = 'export-loop';
+    loop.textContent = `${(loopMs() / 1000).toFixed(1)}s loop`;
+    pop.appendChild(loop);
+  }
+  const go = document.createElement('button');
+  go.type = 'button';
+  go.className = 'pbtn';
+  go.textContent = 'Export';
+  go.addEventListener('click', (e) => {
+    e.stopPropagation();
+    exportMenuOpen = false;
+    closeExportMenuEl();
+    if (exportFormat === 'png') exportPNG(exportScale, exportFrame);
+    else void exportVideo(exportScale);
+  });
+  pop.appendChild(go);
+  document.body.appendChild(pop);
+  const r = anchorBtn.getBoundingClientRect();
+  const w = pop.offsetWidth;
+  const h = pop.offsetHeight;
+  const left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
+  const top = (r.bottom + 6 + h > window.innerHeight) ? Math.max(8, r.top - 6 - h) : r.bottom + 6;
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
+}
+
 function renderBehavioursPanel(sel: Item): void {
   panelTitle.textContent = 'Behaviours';
   if (checkedItemId !== sel.id) { checkedLayers.clear(); checkedItemId = sel.id; addPickerOpen = false; }
@@ -1947,15 +2065,17 @@ function renderCanvasPanel(): void {
   }
   bgSec.appendChild(bgDots);
   const gridSec = mkSection('Grid');
-  const gridSeg = document.createElement('div');
-  gridSeg.className = 'seg';
-  gridSeg.setAttribute('role', 'group');
-  gridSeg.setAttribute('aria-label', 'Grid');
-  for (const g of [{ id: 'dots', label: 'Dots' }, { id: 'lines', label: 'Lines' }, { id: 'off', label: 'Off' }] as const) {
+  const gridTiles = document.createElement('div');
+  gridTiles.className = 'grid-tiles';
+  gridTiles.setAttribute('role', 'group');
+  gridTiles.setAttribute('aria-label', 'Grid');
+  for (const g of GRID_OPTIONS) {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = gridMode === g.id ? 'active' : '';
-    b.textContent = g.label;
+    b.className = 'grid-tile' + (gridMode === g.id ? ' active' : '');
+    b.title = g.label;
+    b.setAttribute('aria-label', `Grid ${g.label}`);
+    b.innerHTML = g.svg;
     b.addEventListener('click', () => {
       if (gridMode === g.id) return;
       pushHistory();
@@ -1963,9 +2083,9 @@ function renderCanvasPanel(): void {
       save();
       renderPanel();
     });
-    gridSeg.appendChild(b);
+    gridTiles.appendChild(b);
   }
-  gridSec.appendChild(gridSeg);
+  gridSec.appendChild(gridTiles);
   const actionsSec = mkSection('Actions');
   const mkAction = (label: string, id: string, fn: () => void): HTMLButtonElement => {
     const b = document.createElement('button');
@@ -1977,9 +2097,24 @@ function renderCanvasPanel(): void {
     actionsSec.appendChild(b);
     return b;
   };
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  const saveBtn = mkAction('Save', 'save-btn', () => {
+    save();
+    saveBtn.textContent = 'Saved';
+    if (saveTimer !== null) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => { saveBtn.textContent = 'Save'; }, 1500);
+  });
+  const exportBtn = mkAction('Export', 'export-btn', () => {
+    exportMenuOpen = !exportMenuOpen;
+    if (exportMenuOpen) renderExportMenu(exportBtn);
+    else closeExportMenuEl();
+  });
+  if (exporting) {
+    exportBtn.disabled = true;
+    exportBtn.classList.add('busy');
+    exportBtn.title = 'Recording…';
+  }
   mkAction('Clear', 'clear-btn', clearStage);
-  mkAction('Export PNG', 'png-btn', exportPNG);
-  mkAction('Export Video', 'video-btn', exportVideo);
 }
 
 // ---------- colour panel ----------
@@ -2214,10 +2349,8 @@ canvas.addEventListener('pointerdown', (e) => {
       drag = { kind: 'select', start: p, last: p, item: hit, moved: false, before: gestureStart(), erased: false };
     } else {
       selectedId = null;
-      // Single-clicking empty stage exits focus (and deselects). The
-      // timestamp stops the following dblclick event reopening the text
-      // editor behind the exit.
-      if (focusedId !== null) { focusedId = null; lastFocusExitAt = Date.now(); }
+      // Single-clicking empty stage exits focus (and deselects).
+      if (focusedId !== null) focusedId = null;
       renderPanel();
       drag = null;
     }
@@ -2448,27 +2581,22 @@ canvas.addEventListener('dblclick', (e) => {
   // Double-click focuses a part: it stays full opacity, everything else
   // dims to 0.1. Double-clicking the focused part again, or empty stage,
   // exits focus. The text and paint tools keep their click meanings, so
-  // focus only applies with the other tools.
-  if (tool !== 'text' && tool !== 'paint') {
-    if (hit) {
-      if (focusedId === hit.id) focusedId = null;
-      else focusedId = hit.id;
-      selectedId = hit.id;
-      renderPanel();
-      return;
-    }
-    // Empty stage: exit focus. The gesture is consumed here — including
-    // when a single click just exited it, so no text editor opens
-    // behind the exit — and otherwise the old behaviour below runs.
-    if (focusedId !== null || Date.now() - lastFocusExitAt < 500) {
-      focusedId = null;
-      selectedId = null;
-      renderPanel();
-      return;
-    }
+  // focus only applies with the other tools. A double-click never opens
+  // the text editor — text is created only by a single click with the
+  // Text tool.
+  if (tool === 'text' || tool === 'paint') return;
+  if (hit) {
+    if (focusedId === hit.id) focusedId = null;
+    else focusedId = hit.id;
+    selectedId = hit.id;
+    renderPanel();
+    return;
   }
-  if (hit && hit.type === 'text') { selectedId = hit.id; openTextEditor(hit, p); }
-  else if (tool === 'text' || !hit) openTextEditor(null, p);
+  if (focusedId !== null) {
+    focusedId = null;
+    selectedId = null;
+    renderPanel();
+  }
 });
 canvas.addEventListener('pointerdown', (e) => {
   if (tool === 'text') {
@@ -2512,23 +2640,30 @@ stopBtn.addEventListener('click', () => {
   setPlayLabel();
 });
 forwardBtn.addEventListener('click', () => { playTime = loopMs() - 1; });
-function exportPNG(): void {
+function exportPNG(scale: number, frame: 'current' | 'start'): void {
   const { w, h } = stageSize();
   const off = document.createElement('canvas');
-  off.width = w; off.height = h;
+  off.width = w * scale; off.height = h * scale;
   const octx = off.getContext('2d')!;
-  renderFrame(playTime / loopMs(), octx, 1);
+  const t01 = frame === 'start' ? 0 : playTime / loopMs();
+  renderFrame(t01, octx, scale);
   off.toBlob((blob) => {
     if (!blob) return;
     downloadBlob(blob, 'manakin.png');
   }, 'image/png');
 }
-async function exportVideo(): Promise<void> {
-  const btn = document.getElementById('video-btn') as HTMLButtonElement | null;
-  if (btn) { btn.disabled = true; btn.classList.add('busy'); btn.title = 'Recording…'; }
-  const wasPlaying = playing;
-  if (!playing) { playing = true; setPlayLabel(); lastTs = 0; }
-  const stream = canvas.captureStream(30);
+// Video records one full loop to an offscreen canvas at stage size ×
+// scale, driven in real time — the on-screen canvas and play state are
+// left alone.
+async function exportVideo(scale: number): Promise<void> {
+  if (exporting) return;
+  exporting = true;
+  renderPanel();
+  const { w, h } = stageSize();
+  const off = document.createElement('canvas');
+  off.width = w * scale; off.height = h * scale;
+  const octx = off.getContext('2d')!;
+  const stream = off.captureStream(30);
   const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
     ? 'video/webm;codecs=vp9' : 'video/webm';
   const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000 });
@@ -2536,13 +2671,22 @@ async function exportVideo(): Promise<void> {
   rec.ondataavailable = (ev) => { if (ev.data.size > 0) chunks.push(ev.data); };
   const done = new Promise<void>((resolve) => { rec.onstop = () => resolve(); });
   rec.start(100);
-  await new Promise((r) => setTimeout(r, loopMs() + 200));
+  const L = loopMs();
+  const start = performance.now();
+  await new Promise<void>((resolve) => {
+    const tick = () => {
+      const el = performance.now() - start;
+      if (el >= L) { renderFrame(0, octx, scale); resolve(); return; }
+      renderFrame(el / L, octx, scale);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
   rec.stop();
   await done;
-  if (!wasPlaying) { playing = false; setPlayLabel(); }
   downloadBlob(new Blob(chunks, { type: 'video/webm' }), 'manakin.webm');
-  const btn2 = document.getElementById('video-btn') as HTMLButtonElement | null;
-  if (btn2) { btn2.disabled = false; btn2.classList.remove('busy'); btn2.title = 'Video'; }
+  exporting = false;
+  renderPanel();
 }
 function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
@@ -2564,6 +2708,7 @@ window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
   if (k === 'escape') {
     if (addPickerOpen) { addPickerOpen = false; closeAddPickerEl(); renderPanel(); return; }
+    if (exportMenuOpen) { exportMenuOpen = false; closeExportMenuEl(); return; }
     if (focusedId !== null) { focusedId = null; renderPanel(); return; }
     if (panelView === 'colour') { panelView = 'auto'; renderPanel(); }
     return;
@@ -2586,24 +2731,42 @@ window.addEventListener('keydown', (e) => {
 
 // The Add behavior picker closes on a click anywhere else, on Escape
 // (handled above), or when the panel scrolls / the window resizes —
-// its anchor moved, so the popover would point at nothing.
+// its anchor moved, so the popover would point at nothing. The Export
+// menu closes the same way.
 document.addEventListener('click', (e) => {
-  if (!addPickerOpen) return;
   const t = e.target as HTMLElement | null;
-  if (t && t.closest('.add-picker, .add-btn')) return;
-  addPickerOpen = false;
-  closeAddPickerEl();
-  renderPanel();
+  if (addPickerOpen) {
+    if (t && t.closest('.add-picker, .add-btn')) return;
+    addPickerOpen = false;
+    closeAddPickerEl();
+    renderPanel();
+    return;
+  }
+  if (exportMenuOpen) {
+    if (t && t.closest('.export-menu, #export-btn')) return;
+    exportMenuOpen = false;
+    closeExportMenuEl();
+  }
 });
 panelBody.addEventListener('scroll', () => {
   if (!addPickerOpen) return;
   addPickerOpen = false;
   closeAddPickerEl();
 }, { passive: true });
+panelBody.addEventListener('scroll', () => {
+  if (!exportMenuOpen) return;
+  exportMenuOpen = false;
+  closeExportMenuEl();
+}, { passive: true });
 window.addEventListener('resize', () => {
   if (!addPickerOpen) return;
   addPickerOpen = false;
   closeAddPickerEl();
+});
+window.addEventListener('resize', () => {
+  if (!exportMenuOpen) return;
+  exportMenuOpen = false;
+  closeExportMenuEl();
 });
 
 // ---------- init ----------
