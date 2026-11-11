@@ -208,6 +208,17 @@ function pushHistory(): void {
   history.push(snapshot());
   if (history.length > 50) history.shift();
   redoStack = [];
+  syncUndoButtons();
+}
+// The top-bar Undo/Redo buttons are only re-rendered by renderPanel(),
+// so a history change that does not re-render the panel (e.g. a slider
+// drag) would leave them stuck in their old disabled state. Keep them in
+// sync at the only two places entries are added.
+function syncUndoButtons(): void {
+  const undoBtn = document.getElementById('undo-btn') as HTMLButtonElement | null;
+  const redoBtn = document.getElementById('redo-btn') as HTMLButtonElement | null;
+  if (undoBtn) undoBtn.disabled = history.length === 0;
+  if (redoBtn) redoBtn.disabled = redoStack.length === 0;
 }
 // A history entry must capture the state BEFORE the mutation, exactly
 // once per gesture. For gestures that may change nothing — a click
@@ -222,6 +233,7 @@ function gestureCommit(before: string, changed: boolean): void {
   history.push(before);
   if (history.length > 50) history.shift();
   redoStack = [];
+  syncUndoButtons();
 }
 function restore(json: string): void {
   try {
@@ -303,7 +315,9 @@ function sampleBird(): Item[] {
   // Bob, Sway, Breathe, Blink on; Spin, Wander off.
   const act = [true, true, true, true, false, false];
   const withAct = (it: Item): Item => {
-    it.layers = act.map((on, b) => (on ? newLayer(b) : null)).filter((l): l is BehaviourLayer => l !== null);
+    // The bird's Blink runs at amplitude 0.85, the depth the motion used
+    // to hard-code, so the preset bird blinks exactly as before.
+    it.layers = act.map((on, b) => (on ? newLayer(b, b === 3 ? { amplitude: 0.85 } : undefined) : null)).filter((l): l is BehaviourLayer => l !== null);
     return it;
   };
   const body: ShapeItem = { ...baseItem('#1d1d1f', 4), type: 'shape', kind: 'ellipse', x: 370, y: 230, w: 220, h: 150, fillSolid: false };
@@ -1072,7 +1086,7 @@ function motionFor(it: Item, t01: number): Motion {
     if (layer.behaviour === 0) dy += a * am * 16 * Math.sin(ph); // Bob
     if (layer.behaviour === 1) dx += a * am * 16 * Math.sin(ph + Math.PI / 2); // Sway
     if (layer.behaviour === 2) scale += a * am * 0.08 * Math.sin(ph); // Breathe
-    if (layer.behaviour === 3) opacity -= a * 0.85 * blinkPulse(ph, layer.blinkDuration); // Blink
+    if (layer.behaviour === 3) opacity -= a * effAmplitude(it, layer) * blinkPulse(ph, layer.blinkDuration); // Blink: depth is the amplitude (0 = never closes, 1 = fully shut)
     if (layer.behaviour === 4) rot += (layer.spinReverse ? -1 : 1) * a * am * 0.35 * Math.sin(ph); // Spin
     if (layer.behaviour === 5) { const w = wanderTerms(layer, cycles, t01); dx += a * am * 18 * w.x; dy += a * am * 14 * w.y; } // Wander
   }
@@ -1320,10 +1334,7 @@ function drawGraph(cv: HTMLCanvasElement, it: Item, layer: BehaviourLayer): void
 }
 
 function renderPanel(): void {
-  const undoBtn = document.getElementById('undo-btn') as HTMLButtonElement;
-  const redoBtn = document.getElementById('redo-btn') as HTMLButtonElement;
-  undoBtn.disabled = history.length === 0;
-  redoBtn.disabled = redoStack.length === 0;
+  syncUndoButtons();
   closeAddPickerEl();
   if (panelView !== 'auto' || !selected()) addPickerOpen = false;
   panelBody.innerHTML = '';
