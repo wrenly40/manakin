@@ -2,7 +2,7 @@
    frosted materials, soft shadows — no emoji icons, no flat
    web-pill chrome. Toolbar buttons follow Bowerbird exactly:
    40px, ink icons, active is a white pill with the toolbar
-   shadow. Blue is used sparingly: the Play icon. */
+   shadow. No blue on any button: Play is ink too. */
 :root {
   --accent: #007aff;
   --ink: #1d1d1f;
@@ -291,12 +291,12 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
    same visual weight as Play's solid triangle — no hollow outlines. */
 .pctl.solid svg { fill: currentColor; stroke: none; }
 /* Play/Pause is the primary: a white pill with shadow-md and an
-   accent icon — the same app button language as the toolbar's
+   ink icon — the same app button language as the toolbar's
    active pill, never a solid blue block. */
 #play-btn {
   width: auto; height: 40px; padding: 0 18px;
   border-radius: 999px; background: #fff;
-  box-shadow: var(--shadow-md); color: var(--accent);
+  box-shadow: var(--shadow-md); color: var(--ink);
 }
 #play-btn:hover { background: #fff; }
 #play-btn svg { width: 14px; height: 14px; fill: currentColor; stroke: none; }
