@@ -1107,48 +1107,81 @@ function renderedBBox(it: Item, t01: number): { x: number; y: number; w: number;
   }
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
-// Distance from q to an item's (stored) geometry, plus the tolerance
-// inside which it counts as a hit. 0 means inside the filled area.
-function hitDistance(it: Item, q: Pt): { d: number; tol: number } {
+// Distance from q to an item's DRAWN ink (its path or outline), plus
+// the tolerance inside which it counts as a hit, plus whether q is
+// inside a filled area. Strokes report their PATH distance (pathD);
+// shapes and text report their OUTLINE distance (edgeD) — the two are
+// different kinds of hit and the caller ranks them in separate tiers.
+// A click on the wing's path has a path distance of a few px while the
+// body underneath scores 0 for containing the point, so a single
+// smallest-distance rule always picked the body; and a click inside
+// the beak sits ~4px from the head's outline while ~10px from the
+// beak's own, so ranking on outline distance picked the head. Neither
+// distance alone is the rule — the tiers in hitTest are.
+function hitDistance(it: Item, q: Pt): { pathD: number; edgeD: number; tol: number; inside: boolean } {
   if (it.type === 'stroke') {
     const tol = Math.max(10, it.width + 6);
     let d = Infinity;
     for (let s = 0; s < it.points.length - 1; s++) d = Math.min(d, distToSegment(q, it.points[s], it.points[s + 1]));
     if (it.points.length === 1) d = Math.hypot(q.x - it.points[0].x, q.y - it.points[0].y);
-    // A closed stroke (the beak triangle) is a filled area: clicking
-    // inside it selects it, not only on its outline.
-    if (isClosedStroke(it) && pointInPolygon(q, it.points)) d = 0;
-    return { d, tol };
+    // A closed stroke (the beak triangle) is a filled area too.
+    const inside = isClosedStroke(it) && pointInPolygon(q, it.points);
+    return { pathD: d, edgeD: Infinity, tol, inside };
   }
   if (it.type === 'shape') {
     const pad = it.width / 2 + 8;
     if (it.kind === 'rect') {
-      const dx = Math.max(it.x - q.x, 0, q.x - (it.x + it.w));
-      const dy = Math.max(it.y - q.y, 0, q.y - (it.y + it.h));
-      return { d: Math.hypot(dx, dy), tol: pad };
+      const inside = q.x >= it.x && q.x <= it.x + it.w && q.y >= it.y && q.y <= it.y + it.h;
+      const d = inside
+        ? Math.min(q.x - it.x, it.x + it.w - q.x, q.y - it.y, it.y + it.h - q.y)
+        : Math.hypot(Math.max(it.x - q.x, 0, q.x - (it.x + it.w)), Math.max(it.y - q.y, 0, q.y - (it.y + it.h)));
+      return { pathD: Infinity, edgeD: d, tol: pad, inside };
     }
     const cx = it.x + it.w / 2, cy = it.y + it.h / 2;
     const rx = Math.abs(it.w) / 2, ry = Math.abs(it.h) / 2;
     const v = rx > 0 && ry > 0 ? ((q.x - cx) ** 2) / (rx * rx) + ((q.y - cy) ** 2) / (ry * ry) : Infinity;
-    const d = v <= 1 ? 0 : (Math.sqrt(v) - 1) * Math.min(rx, ry);
-    return { d, tol: pad };
+    const inside = v <= 1;
+    // Distance to the ellipse's outline, from inside or outside.
+    const d = Math.abs(Math.sqrt(v) - 1) * Math.min(rx, ry);
+    return { pathD: Infinity, edgeD: d, tol: pad, inside };
   }
   const b = itemBBox(it);
-  const dx = Math.max(b.x - q.x, 0, q.x - (b.x + b.w));
-  const dy = Math.max(b.y - q.y, 0, q.y - (b.y + b.h));
-  return { d: Math.hypot(dx, dy), tol: 10 };
+  const inside = q.x >= b.x && q.x <= b.x + b.w && q.y >= b.y && q.y <= b.y + b.h;
+  const d = inside
+    ? Math.min(q.x - b.x, b.x + b.w - q.x, q.y - b.y, b.y + b.h - q.y)
+    : Math.hypot(Math.max(b.x - q.x, 0, q.x - (b.x + b.w)), Math.max(b.y - q.y, 0, q.y - (b.y + b.h)));
+  return { pathD: Infinity, edgeD: d, tol: 10, inside };
 }
+// Three tiers, in order. (1) On or near a stroke's ink: a click on the
+// wing's path beats the body containing that point, and a click 5px
+// from the wing still beats it. A stroke hidden under a filled area
+// above it does not count — you cannot click ink you cannot see.
+// (2) Inside a filled area: the topmost one wins, so a click in the
+// middle of the body (far from any edge) still selects the body, and
+// a click deep inside a small filled part (beak, eye) selects it
+// rather than the big part whose outline happens to pass nearby.
+// (3) Near a shape's outline (just outside it, within tolerance):
+// the forgiving padded hit from before.
 function hitTest(p: Pt): Item | null {
   const t01 = playTime / loopMs();
+  const infos = items.map((it, idx) => ({ it, idx, ...hitDistance(it, motionAdjustedPoint(it, p, t01)) }));
+  // Topmost first; only a strictly smaller distance replaces the best,
+  // so ties (a click on two crossing strokes) fall to the topmost.
   let best: Item | null = null;
   let bestD = Infinity;
-  // Topmost first; only a strictly smaller distance replaces the best,
-  // so ties (a click inside two overlapping shapes) fall to the topmost.
-  for (let i = items.length - 1; i >= 0; i--) {
-    const it = items[i];
-    const q = motionAdjustedPoint(it, p, t01);
-    const { d, tol } = hitDistance(it, q);
-    if (d <= tol && d < bestD - 1e-9) { best = it; bestD = d; }
+  for (let k = infos.length - 1; k >= 0; k--) {
+    const inf = infos[k];
+    if (inf.it.type !== 'stroke' || inf.pathD > inf.tol) continue;
+    if (infos.some((o) => o.idx > inf.idx && o.inside)) continue; // hidden under a filled area above it
+    if (inf.pathD < bestD - 1e-9) { best = inf.it; bestD = inf.pathD; }
+  }
+  if (best) return best;
+  for (let k = infos.length - 1; k >= 0; k--) if (infos[k].inside) return infos[k].it;
+  best = null;
+  bestD = Infinity;
+  for (let k = infos.length - 1; k >= 0; k--) {
+    const inf = infos[k];
+    if (inf.edgeD <= inf.tol && inf.edgeD < bestD - 1e-9) { best = inf.it; bestD = inf.edgeD; }
   }
   return best;
 }
