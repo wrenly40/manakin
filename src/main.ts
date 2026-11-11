@@ -5,6 +5,14 @@ type BehaviourName = 'Bob' | 'Sway' | 'Breathe' | 'Blink' | 'Spin' | 'Wander';
 const BEHAVIOURS: BehaviourName[] = ['Bob', 'Sway', 'Breathe', 'Blink', 'Spin', 'Wander'];
 const LOOP_MS = 4000;
 
+type BehaviourGroup = {
+  id: string;
+  name: string;
+  members: number[]; // behaviour indices, ascending; a behaviour belongs to at most one group
+  active: boolean; // group off suspends its members without losing their own on/off states
+  speed: number; // 0.25-3, multiplies each member's speed
+  amount: number; // 0-100, scales each member's amount
+};
 type ItemBase = {
   id: string;
   color: string;
@@ -16,6 +24,7 @@ type ItemBase = {
   blinkDuration: number; // % of the cycle the blink bump spans (Blink only)
   spinReverse: boolean; // Spin only: run the spin backwards
   wanderSmooth: number; // 0-100% (Wander only); 50+ is the smooth drift
+  groups: BehaviourGroup[]; // per-item behaviour groups; flat only, no groups in groups
 };
 type StrokeItem = ItemBase & { type: 'stroke'; points: Pt[] };
 type ShapeItem = ItemBase & {
@@ -54,7 +63,7 @@ function defaultAmounts(): number[] { return [66, 66, 66, 66, 66, 66]; }
 function defaultPhases(): number[] { return [0, 0, 0, 0, 0, 0]; }
 function defaultBlinkDuration(): number { return 26; } // raised-cosine bump whose half-depth width (13%) matches the old sin^8 blink
 function baseItem(color: string, width: number): ItemBase {
-  return { id: nid(), color, width, active: defaultActive(), speeds: defaultSpeeds(), amounts: defaultAmounts(), phases: defaultPhases(), blinkDuration: defaultBlinkDuration(), spinReverse: false, wanderSmooth: 50 };
+  return { id: nid(), color, width, active: defaultActive(), speeds: defaultSpeeds(), amounts: defaultAmounts(), phases: defaultPhases(), blinkDuration: defaultBlinkDuration(), spinReverse: false, wanderSmooth: 50, groups: [] };
 }
 
 // ---------- state ----------
@@ -76,6 +85,9 @@ let panelOpen = true;
 let panelView: 'auto' | 'colour' = 'auto';
 let colourSlot: 'fg' | 'bg' = 'fg';
 let expandedBehaviour: number | null = null;
+let expandedGroup: string | null = null; // id of the open group in the Behaviours panel
+let checkedBehaviours: Set<number> = new Set(); // top-level rows picked for grouping
+let checkedItemId: string | null = null; // the item the checked rows belong to
 let recentColours: string[] = [];
 let savedColours: string[] = [];
 let playing = false;
@@ -222,6 +234,27 @@ function migrateItem(it: Item): void {
   if (typeof it.blinkDuration !== 'number' || it.blinkDuration < 10 || it.blinkDuration > 60) it.blinkDuration = defaultBlinkDuration();
   if (typeof it.spinReverse !== 'boolean') it.spinReverse = false;
   if (typeof it.wanderSmooth !== 'number' || it.wanderSmooth < 0 || it.wanderSmooth > 100) it.wanderSmooth = 50;
+  // Groups: flat only, a behaviour in at most one group, members valid and ascending.
+  const clampNum = (v: unknown, min: number, max: number, dflt: number): number =>
+    (typeof v === 'number' && Number.isFinite(v)) ? Math.min(max, Math.max(min, v)) : dflt;
+  if (!Array.isArray(it.groups)) it.groups = [];
+  else {
+    const seen = new Set<number>();
+    it.groups = (it.groups as unknown[]).map((raw) => {
+      const g = (raw ?? {}) as Partial<BehaviourGroup>;
+      const members = (Array.isArray(g.members) ? g.members : [])
+        .filter((m): m is number => Number.isInteger(m) && m >= 0 && m < BEHAVIOURS.length && !seen.has(m));
+      members.forEach((m) => seen.add(m));
+      return {
+        id: typeof g.id === 'string' && g.id ? g.id : nid(),
+        name: typeof g.name === 'string' && g.name.trim() ? g.name.trim() : 'Group',
+        members: [...members].sort((a, b) => a - b),
+        active: typeof g.active === 'boolean' ? g.active : true,
+        speed: clampNum(g.speed, 0.25, 3, 1),
+        amount: clampNum(g.amount, 0, 100, 100),
+      };
+    }).filter((g) => g.members.length > 0);
+  }
 }
 
 function load(): void {
@@ -537,15 +570,37 @@ function hexToRgba(hex: string, alpha: number): string {
 // ---------- animation ----------
 // A behaviour layer is on for the whole loop when toggled on.
 // All on layers superpose; amplitude eases in/out so toggling is smooth.
+// ---------- groups ----------
+// A behaviour's effective parameters fold in its group's multipliers.
+// A member contributes only when both its own toggle and its group's toggle are on.
+function groupOf(it: Item, b: number): BehaviourGroup | undefined {
+  return it.groups.find((g) => g.members.includes(b));
+}
+function effActive(it: Item, b: number): boolean {
+  const g = groupOf(it, b);
+  return it.active[b] && (!g || g.active);
+}
+function effSpeed(it: Item, b: number): number {
+  const g = groupOf(it, b);
+  return (it.speeds[b] ?? 1) * (g ? g.speed : 1);
+}
+function effAmount(it: Item, b: number): number {
+  const g = groupOf(it, b);
+  return (it.amounts[b] ?? 1) * (g ? g.amount / 100 : 1);
+}
+
 function amountScale(a: number): number {
-  if (a > 2) return (a / 100) * 1.8; // percent 0-100
-  return a === 0.5 ? 0.5 : a === 2 ? 1.8 : 1;
+  // Amounts are percents (0-100) since the v3 migration mapped the old
+  // segmented 0.5/1/2 values to 33/66/100 — so this is pure percent math.
+  // (The old legacy branches returned 1 for a <= 2, which would have made
+  // a group Amount of 0% behave like 100%.)
+  return (a / 100) * 1.8;
 }
 function smoothedAmps(it: Item): number[] {
   let arr = smoothed.get(it.id);
   if (!arr) { arr = [0, 0, 0, 0, 0, 0]; smoothed.set(it.id, arr); }
   for (let b = 0; b < BEHAVIOURS.length; b++) {
-    const target = it.active[b] ? 1 : 0;
+    const target = effActive(it, b) ? 1 : 0;
     arr[b] += (target - arr[b]) * 0.06;
     if (Math.abs(arr[b] - target) < 0.002) arr[b] = target;
   }
@@ -572,7 +627,7 @@ function wanderJitterAmp(smooth: number): number {
 // Wander drift terms, shared by the motion and the graph so the two agree.
 function wanderTerms(it: Item, t01: number): { x: number; y: number } {
   const twoPi = Math.PI * 2;
-  const sp = it.speeds[5] ?? 1;
+  const sp = effSpeed(it, 5);
   const ph = twoPi * ((it.phases?.[5] ?? 0) / 100);
   const j = wanderJitterAmp(it.wanderSmooth ?? 50);
   return {
@@ -587,8 +642,8 @@ function motionFor(it: Item, t01: number): Motion {
   for (let b = 0; b < BEHAVIOURS.length; b++) {
     const a = amps[b];
     if (a < 0.01) continue;
-    const sp = it.speeds[b] ?? 1;
-    const am = amountScale(it.amounts[b] ?? 1);
+    const sp = effSpeed(it, b);
+    const am = amountScale(effAmount(it, b));
     const ph = twoPi * sp * t01 + twoPi * ((it.phases?.[b] ?? 0) / 100); // Phase shifts the motion within the loop
     if (b === 0) dy += a * am * 16 * Math.sin(ph); // Bob
     if (b === 1) dx += a * am * 16 * Math.sin(ph + Math.PI / 2); // Sway
@@ -603,8 +658,8 @@ function motionFor(it: Item, t01: number): Motion {
 // Reads the same parameters as motionFor, so the graph and the motion agree.
 function behaviourValue(it: Item, b: number, t01: number): number {
   const twoPi = Math.PI * 2;
-  const am = amountScale(it.amounts[b] ?? 1);
-  const sp = it.speeds[b] ?? 1;
+  const am = amountScale(effAmount(it, b));
+  const sp = effSpeed(it, b);
   const ph = twoPi * sp * t01 + twoPi * ((it.phases?.[b] ?? 0) / 100);
   if (b === 3) return am * blinkPulse(ph, it.blinkDuration ?? 26); // Blink: the widened pulse itself, not a square wave
   if (b === 4) return (it.spinReverse ? -1 : 1) * am * Math.sin(ph); // Spin: mirrors when reversed
@@ -797,131 +852,395 @@ function renderPanel(): void {
   renderCanvasPanel();
 }
 
-function renderBehavioursPanel(sel: Item): void {
-  panelTitle.textContent = 'Behaviours';
-  for (let b = 0; b < BEHAVIOURS.length; b++) {
-    const layer = document.createElement('div');
-    layer.className = 'blayer' + (expandedBehaviour === b ? ' expanded' : '');
-    const head = document.createElement('div');
-    head.className = 'layer-head';
-    const toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.className = 'layer-toggle' + (sel.active[b] ? ' on' : '');
-    toggle.setAttribute('aria-label', `${BEHAVIOURS[b]} on or off`);
-    toggle.setAttribute('aria-pressed', String(sel.active[b]));
-    toggle.innerHTML = '<span class="knob"></span>';
-    toggle.addEventListener('click', (e) => {
+// Combined graph for a group: the sum of its members' effective motion
+// over the loop. Only members that are effectively on (own toggle and
+// group toggle) contribute, so a suspended group reads flat. The scale is
+// fixed to the sum of the members' own amounts (before the group
+// multiplier), so changing the group's Amount visibly shrinks the curve
+// instead of re-normalising it away.
+function drawGroupGraph(cv: HTMLCanvasElement, it: Item, group: BehaviourGroup): void {
+  const W = 248, H = 48;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = Math.round(W * dpr);
+  cv.height = Math.round(H * dpr);
+  cv.style.width = `${W}px`;
+  cv.style.height = `${H}px`;
+  const g = cv.getContext('2d')!;
+  g.scale(dpr, dpr);
+  g.clearRect(0, 0, W, H);
+  g.strokeStyle = 'rgba(0,0,0,0.08)';
+  g.lineWidth = 1;
+  g.beginPath();
+  g.moveTo(0, H / 2 + 0.5);
+  g.lineTo(W, H / 2 + 0.5);
+  g.stroke();
+  const N = 120;
+  const vals: number[] = [];
+  let scale = 0;
+  for (const b of group.members) if (effActive(it, b)) scale += amountScale(it.amounts[b] ?? 1);
+  if (scale < 0.01) scale = 1;
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    let v = 0;
+    for (const b of group.members) if (effActive(it, b)) v += behaviourValue(it, b, t);
+    vals.push(v);
+  }
+  g.strokeStyle = '#1d1d1f';
+  g.lineWidth = 1.5;
+  g.lineJoin = 'round';
+  g.beginPath();
+  for (let i = 0; i <= N; i++) {
+    const x = ((i / N) * (W - 4)) + 2;
+    const y = H / 2 - (vals[i] / scale) * (H / 2 - 5);
+    if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+  }
+  g.stroke();
+}
+
+// One behaviour row: on/off toggle, name, expand chevron, and — when
+// expanded — its graph plus Speed/Amount/Phase and its own extra controls.
+// Returns the row and its graph canvas (null while collapsed) so a group
+// can redraw member graphs when a group slider moves.
+function behaviourLayer(sel: Item, b: number, opts: { checkable: boolean; onParamChange?: () => void }): { layer: HTMLDivElement; graph: HTMLCanvasElement | null } {
+  const layer = document.createElement('div');
+  layer.className = 'blayer' + (expandedBehaviour === b ? ' expanded' : '');
+  layer.dataset.behaviour = String(b);
+  const head = document.createElement('div');
+  head.className = 'layer-head';
+  if (opts.checkable) {
+    const check = document.createElement('button');
+    check.type = 'button';
+    check.className = 'layer-check' + (checkedBehaviours.has(b) ? ' checked' : '');
+    check.setAttribute('aria-label', `Select ${BEHAVIOURS[b]} for grouping`);
+    check.setAttribute('aria-pressed', String(checkedBehaviours.has(b)));
+    check.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+    check.addEventListener('click', (e) => {
       e.stopPropagation();
+      if (checkedBehaviours.has(b)) checkedBehaviours.delete(b);
+      else checkedBehaviours.add(b);
+      renderPanel();
+    });
+    head.appendChild(check);
+  }
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'layer-toggle' + (sel.active[b] ? ' on' : '');
+  toggle.setAttribute('aria-label', `${BEHAVIOURS[b]} on or off`);
+  toggle.setAttribute('aria-pressed', String(sel.active[b]));
+  toggle.innerHTML = '<span class="knob"></span>';
+  toggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const s = selected();
+    if (!s) return;
+    s.active[b] = !s.active[b];
+    save();
+    renderPanel();
+  });
+  const name = document.createElement('span');
+  name.className = 'layer-name';
+  name.textContent = BEHAVIOURS[b];
+  const chev = document.createElement('button');
+  chev.type = 'button';
+  chev.className = 'layer-chev';
+  chev.setAttribute('aria-label', expandedBehaviour === b ? `Collapse ${BEHAVIOURS[b]}` : `Expand ${BEHAVIOURS[b]}`);
+  chev.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>';
+  const toggleExpand = (): void => {
+    expandedBehaviour = expandedBehaviour === b ? null : b;
+    renderPanel();
+  };
+  chev.addEventListener('click', (e) => {
+    e.stopPropagation(); // the head row also toggles; without this it flips twice
+    toggleExpand();
+  });
+  head.appendChild(toggle);
+  head.appendChild(name);
+  head.appendChild(chev);
+  head.addEventListener('click', (e) => {
+    if ((e.target as HTMLElement).closest('.layer-toggle, .layer-check')) return;
+    toggleExpand();
+  });
+  layer.appendChild(head);
+  let graph: HTMLCanvasElement | null = null;
+  if (expandedBehaviour === b) {
+    const body = document.createElement('div');
+    body.className = 'layer-body';
+    graph = document.createElement('canvas');
+    graph.className = 'graph';
+    graph.setAttribute('aria-label', `${BEHAVIOURS[b]} motion graph`);
+    body.appendChild(graph);
+    const redraw = (): void => {
+      const s = selected();
+      if (s && graph) drawGraph(graph, s, b);
+      opts.onParamChange?.();
+    };
+    body.appendChild(paramSlider({
+      label: 'Speed', min: 0.25, max: 3, step: 0.05, value: sel.speeds[b],
+      format: (v) => `${v.toFixed(2).replace(/0$/, '').replace(/\.$/, '')}x`,
+      aria: `${BEHAVIOURS[b]} speed`,
+      onInput: (v) => { const s = selected(); if (!s) return; s.speeds[b] = v; redraw(); },
+      onCommit: () => save(),
+    }));
+    body.appendChild(paramSlider({
+      label: 'Amount', min: 0, max: 100, step: 1, value: sel.amounts[b],
+      format: (v) => `${Math.round(v)}%`,
+      aria: `${BEHAVIOURS[b]} amount`,
+      onInput: (v) => { const s = selected(); if (!s) return; s.amounts[b] = v; redraw(); },
+      onCommit: () => save(),
+    }));
+    body.appendChild(paramSlider({
+      label: 'Phase', min: 0, max: 100, step: 1, value: sel.phases[b] ?? 0,
+      format: (v) => `${Math.round(v)}%`,
+      aria: `${BEHAVIOURS[b]} phase`,
+      onInput: (v) => { const s = selected(); if (!s) return; s.phases[b] = v; redraw(); },
+      onCommit: () => save(),
+    }));
+    if (b === 3) {
+      body.appendChild(paramSlider({
+        label: 'Duration', min: 10, max: 60, step: 1, value: sel.blinkDuration ?? 26,
+        format: (v) => `${Math.round(v)}%`,
+        aria: 'Blink duration',
+        onInput: (v) => { const s = selected(); if (!s) return; s.blinkDuration = v; redraw(); },
+        onCommit: () => save(),
+      }));
+    }
+    if (b === 4) {
+      const revRow = document.createElement('div');
+      revRow.className = 'ptoggle-row';
+      const revLab = document.createElement('span');
+      revLab.className = 'dctl-label';
+      revLab.textContent = 'Reverse';
+      const revToggle = document.createElement('button');
+      revToggle.type = 'button';
+      revToggle.className = 'layer-toggle' + (sel.spinReverse ? ' on' : '');
+      revToggle.setAttribute('aria-label', 'Spin reverse');
+      revToggle.setAttribute('aria-pressed', String(sel.spinReverse));
+      revToggle.innerHTML = '<span class="knob"></span>';
+      const revVal = document.createElement('span');
+      revVal.className = 'pslider-value';
+      revVal.textContent = sel.spinReverse ? 'On' : 'Off';
+      revToggle.addEventListener('click', () => {
+        const s = selected();
+        if (!s) return;
+        s.spinReverse = !s.spinReverse;
+        revToggle.classList.toggle('on', s.spinReverse);
+        revToggle.setAttribute('aria-pressed', String(s.spinReverse));
+        revVal.textContent = s.spinReverse ? 'On' : 'Off';
+        redraw();
+        save();
+      });
+      revRow.appendChild(revLab);
+      revRow.appendChild(revToggle);
+      revRow.appendChild(revVal);
+      body.appendChild(revRow);
+    }
+    if (b === 5) {
+      body.appendChild(paramSlider({
+        label: 'Smooth', min: 0, max: 100, step: 1, value: sel.wanderSmooth ?? 50,
+        format: (v) => `${Math.round(v)}%`,
+        aria: 'Wander smoothness',
+        onInput: (v) => { const s = selected(); if (!s) return; s.wanderSmooth = v; redraw(); },
+        onCommit: () => save(),
+      }));
+    }
+    layer.appendChild(body);
+    drawGraph(graph, sel, b);
+  }
+  return { layer, graph };
+}
+
+// One group row: chevron, name (click to rename inline), on/off toggle,
+// ungroup button. When expanded: combined graph, the group's Speed and
+// Amount sliders, then the member rows with their own controls.
+function groupLayer(sel: Item, group: BehaviourGroup): HTMLDivElement {
+  const open = expandedGroup === group.id;
+  const layer = document.createElement('div');
+  layer.className = 'blayer group' + (open ? ' expanded' : '');
+  layer.dataset.group = group.id;
+  const head = document.createElement('div');
+  head.className = 'layer-head group-head';
+  const chev = document.createElement('button');
+  chev.type = 'button';
+  chev.className = 'layer-chev';
+  chev.setAttribute('aria-label', open ? `Collapse ${group.name}` : `Expand ${group.name}`);
+  chev.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>';
+  const toggleExpand = (): void => {
+    expandedGroup = expandedGroup === group.id ? null : group.id;
+    renderPanel();
+  };
+  chev.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleExpand();
+  });
+  const name = document.createElement('span');
+  name.className = 'layer-name group-name';
+  name.textContent = group.name;
+  name.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'group-rename';
+    input.value = group.name;
+    input.setAttribute('aria-label', 'Group name');
+    input.spellcheck = false;
+    let done = false;
+    const finish = (commit: boolean): void => {
+      if (done) return;
+      done = true;
+      if (commit) {
+        const v = input.value.trim();
+        if (v && v !== group.name) { group.name = v; save(); }
+      }
+      renderPanel();
+    };
+    input.addEventListener('keydown', (ev) => {
+      ev.stopPropagation();
+      if (ev.key === 'Enter') finish(true);
+      else if (ev.key === 'Escape') finish(false);
+    });
+    input.addEventListener('blur', () => finish(true));
+    input.addEventListener('click', (ev) => ev.stopPropagation());
+    head.replaceChild(input, name);
+    input.focus();
+    input.select();
+  });
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'layer-toggle' + (group.active ? ' on' : '');
+  toggle.setAttribute('aria-label', `${group.name} on or off`);
+  toggle.setAttribute('aria-pressed', String(group.active));
+  toggle.innerHTML = '<span class="knob"></span>';
+  toggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const s = selected();
+    if (!s) return;
+    const g = s.groups.find((gg) => gg.id === group.id);
+    if (!g) return;
+    g.active = !g.active;
+    save();
+    renderPanel();
+  });
+  const ungroup = document.createElement('button');
+  ungroup.type = 'button';
+  ungroup.className = 'ungroup-btn';
+  ungroup.title = 'Ungroup';
+  ungroup.setAttribute('aria-label', `Ungroup ${group.name}`);
+  ungroup.innerHTML = '<svg viewBox="0 0 24 24"><rect x="3" y="6" width="7" height="12" rx="2"/><rect x="14" y="6" width="7" height="12" rx="2"/></svg>';
+  ungroup.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const s = selected();
+    if (!s) return;
+    pushHistory();
+    s.groups = s.groups.filter((g) => g.id !== group.id);
+    if (expandedGroup === group.id) expandedGroup = null;
+    save();
+    renderPanel();
+  });
+  head.appendChild(chev);
+  head.appendChild(name);
+  head.appendChild(toggle);
+  head.appendChild(ungroup);
+  head.addEventListener('click', (e) => {
+    if ((e.target as HTMLElement).closest('.layer-toggle, .ungroup-btn, .group-rename')) return;
+    toggleExpand();
+  });
+  layer.appendChild(head);
+  if (open) {
+    const body = document.createElement('div');
+    body.className = 'layer-body group-body';
+    const graph = document.createElement('canvas');
+    graph.className = 'graph';
+    graph.setAttribute('aria-label', `${group.name} combined graph`);
+    body.appendChild(graph);
+    const memberGraphs = new Map<number, HTMLCanvasElement>();
+    const redrawGroupGraph = (): void => {
+      const s = selected();
+      if (s) {
+        const g = s.groups.find((gg) => gg.id === group.id);
+        if (g) drawGroupGraph(graph, s, g);
+      }
+    };
+    const redrawMemberGraphs = (): void => {
       const s = selected();
       if (!s) return;
-      s.active[b] = !s.active[b];
+      for (const [b, cv] of memberGraphs) drawGraph(cv, s, b);
+    };
+    body.appendChild(paramSlider({
+      label: 'Speed', min: 0.25, max: 3, step: 0.05, value: group.speed,
+      format: (v) => `${v.toFixed(2).replace(/0$/, '').replace(/\.$/, '')}x`,
+      aria: `${group.name} speed`,
+      onInput: (v) => { const s = selected(); if (!s) return; const g = s.groups.find((gg) => gg.id === group.id); if (!g) return; g.speed = v; redrawGroupGraph(); redrawMemberGraphs(); },
+      onCommit: () => save(),
+    }));
+    body.appendChild(paramSlider({
+      label: 'Amount', min: 0, max: 100, step: 1, value: group.amount,
+      format: (v) => `${Math.round(v)}%`,
+      aria: `${group.name} amount`,
+      onInput: (v) => { const s = selected(); if (!s) return; const g = s.groups.find((gg) => gg.id === group.id); if (!g) return; g.amount = v; redrawGroupGraph(); redrawMemberGraphs(); },
+      onCommit: () => save(),
+    }));
+    const membersWrap = document.createElement('div');
+    membersWrap.className = 'group-members';
+    for (const b of group.members) {
+      const { layer: mLayer, graph: mGraph } = behaviourLayer(sel, b, {
+        checkable: false,
+        onParamChange: () => redrawGroupGraph(),
+      });
+      mLayer.classList.add('in-group');
+      if (mGraph) memberGraphs.set(b, mGraph);
+      membersWrap.appendChild(mLayer);
+    }
+    body.appendChild(membersWrap);
+    layer.appendChild(body);
+    drawGroupGraph(graph, sel, group);
+  }
+  return layer;
+}
+
+function renderBehavioursPanel(sel: Item): void {
+  panelTitle.textContent = 'Behaviours';
+  if (checkedItemId !== sel.id) { checkedBehaviours.clear(); checkedItemId = sel.id; }
+  // Order: each entry sits at the position of its earliest behaviour, so a
+  // group takes the first selected member's place and ungrouping restores
+  // members to their original positions.
+  type Entry = { pos: number; render: () => HTMLElement };
+  const entries: Entry[] = [];
+  const grouped = new Set(sel.groups.flatMap((g) => g.members));
+  for (let b = 0; b < BEHAVIOURS.length; b++) {
+    if (!grouped.has(b)) entries.push({ pos: b, render: () => behaviourLayer(sel, b, { checkable: true }).layer });
+  }
+  for (const g of sel.groups) {
+    entries.push({ pos: Math.min(...g.members), render: () => groupLayer(sel, g) });
+  }
+  entries.sort((a, b) => a.pos - b.pos);
+  for (const e of entries) panelBody.appendChild(e.render());
+  if (checkedBehaviours.size >= 2) {
+    const action = document.createElement('div');
+    action.className = 'group-action';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'pbtn-quiet';
+    btn.textContent = 'Group';
+    btn.setAttribute('aria-label', `Group ${checkedBehaviours.size} behaviours`);
+    btn.addEventListener('click', () => {
+      const s = selected();
+      if (!s || checkedBehaviours.size < 2) return;
+      pushHistory();
+      const members = [...checkedBehaviours].sort((a, b) => a - b);
+      let n = 1;
+      for (const g of s.groups) {
+        const m = /^Group (\d+)$/.exec(g.name);
+        if (m) n = Math.max(n, parseInt(m[1], 10) + 1);
+      }
+      const group: BehaviourGroup = { id: nid(), name: `Group ${n}`, members, active: true, speed: 1, amount: 100 };
+      s.groups.push(group);
+      checkedBehaviours.clear();
+      expandedBehaviour = null;
+      expandedGroup = group.id;
       save();
       renderPanel();
     });
-    const name = document.createElement('span');
-    name.className = 'layer-name';
-    name.textContent = BEHAVIOURS[b];
-    const chev = document.createElement('button');
-    chev.type = 'button';
-    chev.className = 'layer-chev';
-    chev.setAttribute('aria-label', expandedBehaviour === b ? `Collapse ${BEHAVIOURS[b]}` : `Expand ${BEHAVIOURS[b]}`);
-    chev.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>';
-    const toggleExpand = (): void => {
-      expandedBehaviour = expandedBehaviour === b ? null : b;
-      renderPanel();
-    };
-    chev.addEventListener('click', (e) => {
-      e.stopPropagation(); // the head row also toggles; without this it flips twice
-      toggleExpand();
-    });
-    head.appendChild(toggle);
-    head.appendChild(name);
-    head.appendChild(chev);
-    head.addEventListener('click', (e) => {
-      if ((e.target as HTMLElement).closest('.layer-toggle')) return;
-      toggleExpand();
-    });
-    layer.appendChild(head);
-    if (expandedBehaviour === b) {
-      const body = document.createElement('div');
-      body.className = 'layer-body';
-      const graph = document.createElement('canvas');
-      graph.className = 'graph';
-      graph.setAttribute('aria-label', `${BEHAVIOURS[b]} motion graph`);
-      body.appendChild(graph);
-      body.appendChild(paramSlider({
-        label: 'Speed', min: 0.25, max: 3, step: 0.05, value: sel.speeds[b],
-        format: (v) => `${v.toFixed(2).replace(/0$/, '').replace(/\.$/, '')}x`,
-        aria: `${BEHAVIOURS[b]} speed`,
-        onInput: (v) => { const s = selected(); if (!s) return; s.speeds[b] = v; drawGraph(graph, s, b); },
-        onCommit: () => save(),
-      }));
-      body.appendChild(paramSlider({
-        label: 'Amount', min: 0, max: 100, step: 1, value: sel.amounts[b],
-        format: (v) => `${Math.round(v)}%`,
-        aria: `${BEHAVIOURS[b]} amount`,
-        onInput: (v) => { const s = selected(); if (!s) return; s.amounts[b] = v; drawGraph(graph, s, b); },
-        onCommit: () => save(),
-      }));
-      body.appendChild(paramSlider({
-        label: 'Phase', min: 0, max: 100, step: 1, value: sel.phases[b] ?? 0,
-        format: (v) => `${Math.round(v)}%`,
-        aria: `${BEHAVIOURS[b]} phase`,
-        onInput: (v) => { const s = selected(); if (!s) return; s.phases[b] = v; drawGraph(graph, s, b); },
-        onCommit: () => save(),
-      }));
-      if (b === 3) {
-        body.appendChild(paramSlider({
-          label: 'Duration', min: 10, max: 60, step: 1, value: sel.blinkDuration ?? 26,
-          format: (v) => `${Math.round(v)}%`,
-          aria: 'Blink duration',
-          onInput: (v) => { const s = selected(); if (!s) return; s.blinkDuration = v; drawGraph(graph, s, b); },
-          onCommit: () => save(),
-        }));
-      }
-      if (b === 4) {
-        const revRow = document.createElement('div');
-        revRow.className = 'ptoggle-row';
-        const revLab = document.createElement('span');
-        revLab.className = 'dctl-label';
-        revLab.textContent = 'Reverse';
-        const revToggle = document.createElement('button');
-        revToggle.type = 'button';
-        revToggle.className = 'layer-toggle' + (sel.spinReverse ? ' on' : '');
-        revToggle.setAttribute('aria-label', 'Spin reverse');
-        revToggle.setAttribute('aria-pressed', String(sel.spinReverse));
-        revToggle.innerHTML = '<span class="knob"></span>';
-        const revVal = document.createElement('span');
-        revVal.className = 'pslider-value';
-        revVal.textContent = sel.spinReverse ? 'On' : 'Off';
-        revToggle.addEventListener('click', () => {
-          const s = selected();
-          if (!s) return;
-          s.spinReverse = !s.spinReverse;
-          revToggle.classList.toggle('on', s.spinReverse);
-          revToggle.setAttribute('aria-pressed', String(s.spinReverse));
-          revVal.textContent = s.spinReverse ? 'On' : 'Off';
-          drawGraph(graph, s, b);
-          save();
-        });
-        revRow.appendChild(revLab);
-        revRow.appendChild(revToggle);
-        revRow.appendChild(revVal);
-        body.appendChild(revRow);
-      }
-      if (b === 5) {
-        body.appendChild(paramSlider({
-          label: 'Smooth', min: 0, max: 100, step: 1, value: sel.wanderSmooth ?? 50,
-          format: (v) => `${Math.round(v)}%`,
-          aria: 'Wander smoothness',
-          onInput: (v) => { const s = selected(); if (!s) return; s.wanderSmooth = v; drawGraph(graph, s, b); },
-          onCommit: () => save(),
-        }));
-      }
-      layer.appendChild(body);
-      drawGraph(graph, sel, b);
-    }
-    panelBody.appendChild(layer);
+    action.appendChild(btn);
+    panelBody.appendChild(action);
   }
 }
 
@@ -1490,3 +1809,4 @@ applyPanelOpen();
 resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
 requestAnimationFrame(frame);
+

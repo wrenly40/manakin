@@ -232,6 +232,35 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 .layer-toggle.on { background: rgba(29, 29, 31, 0.88); }
 .layer-toggle.on .knob { left: 18px; }
 .layer-name { flex: 1; font-size: 13px; font-weight: 500; color: var(--ink); }
+/* Round selection checkbox on ungrouped behaviour rows: pick 2+ to group. */
+.layer-check {
+  flex: none; width: 18px; height: 18px; border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.25); background: #fff; padding: 0;
+  display: flex; align-items: center; justify-content: center; color: #fff;
+}
+.layer-check:hover { border-color: var(--ink); }
+.layer-check svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; visibility: hidden; }
+.layer-check.checked { background: var(--ink); border-color: transparent; }
+.layer-check.checked svg { visibility: visible; }
+/* Groups read as one layer: a quiet fill while expanded, members
+   nested under a hairline. The ungroup icon is always visible. */
+.blayer.group.expanded { background: var(--fill-2); border-radius: 12px; }
+.group-head .layer-name { cursor: text; }
+.group-rename {
+  flex: 1; min-width: 0; height: 28px; padding: 0 6px;
+  border: 1px solid var(--hairline); border-radius: 7px; background: #fff;
+  font: inherit; font-size: 13px; color: var(--ink);
+}
+.ungroup-btn {
+  flex: none; width: 28px; height: 28px; border: none; border-radius: 7px;
+  background: transparent; color: var(--grey);
+  display: flex; align-items: center; justify-content: center;
+}
+.ungroup-btn:hover { background: rgba(0, 0, 0, 0.05); color: var(--ink); }
+.ungroup-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.group-members { border-left: 1px solid var(--hairline); margin: 4px 0 0 2px; padding-left: 6px; }
+.group-members .blayer:last-child { border-bottom: none; }
+.group-action { display: flex; justify-content: center; padding: 14px 0 4px; }
 .layer-chev {
   flex: none; width: 28px; height: 28px; border: none; border-radius: 7px;
   background: transparent; color: var(--grey);
@@ -239,7 +268,7 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 }
 .layer-chev:hover { background: rgba(0, 0, 0, 0.05); color: var(--ink); }
 .layer-chev svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.15s ease; }
-.blayer.expanded .layer-chev svg { transform: rotate(180deg); }
+.blayer.expanded > .layer-head > .layer-chev svg { transform: rotate(180deg); }
 .layer-body { padding: 2px 0 12px; display: flex; flex-direction: column; gap: 8px; }
 .graph {
   width: 248px; height: 48px; border-radius: 9px;
