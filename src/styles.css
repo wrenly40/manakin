@@ -436,8 +436,15 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 }
 /* Panel divider: the same hairline as under the section headers,
    separating the Arrange/Align block from the Group/Behaviours
-   controls below it. Spacing comes from the sections around it. */
+   controls below it. Spacing comes from the sections around it:
+   18px above from the section's own margin, 14px below from the
+   following element — the Group/Ungroup action's top padding, or
+   the first layer card's top margin, so no card edge touches it. */
 .pdiv { height: 1px; background: var(--hairline); }
+.pdiv + .blayer { margin-top: 14px; }
+/* Empty stack after a divider: the same 14px below the hairline —
+   the line's own top padding is 8px, so raise it to match. */
+.pdiv + .no-behaviours { padding-top: 14px; }
 /* Add behavior picker: a small frosted popover like Bowerbird's
    shape-picker flyout, anchored to the Add button. */
 .add-picker {
