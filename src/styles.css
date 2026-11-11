@@ -427,10 +427,12 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 .export-loop { font-size: 13px; color: var(--grey); padding: 2px 2px 12px; }
 .export-menu .pbtn { margin-bottom: 0; }
 /* Grid tiles: six small preview tiles showing the pattern itself,
-   name only in the title / aria-label. Two rows of three. */
-.grid-tiles { display: flex; flex-wrap: wrap; gap: 8px; }
+   name only in the title / aria-label. One row of six: the tiles flex
+   to fill the 257px panel content width exactly (6 tiles + 5 x 6px
+   gaps = 257px, so each tile is ~37.8px wide). */
+.grid-tiles { display: flex; flex-wrap: nowrap; gap: 6px; }
 .grid-tile {
-  width: 40px; height: 30px; padding: 0; overflow: hidden;
+  flex: 1 1 0; min-width: 0; height: 30px; padding: 0; overflow: hidden;
   border: 1px solid var(--hairline); border-radius: 8px; background: #fff;
   display: flex; align-items: center; justify-content: center;
 }
@@ -438,7 +440,7 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 .grid-tile.active {
   box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px rgba(29, 29, 31, 0.85);
 }
-.grid-tile svg { width: 40px; height: 30px; display: block; }
+.grid-tile svg { width: 100%; height: 100%; display: block; }
 .layer-chev {
   flex: none; width: 28px; height: 28px; border: none; border-radius: 7px;
   background: transparent; color: var(--grey);
