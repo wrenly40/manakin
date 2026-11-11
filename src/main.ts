@@ -17,7 +17,32 @@ declare global {
 type Pt = { x: number; y: number };
 type BehaviourName = 'Bob' | 'Sway' | 'Breathe' | 'Blink' | 'Spin' | 'Wander';
 const BEHAVIOURS: BehaviourName[] = ['Bob', 'Sway', 'Breathe', 'Blink', 'Spin', 'Wander'];
-const LOOP_MS = 4000;
+// One behaviour cycle at tempo 1x lasts 4s; a tempo of tx makes it 4/t s.
+// Tempo is stepped: only powers of two, so the ratio of any two tempos is
+// an integer and every behaviour completes a whole number of cycles in the
+// loop (see loopMs / loopCycles below).
+const BASE_CYCLE_MS = 4000;
+const TEMPO_STOPS = [0.25, 0.5, 1, 2];
+function snapTempo(v: unknown): number {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return 1;
+  if (v <= 0.25) return 0.25;
+  if (v >= 2) return 2;
+  let best = TEMPO_STOPS[0], bestD = Math.abs(v - TEMPO_STOPS[0]);
+  for (const s of TEMPO_STOPS) {
+    const d = Math.abs(v - s);
+    if (d <= bestD) { best = s; bestD = d; } // exact ties go to the higher stop
+  }
+  return best;
+}
+function stopAt(i: number): number {
+  return TEMPO_STOPS[Math.max(0, Math.min(TEMPO_STOPS.length - 1, Math.round(i)))];
+}
+function tempoStopIndex(t: number): number {
+  return TEMPO_STOPS.indexOf(snapTempo(t));
+}
+function formatTempoStop(s: number): string {
+  return `${s.toFixed(2).replace(/0$/, '').replace(/\.$/, '')}x`;
+}
 // One small icon per behaviour, same 1.8-stroke, 20px, ink language as the
 // toolbar icons — each distinct at a glance in the layer stack.
 const LAYER_ICONS: string[] = [
@@ -34,8 +59,8 @@ type BehaviourGroup = {
   name: string;
   members: string[]; // layer ids; a layer belongs to at most one group
   active: boolean; // group off suspends its members without losing their own on/off states
-  speed: number; // 0.25-3, multiplies each member's speed
-  amount: number; // 0-100, scales each member's amount
+  tempo: number; // one of TEMPO_STOPS, multiplies each member's tempo
+  amplitude: number; // 0-1, scales each member's amplitude
 };
 // One layer = one instance of a behaviour on one item. The same behaviour
 // can appear several times in a stack, each instance with its own id and
@@ -44,9 +69,9 @@ type BehaviourGroup = {
 // wanderSmooth).
 type LayerParams = {
   on: boolean;
-  speed: number; // 0.25-3
-  amount: number; // 0-100
-  phase: number; // 0-100% shift of the motion within the loop
+  tempo: number; // one of TEMPO_STOPS
+  amplitude: number; // 0-1
+  offset: number; // 0-1 shift of the motion within its own cycle
   blinkDuration: number; // % of the cycle the blink bump spans (Blink only)
   spinReverse: boolean; // Spin only: run the spin backwards
   wanderSmooth: number; // 0-100% (Wander only); 50+ is the smooth drift
@@ -95,7 +120,7 @@ function nid(): string {
   return `i${Date.now().toString(36)}${uid}`;
 }
 function defaultLayerParams(): LayerParams {
-  return { on: true, speed: 1, amount: 66, phase: 0, blinkDuration: 26, spinReverse: false, wanderSmooth: 50 };
+  return { on: true, tempo: 1, amplitude: 0.66, offset: 0, blinkDuration: 26, spinReverse: false, wanderSmooth: 50 };
 }
 // The default blink duration of 26% is a raised-cosine bump whose
 // half-depth width (13%) matches the old sin^8 blink.
@@ -109,6 +134,14 @@ function baseItem(color: string, width: number): ItemBase {
 // ---------- state ----------
 let items: Item[] = [];
 let selectedId: string | null = null;
+// Double-click focus (view state only — never saved, never an undo entry):
+// the focused part renders full, every other part at 0.1.
+let focusedId: string | null = null;
+let lastFocusExitAt = 0; // when focus was last exited by a single click on empty stage
+// Double-click pair tracking: the second press of a pair must not fire
+// paint or open the text editor a second time.
+let lastDown: { t: number; x: number; y: number } | null = null;
+let lastPressRepeat = false;
 type ToolId = 'select' | 'brush' | 'eraser' | 'shape' | 'text' | 'paint';
 let tool: ToolId = 'brush';
 let color = '#1d1d1f'; // foreground
@@ -301,15 +334,28 @@ function migrateItem(it: Item): void {
   const anyIt = it as unknown as Record<string, unknown>;
   const clampNum = (v: unknown, min: number, max: number, dflt: number): number =>
     (typeof v === 'number' && Number.isFinite(v)) ? Math.min(max, Math.max(min, v)) : dflt;
-  const cleanParams = (p: Partial<LayerParams>): LayerParams => ({
-    on: typeof p.on === 'boolean' ? p.on : true,
-    speed: clampNum(p.speed, 0.25, 3, 1),
-    amount: clampNum(p.amount, 0, 100, 66),
-    phase: clampNum(p.phase, 0, 100, 0),
-    blinkDuration: clampNum(p.blinkDuration, 10, 60, 26),
-    spinReverse: p.spinReverse === true,
-    wanderSmooth: clampNum(p.wanderSmooth, 0, 100, 50),
-  });
+  // Merge saved params with the current defaults, clamping them. Migration
+  // is keyed on FIELD PRESENCE: an old save stores percents under `amount`
+  // (66 = 66%) and `phase` (50 = half a loop) and a continuous `speed`,
+  // while a new save stores fractions under `amplitude`/`offset` and a
+  // stepped `tempo` — so an old amount of 1 (1%) and a new amplitude of 1
+  // (full) are told apart by the field name, never by the value.
+  const cleanParams = (p: Partial<LayerParams>): LayerParams => {
+    const legacy = p as Partial<LayerParams> & { amount?: unknown; phase?: unknown; speed?: unknown };
+    return {
+      on: typeof p.on === 'boolean' ? p.on : true,
+      tempo: typeof p.tempo === 'number' ? snapTempo(p.tempo) : (typeof legacy.speed === 'number' ? snapTempo(legacy.speed) : 1),
+      amplitude: typeof p.amplitude === 'number'
+        ? clampNum(p.amplitude, 0, 1, 0.66)
+        : clampNum(legacy.amount, 0, 100, 66) / 100,
+      offset: typeof p.offset === 'number'
+        ? clampNum(p.offset, 0, 1, 0)
+        : clampNum(legacy.phase, 0, 100, 0) / 100,
+      blinkDuration: clampNum(p.blinkDuration, 10, 60, 26),
+      spinReverse: p.spinReverse === true,
+      wanderSmooth: clampNum(p.wanderSmooth, 0, 100, 50),
+    };
+  };
   // New format: layers are instances with ids (an empty array is a valid
   // empty stack). Just validate, in place.
   const layersAreInstances = Array.isArray(it.layers) &&
@@ -330,6 +376,7 @@ function migrateItem(it: Item): void {
     const seenMember = new Set<string>();
     it.groups = (Array.isArray(it.groups) ? it.groups : []).map((raw) => {
       const g = (raw ?? {}) as Partial<BehaviourGroup>;
+      const legacy = g as Partial<BehaviourGroup> & { speed?: unknown; amount?: unknown };
       const members = (Array.isArray(g.members) ? g.members : [])
         .filter((m): m is string => typeof m === 'string' && ids.has(m) && !seenMember.has(m));
       members.forEach((m) => seenMember.add(m));
@@ -339,8 +386,10 @@ function migrateItem(it: Item): void {
         name: typeof g.name === 'string' && g.name.trim() ? g.name.trim() : 'Group',
         members: [...new Set(members)],
         active: typeof g.active === 'boolean' ? g.active : true,
-        speed: clampNum(g.speed, 0.25, 3, 1),
-        amount: clampNum(g.amount, 0, 100, 100),
+        tempo: typeof g.tempo === 'number' ? snapTempo(g.tempo) : (typeof legacy.speed === 'number' ? snapTempo(legacy.speed) : 1),
+        amplitude: typeof g.amplitude === 'number'
+          ? clampNum(g.amplitude, 0, 1, 1)
+          : clampNum(legacy.amount, 0, 100, 100) / 100,
       };
     }).filter((g): g is BehaviourGroup => g !== null);
     if (!it.stash || typeof it.stash !== 'object' || Array.isArray(it.stash)) {
@@ -367,8 +416,8 @@ function migrateItem(it: Item): void {
   } else if (Array.isArray(anyIt.active) && anyIt.active.length === BEHAVIOURS.length) {
     active = (anyIt.active as unknown[]).map((v) => v === true);
   }
-  const speeds = (Array.isArray(anyIt.speeds) && anyIt.speeds.length === BEHAVIOURS.length
-    ? (anyIt.speeds as unknown[]).map((v) => clampNum(v, 0.25, 3, 1)) : [1, 1, 1, 1, 1, 1]);
+  const tempos = (Array.isArray(anyIt.speeds) && anyIt.speeds.length === BEHAVIOURS.length
+    ? (anyIt.speeds as unknown[]).map((v) => snapTempo(v)) : [1, 1, 1, 1, 1, 1]);
   const amounts = (Array.isArray(anyIt.amounts) && anyIt.amounts.length === BEHAVIOURS.length
     ? (anyIt.amounts as unknown[]).map((a) => {
         const n = typeof a === 'number' ? a : NaN;
@@ -380,11 +429,11 @@ function migrateItem(it: Item): void {
   const spinReverse = anyIt.spinReverse === true;
   const wanderSmooth = clampNum(anyIt.wanderSmooth, 0, 100, 50);
   const paramsOf = (b: number): LayerParams => ({
-    on: active[b], speed: speeds[b], amount: amounts[b], phase: phases[b],
+    on: active[b], tempo: tempos[b], amplitude: amounts[b] / 100, offset: phases[b] / 100,
     blinkDuration, spinReverse, wanderSmooth,
   });
   const hasCustom = (b: number): boolean =>
-    speeds[b] !== 1 || amounts[b] !== 66 || phases[b] !== 0 ||
+    tempos[b] !== 1 || amounts[b] !== 66 || phases[b] !== 0 ||
     (b === 3 && blinkDuration !== 26) ||
     (b === 4 && spinReverse === true) ||
     (b === 5 && wanderSmooth !== 50);
@@ -393,6 +442,7 @@ function migrateItem(it: Item): void {
   const seen = new Set<number>();
   const oldGroups = (Array.isArray(anyIt.groups) ? anyIt.groups : []).map((raw) => {
     const g = (raw ?? {}) as Partial<BehaviourGroup>;
+    const legacy = g as Partial<BehaviourGroup> & { speed?: unknown; amount?: unknown };
     const rawMembers = (Array.isArray(g.members) ? g.members : []) as unknown[];
     const members = rawMembers
       .filter((m): m is number => typeof m === 'number' && Number.isInteger(m) && m >= 0 && m < BEHAVIOURS.length && !seen.has(m));
@@ -402,8 +452,10 @@ function migrateItem(it: Item): void {
       name: typeof g.name === 'string' && g.name.trim() ? g.name.trim() : 'Group',
       members: [...members].sort((a, b) => a - b),
       active: typeof g.active === 'boolean' ? g.active : true,
-      speed: clampNum(g.speed, 0.25, 3, 1),
-      amount: clampNum(g.amount, 0, 100, 100),
+      tempo: typeof g.tempo === 'number' ? snapTempo(g.tempo) : (typeof legacy.speed === 'number' ? snapTempo(legacy.speed) : 1),
+      amplitude: typeof g.amplitude === 'number'
+        ? clampNum(g.amplitude, 0, 1, 1)
+        : clampNum(legacy.amount, 0, 100, 100) / 100,
     };
   }).filter((g) => g.members.length > 0);
   // The old stack: v10's layers: number[] when present, else the v10 rule
@@ -930,21 +982,44 @@ function effActive(it: Item, layer: BehaviourLayer): boolean {
   // both its own toggle and its group's toggle are on.
   return layer.on && (!g || g.active);
 }
-function effSpeed(it: Item, layer: BehaviourLayer): number {
+function effTempo(it: Item, layer: BehaviourLayer): number {
   const g = groupOf(it, layer);
-  return layer.speed * (g ? g.speed : 1);
+  return layer.tempo * (g ? g.tempo : 1);
 }
-function effAmount(it: Item, layer: BehaviourLayer): number {
+function effAmplitude(it: Item, layer: BehaviourLayer): number {
   const g = groupOf(it, layer);
-  return layer.amount * (g ? g.amount / 100 : 1);
+  return layer.amplitude * (g ? g.amplitude : 1);
 }
-
-function amountScale(a: number): number {
-  // Amounts are percents (0-100) since the v3 migration mapped the old
-  // segmented 0.5/1/2 values to 33/66/100 — so this is pure percent math.
-  // (The old legacy branches returned 1 for a <= 2, which would have made
-  // a group Amount of 0% behave like 100%.)
-  return (a / 100) * 1.8;
+function amplitudeScale(a: number): number {
+  // Amplitudes are fractions (0-1); the 1.8 is the peak scale so a
+  // full-amplitude layer reaches 1.8 in graph units and (via 0.08/0.35
+  // factors) ~11% max scale and ~0.63 rad max rotation in the motion.
+  return a * 1.8;
+}
+// The loop follows the slowest contributing behaviour: an instance
+// contributes when it is effectively on and its amplitude is above 0 (an
+// amplitude-0 layer moves nothing and must not stretch the loop). Its
+// cycle is BASE_CYCLE_MS / effective tempo; the loop is the longest cycle,
+// so every contributing instance completes a whole number of cycles in it
+// — all effective tempos are powers of two, so every ratio is an integer.
+function minContributingTempo(): number | null {
+  let min: number | null = null;
+  for (const it of items) for (const layer of it.layers) {
+    if (!effActive(it, layer) || layer.amplitude <= 0) continue;
+    const t = effTempo(it, layer);
+    if (min === null || t < min) min = t;
+  }
+  return min;
+}
+function loopMs(): number {
+  const min = minContributingTempo();
+  return min === null ? BASE_CYCLE_MS : BASE_CYCLE_MS / min;
+}
+// Whole number of cycles an instance completes in one loop. The cycle
+// math uses this, so the pose at the wrap equals the pose at the start.
+function loopCycles(it: Item, layer: BehaviourLayer): number {
+  const min = minContributingTempo();
+  return min === null ? 1 : effTempo(it, layer) / min;
 }
 function smoothedAmp(layer: BehaviourLayer, target: number): number {
   const cur = smoothed.get(layer.id) ?? 0;
@@ -972,13 +1047,17 @@ function wanderJitterAmp(smooth: number): number {
   return smooth >= 50 ? 0 : ((50 - smooth) / 50) * 0.9;
 }
 // Wander drift terms, shared by the motion and the graph so the two agree.
-function wanderTerms(layer: BehaviourLayer, sp: number, t01: number): { x: number; y: number } {
+// `cycles` is the whole number of cycles the instance completes in one
+// loop; every component frequency is an integer multiple of it (1x base,
+// 2x/3x jitter), so the pose at the cycle end equals the pose at the
+// start. The old 0.5x/0.7x base and 2.3x/3.1x jitter never closed.
+function wanderTerms(layer: BehaviourLayer, cycles: number, t01: number): { x: number; y: number } {
   const twoPi = Math.PI * 2;
-  const ph = twoPi * (layer.phase / 100);
+  const ph = twoPi * layer.offset;
   const j = wanderJitterAmp(layer.wanderSmooth);
   return {
-    x: Math.sin(twoPi * 0.5 * sp * t01 + ph) + j * Math.sin(twoPi * 2.3 * sp * t01 + 0.4 + ph),
-    y: Math.sin(twoPi * 0.7 * sp * t01 + 1.3 + ph) + j * Math.sin(twoPi * 3.1 * sp * t01 + 2.1 + ph),
+    x: Math.sin(twoPi * cycles * t01 + ph) + j * Math.sin(twoPi * 2 * cycles * t01 + 0.4 + ph),
+    y: Math.sin(twoPi * cycles * t01 + 1.3 + ph) + j * Math.sin(twoPi * 3 * cycles * t01 + 2.1 + ph),
   };
 }
 function motionFor(it: Item, t01: number): Motion {
@@ -987,15 +1066,15 @@ function motionFor(it: Item, t01: number): Motion {
   for (const layer of it.layers) {
     const a = smoothedAmp(layer, effActive(it, layer) ? 1 : 0);
     if (a < 0.01) continue;
-    const sp = effSpeed(it, layer);
-    const am = amountScale(effAmount(it, layer));
-    const ph = twoPi * sp * t01 + twoPi * (layer.phase / 100); // Phase shifts the motion within the loop
+    const cycles = loopCycles(it, layer);
+    const am = amplitudeScale(effAmplitude(it, layer));
+    const ph = twoPi * cycles * t01 + twoPi * layer.offset; // Offset shifts the motion within its own cycle
     if (layer.behaviour === 0) dy += a * am * 16 * Math.sin(ph); // Bob
     if (layer.behaviour === 1) dx += a * am * 16 * Math.sin(ph + Math.PI / 2); // Sway
     if (layer.behaviour === 2) scale += a * am * 0.08 * Math.sin(ph); // Breathe
     if (layer.behaviour === 3) opacity -= a * 0.85 * blinkPulse(ph, layer.blinkDuration); // Blink
     if (layer.behaviour === 4) rot += (layer.spinReverse ? -1 : 1) * a * am * 0.35 * Math.sin(ph); // Spin
-    if (layer.behaviour === 5) { const w = wanderTerms(layer, sp, t01); dx += a * am * 18 * w.x; dy += a * am * 14 * w.y; } // Wander
+    if (layer.behaviour === 5) { const w = wanderTerms(layer, cycles, t01); dx += a * am * 18 * w.x; dy += a * am * 14 * w.y; } // Wander
   }
   return { dx, dy, scale, rot, opacity: Math.max(0.05, Math.min(1, opacity)) };
 }
@@ -1003,12 +1082,12 @@ function motionFor(it: Item, t01: number): Motion {
 // Reads the same parameters as motionFor, so the graph and the motion agree.
 function behaviourValue(it: Item, layer: BehaviourLayer, t01: number): number {
   const twoPi = Math.PI * 2;
-  const am = amountScale(effAmount(it, layer));
-  const sp = effSpeed(it, layer);
-  const ph = twoPi * sp * t01 + twoPi * (layer.phase / 100);
+  const am = amplitudeScale(effAmplitude(it, layer));
+  const cycles = loopCycles(it, layer);
+  const ph = twoPi * cycles * t01 + twoPi * layer.offset;
   if (layer.behaviour === 3) return am * blinkPulse(ph, layer.blinkDuration); // Blink: the widened pulse itself, not a square wave
   if (layer.behaviour === 4) return (layer.spinReverse ? -1 : 1) * am * Math.sin(ph); // Spin: mirrors when reversed
-  if (layer.behaviour === 5) { const w = wanderTerms(layer, sp, t01); return am * (w.x + 0.7 * w.y) / 1.7; } // Wander
+  if (layer.behaviour === 5) { const w = wanderTerms(layer, cycles, t01); return am * (w.x + 0.7 * w.y) / 1.7; } // Wander
   return am * Math.sin(ph);
 }
 
@@ -1031,7 +1110,19 @@ function resizeCanvas(): void {
     canvas.style.height = `${Math.floor(h * s)}px`;
   }
 }
-function drawItem(c: CanvasRenderingContext2D, it: Item, t01: number): void {
+// Focus alpha: the focused part renders full, everything else at 0.1
+// (faintly visible, not hidden). A dangling id (item deleted/undone away)
+// clears itself. Focus is view state, so it never applies to exports.
+function validFocus(): string | null {
+  if (focusedId !== null && !items.some((i) => i.id === focusedId)) focusedId = null;
+  return focusedId;
+}
+function focusAlpha(it: Item): number {
+  const f = validFocus();
+  if (f === null) return 1;
+  return it.id === f ? 1 : 0.1;
+}
+function drawItem(c: CanvasRenderingContext2D, it: Item, t01: number, applyFocus: boolean): void {
   const b = itemBBox(it);
   const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
   const m = motionFor(it, t01);
@@ -1040,7 +1131,9 @@ function drawItem(c: CanvasRenderingContext2D, it: Item, t01: number): void {
   c.rotate(m.rot);
   c.scale(m.scale, m.scale);
   c.translate(-cx, -cy);
-  c.globalAlpha = m.opacity;
+  // Focus dims the part; it multiplies the animated opacity (e.g. Blink)
+  // rather than replacing it.
+  c.globalAlpha = m.opacity * (applyFocus ? focusAlpha(it) : 1);
   c.strokeStyle = it.color;
   c.fillStyle = it.color;
   c.lineWidth = it.width;
@@ -1108,8 +1201,9 @@ function renderFrame(t01: number, target: CanvasRenderingContext2D = ctx, dprOve
       target.stroke();
     }
   }
-  for (const it of items) drawItem(target, it, t01);
-  if (target === ctx && selected()) {
+  for (const it of items) drawItem(target, it, t01, target === ctx);
+  const f = validFocus();
+  if (target === ctx && selected() && (f === null || selected()!.id === f)) {
     const b = itemBBox(selected()!);
     const m = motionFor(selected()!, t01);
     target.save();
@@ -1124,15 +1218,15 @@ function renderFrame(t01: number, target: CanvasRenderingContext2D = ctx, dprOve
 
 function frame(ts: number): void {
   if (playing) {
-    if (lastTs) playTime = (playTime + (ts - lastTs)) % LOOP_MS;
+    if (lastTs) playTime = (playTime + (ts - lastTs)) % loopMs();
     lastTs = ts;
   } else {
     lastTs = 0;
   }
-  const t01 = playTime / LOOP_MS;
+  const t01 = playTime / loopMs();
   renderWithPreview(t01);
   progressFill.style.width = `${(t01 * 100).toFixed(1)}%`;
-  timeState.textContent = `${(playTime / 1000).toFixed(1)} / ${(LOOP_MS / 1000).toFixed(1)}s`;
+  timeState.textContent = `${(playTime / 1000).toFixed(1)} / ${(loopMs() / 1000).toFixed(1)}s`;
   requestAnimationFrame(frame);
 }
 
@@ -1210,7 +1304,7 @@ function drawGraph(cv: HTMLCanvasElement, it: Item, layer: BehaviourLayer): void
   g.lineTo(W, H / 2 + 0.5);
   g.stroke();
   const N = 120;
-  const maxAmp = 1.8; // amountScale(2)
+  const maxAmp = 1.8; // amplitudeScale(1)
   g.strokeStyle = '#1d1d1f';
   g.lineWidth = 1.5;
   g.lineJoin = 'round';
@@ -1242,8 +1336,8 @@ function renderPanel(): void {
 // Combined graph for a group: the sum of its members' effective motion
 // over the loop. Only members that are effectively on (own toggle and
 // group toggle) contribute, so a suspended group reads flat. The scale is
-// fixed to the sum of the members' own amounts (before the group
-// multiplier), so changing the group's Amount visibly shrinks the curve
+// fixed to the sum of the members' own amplitudes (before the group
+// multiplier), so changing the group's Amplitude visibly shrinks the curve
 // instead of re-normalising it away.
 function drawGroupGraph(cv: HTMLCanvasElement, it: Item, group: BehaviourGroup): void {
   const W = 232, H = 48;
@@ -1265,7 +1359,7 @@ function drawGroupGraph(cv: HTMLCanvasElement, it: Item, group: BehaviourGroup):
   const members = group.members.map((id) => it.layers.find((l) => l.id === id)).filter((l): l is BehaviourLayer => !!l);
   const vals: number[] = [];
   let scale = 0;
-  for (const layer of members) if (effActive(it, layer)) scale += amountScale(layer.amount);
+  for (const layer of members) if (effActive(it, layer)) scale += amplitudeScale(layer.amplitude);
   if (scale < 0.01) scale = 1;
   for (let i = 0; i <= N; i++) {
     const t = i / N;
@@ -1297,7 +1391,7 @@ function layerDisplayName(it: Item, layer: BehaviourLayer): string {
 }
 
 // One behaviour layer row: on/off toggle, name, expand chevron, and — when
-// expanded — its graph plus Speed/Amount/Phase and its own extra controls.
+// expanded — its graph plus Tempo/Amplitude/Offset and its own extra controls.
 // Returns the row and its graph canvas (null while collapsed) so a group
 // can redraw member graphs when a group slider moves.
 function behaviourLayer(sel: Item, inst: BehaviourLayer, opts: { checkable: boolean; onParamChange?: () => void }): { layer: HTMLDivElement; graph: HTMLCanvasElement | null } {
@@ -1396,24 +1490,24 @@ function behaviourLayer(sel: Item, inst: BehaviourLayer, opts: { checkable: bool
       opts.onParamChange?.();
     };
     body.appendChild(paramSlider({
-      label: 'Speed', min: 0.25, max: 3, step: 0.05, value: inst.speed,
-      format: (v) => `${v.toFixed(2).replace(/0$/, '').replace(/\.$/, '')}x`,
-      aria: `${displayName} speed`,
-      onInput: (v) => { const l = liveLayer(); if (!l) return; l.speed = v; redraw(); },
+      label: 'Tempo', min: 0, max: TEMPO_STOPS.length - 1, step: 1, value: tempoStopIndex(inst.tempo),
+      format: (v) => formatTempoStop(stopAt(v)),
+      aria: `${displayName} tempo`,
+      onInput: (v) => { const l = liveLayer(); if (!l) return; l.tempo = stopAt(v); redraw(); },
       onCommit: () => save(),
     }));
     body.appendChild(paramSlider({
-      label: 'Amount', min: 0, max: 100, step: 1, value: inst.amount,
-      format: (v) => `${Math.round(v)}%`,
-      aria: `${displayName} amount`,
-      onInput: (v) => { const l = liveLayer(); if (!l) return; l.amount = v; redraw(); },
+      label: 'Amplitude', min: 0, max: 1, step: 0.01, value: inst.amplitude,
+      format: (v) => v.toFixed(2),
+      aria: `${displayName} amplitude`,
+      onInput: (v) => { const l = liveLayer(); if (!l) return; l.amplitude = v; redraw(); },
       onCommit: () => save(),
     }));
     body.appendChild(paramSlider({
-      label: 'Phase', min: 0, max: 100, step: 1, value: inst.phase,
-      format: (v) => `${Math.round(v)}%`,
-      aria: `${displayName} phase`,
-      onInput: (v) => { const l = liveLayer(); if (!l) return; l.phase = v; redraw(); },
+      label: 'Offset', min: 0, max: 1, step: 0.01, value: inst.offset,
+      format: (v) => v.toFixed(2),
+      aria: `${displayName} offset`,
+      onInput: (v) => { const l = liveLayer(); if (!l) return; l.offset = v; redraw(); },
       onCommit: () => save(),
     }));
     if (b === 3) {
@@ -1472,8 +1566,8 @@ function behaviourLayer(sel: Item, inst: BehaviourLayer, opts: { checkable: bool
 }
 
 // One group row: chevron, name (click to rename inline), on/off toggle,
-// ungroup button. When expanded: combined graph, the group's Speed and
-// Amount sliders, then the member rows with their own controls.
+// ungroup button. When expanded: combined graph, the group's Tempo and
+// Amplitude sliders, then the member rows with their own controls.
 function groupLayer(sel: Item, group: BehaviourGroup): HTMLDivElement {
   const open = expandedGroup === group.id;
   const layer = document.createElement('div');
@@ -1592,17 +1686,17 @@ function groupLayer(sel: Item, group: BehaviourGroup): HTMLDivElement {
       }
     };
     body.appendChild(paramSlider({
-      label: 'Speed', min: 0.25, max: 3, step: 0.05, value: group.speed,
-      format: (v) => `${v.toFixed(2).replace(/0$/, '').replace(/\.$/, '')}x`,
-      aria: `${group.name} speed`,
-      onInput: (v) => { const s = selected(); if (!s) return; const g = s.groups.find((gg) => gg.id === group.id); if (!g) return; g.speed = v; redrawGroupGraph(); redrawMemberGraphs(); },
+      label: 'Tempo', min: 0, max: TEMPO_STOPS.length - 1, step: 1, value: tempoStopIndex(group.tempo),
+      format: (v) => formatTempoStop(stopAt(v)),
+      aria: `${group.name} tempo`,
+      onInput: (v) => { const s = selected(); if (!s) return; const g = s.groups.find((gg) => gg.id === group.id); if (!g) return; g.tempo = stopAt(v); redrawGroupGraph(); redrawMemberGraphs(); },
       onCommit: () => save(),
     }));
     body.appendChild(paramSlider({
-      label: 'Amount', min: 0, max: 100, step: 1, value: group.amount,
-      format: (v) => `${Math.round(v)}%`,
-      aria: `${group.name} amount`,
-      onInput: (v) => { const s = selected(); if (!s) return; const g = s.groups.find((gg) => gg.id === group.id); if (!g) return; g.amount = v; redrawGroupGraph(); redrawMemberGraphs(); },
+      label: 'Amplitude', min: 0, max: 1, step: 0.01, value: group.amplitude,
+      format: (v) => v.toFixed(2),
+      aria: `${group.name} amplitude`,
+      onInput: (v) => { const s = selected(); if (!s) return; const g = s.groups.find((gg) => gg.id === group.id); if (!g) return; g.amplitude = v; redrawGroupGraph(); redrawMemberGraphs(); },
       onCommit: () => save(),
     }));
     const membersWrap = document.createElement('div');
@@ -1635,7 +1729,7 @@ function removeBehaviourLayer(sel: Item, layerId: string): void {
   if (!layer) return;
   pushHistory();
   sel.stash[layer.behaviour] = {
-    on: layer.on, speed: layer.speed, amount: layer.amount, phase: layer.phase,
+    on: layer.on, tempo: layer.tempo, amplitude: layer.amplitude, offset: layer.offset,
     blinkDuration: layer.blinkDuration, spinReverse: layer.spinReverse, wanderSmooth: layer.wanderSmooth,
   };
   sel.layers = sel.layers.filter((l) => l.id !== layerId);
@@ -1748,7 +1842,7 @@ function renderBehavioursPanel(sel: Item): void {
         const m = /^Group (\d+)$/.exec(g.name);
         if (m) n = Math.max(n, parseInt(m[1], 10) + 1);
       }
-      const group: BehaviourGroup = { id: nid(), name: `Group ${n}`, members, active: true, speed: 1, amount: 100 };
+      const group: BehaviourGroup = { id: nid(), name: `Group ${n}`, members, active: true, tempo: 1, amplitude: 1 };
       s.groups.push(group);
       checkedLayers.clear();
       expandedLayerId = null;
@@ -2079,13 +2173,19 @@ let previewShape: ShapeItem | null = null;
 canvas.addEventListener('pointerdown', (e) => {
   try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
   const p = stagePoint(e);
+  // The second press of a double-click pair (same spot, <400ms) is a
+  // repeat, not a new action: paint and the text editor must not fire
+  // twice for one double-click.
+  lastPressRepeat = lastDown !== null && Date.now() - lastDown.t < 400 &&
+    Math.hypot(p.x - lastDown.x, p.y - lastDown.y) < 8;
+  lastDown = { t: Date.now(), x: p.x, y: p.y };
   if (tool === 'brush') {
     pushHistory();
     const stroke: StrokeItem = { ...baseItem(color, penWidth), type: 'stroke', points: [p] };
     items.push(stroke);
     drag = { kind: 'brush', start: p, last: p, item: stroke, moved: false, before: null, erased: false };
   } else if (tool === 'paint') {
-    paintAt(p);
+    if (!lastPressRepeat) paintAt(p);
     drag = null;
   } else if (tool === 'shape') {
     drag = { kind: 'shape', start: p, last: p, item: null, moved: false, before: null, erased: false };
@@ -2103,6 +2203,10 @@ canvas.addEventListener('pointerdown', (e) => {
       drag = { kind: 'select', start: p, last: p, item: hit, moved: false, before: gestureStart(), erased: false };
     } else {
       selectedId = null;
+      // Single-clicking empty stage exits focus (and deselects). The
+      // timestamp stops the following dblclick event reopening the text
+      // editor behind the exit.
+      if (focusedId !== null) { focusedId = null; lastFocusExitAt = Date.now(); }
       renderPanel();
       drag = null;
     }
@@ -2330,11 +2434,34 @@ canvas.addEventListener('mousedown', (e) => {
 canvas.addEventListener('dblclick', (e) => {
   const p = stagePoint(e);
   const hit = hitTest(p);
+  // Double-click focuses a part: it stays full opacity, everything else
+  // dims to 0.1. Double-clicking the focused part again, or empty stage,
+  // exits focus. The text and paint tools keep their click meanings, so
+  // focus only applies with the other tools.
+  if (tool !== 'text' && tool !== 'paint') {
+    if (hit) {
+      if (focusedId === hit.id) focusedId = null;
+      else focusedId = hit.id;
+      selectedId = hit.id;
+      renderPanel();
+      return;
+    }
+    // Empty stage: exit focus. The gesture is consumed here — including
+    // when a single click just exited it, so no text editor opens
+    // behind the exit — and otherwise the old behaviour below runs.
+    if (focusedId !== null || Date.now() - lastFocusExitAt < 500) {
+      focusedId = null;
+      selectedId = null;
+      renderPanel();
+      return;
+    }
+  }
   if (hit && hit.type === 'text') { selectedId = hit.id; openTextEditor(hit, p); }
   else if (tool === 'text' || !hit) openTextEditor(null, p);
 });
 canvas.addEventListener('pointerdown', (e) => {
   if (tool === 'text') {
+    if (lastPressRepeat) return; // second press of a double-click pair
     const p = stagePoint(e);
     const hit = hitTest(p);
     if (hit?.type === 'text') { selectedId = hit.id; openTextEditor(hit, p); }
@@ -2373,13 +2500,13 @@ stopBtn.addEventListener('click', () => {
   playTime = 0;
   setPlayLabel();
 });
-forwardBtn.addEventListener('click', () => { playTime = LOOP_MS - 1; });
+forwardBtn.addEventListener('click', () => { playTime = loopMs() - 1; });
 function exportPNG(): void {
   const { w, h } = stageSize();
   const off = document.createElement('canvas');
   off.width = w; off.height = h;
   const octx = off.getContext('2d')!;
-  renderFrame(playTime / LOOP_MS, octx, 1);
+  renderFrame(playTime / loopMs(), octx, 1);
   off.toBlob((blob) => {
     if (!blob) return;
     downloadBlob(blob, 'manakin.png');
@@ -2398,7 +2525,7 @@ async function exportVideo(): Promise<void> {
   rec.ondataavailable = (ev) => { if (ev.data.size > 0) chunks.push(ev.data); };
   const done = new Promise<void>((resolve) => { rec.onstop = () => resolve(); });
   rec.start(100);
-  await new Promise((r) => setTimeout(r, LOOP_MS + 200));
+  await new Promise((r) => setTimeout(r, loopMs() + 200));
   rec.stop();
   await done;
   if (!wasPlaying) { playing = false; setPlayLabel(); }
@@ -2426,6 +2553,7 @@ window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
   if (k === 'escape') {
     if (addPickerOpen) { addPickerOpen = false; closeAddPickerEl(); renderPanel(); return; }
+    if (focusedId !== null) { focusedId = null; renderPanel(); return; }
     if (panelView === 'colour') { panelView = 'auto'; renderPanel(); }
     return;
   }
