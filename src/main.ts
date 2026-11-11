@@ -2001,9 +2001,11 @@ function groupLayer(sel: Item, group: BehaviourGroup): HTMLDivElement {
     save();
     renderPanel();
   });
-  head.appendChild(chev);
+  // Head order matches a layer head: name, toggle, chevron, action —
+  // the expand chevron sits on the right in both, not on the left here.
   head.appendChild(name);
   head.appendChild(toggle);
+  head.appendChild(chev);
   head.appendChild(ungroup);
   head.addEventListener('click', (e) => {
     if ((e.target as HTMLElement).closest('.layer-toggle, .ungroup-btn, .group-rename')) return;

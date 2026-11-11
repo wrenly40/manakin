@@ -150,7 +150,6 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 .hbtn:hover { background: rgba(0, 0, 0, 0.05); }
 .hbtn:disabled { opacity: 0.35; cursor: default; }
 .hbtn:disabled:hover { background: transparent; }
-.hbtn.busy { color: var(--accent); }
 .hbtn.active {
   background: #fff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
@@ -298,13 +297,12 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 .psection { margin-bottom: 18px; }
 .psection h3 { font-size: 12px; font-weight: 600; color: var(--grey); margin: 0 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--hairline); }
 .pbtn {
-  display: block; width: 100%; height: 32px; margin-bottom: 8px;
+  display: block; width: 100%; height: 32px; margin-bottom: 8px; padding: 0 10px;
   border: 1px solid var(--hairline); border-radius: 9px; background: #fff;
   font-size: 13px; font-weight: 500; color: var(--ink);
 }
 .pbtn:hover { background: var(--bg-system); }
 .pbtn:disabled { opacity: 0.35; cursor: default; }
-.pbtn.busy { color: var(--accent); }
 /* Export: one bordered card. PNG and Video are tabs at its top
    (the same segmented treatment as the stage picker); the active
    tab's content sits below them. */
@@ -408,7 +406,7 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 .group-members { border-left: 1px solid var(--hairline); margin: 4px 0 0 2px; padding-left: 6px; }
 .group-members .blayer:last-child { margin-bottom: 0; }
 .group-action { display: flex; justify-content: center; padding: 14px 0 4px; }
-.sel-count { font-size: 14px; color: var(--ink); margin: 2px 0 10px; }
+.sel-count { font-size: 13px; color: var(--ink); margin: 2px 0 10px; }
 /* Empty stack: one live-state line above the Add button. */
 .no-behaviours { font-size: 13px; color: var(--grey); padding: 8px 2px 12px; }
 /* Add behavior: a quiet full-width pill at the bottom of the stack. */
@@ -525,12 +523,12 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
   box-shadow: var(--shadow-md); color: var(--ink);
 }
 #play-btn:hover { background: #fff; }
-#play-btn svg { width: 14px; height: 14px; fill: currentColor; stroke: none; }
+#play-btn svg { width: 16px; height: 16px; fill: currentColor; stroke: none; }
 #timeline-row { display: flex; align-items: center; gap: 12px; }
 #progress-track {
   flex: 1; height: 4px; background: var(--fill); border-radius: 2px; overflow: hidden;
 }
-#progress-fill { height: 100%; width: 0%; background: var(--accent); border-radius: 2px; }
+#progress-fill { height: 100%; width: 0%; background: var(--ink); border-radius: 2px; }
 #time-state { font-size: 13px; color: var(--grey); white-space: nowrap; }
 
 /* Colour panel: saturation/value square + horizontal hue bar, hex,
