@@ -405,12 +405,12 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 .ungroup-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .group-members { border-left: 1px solid var(--hairline); margin: 4px 0 0 2px; padding-left: 6px; }
 .group-members .blayer:last-child { margin-bottom: 0; }
-.group-action { display: flex; justify-content: center; padding: 14px 0 4px; }
+.group-action { display: flex; justify-content: center; padding: 14px 0 0; }
 .sel-count { font-size: 13px; color: var(--ink); margin: 2px 0 10px; }
 /* Empty stack: one live-state line above the Add button. */
 .no-behaviours { font-size: 13px; color: var(--grey); padding: 8px 2px 12px; }
 /* Add behavior: a quiet full-width pill at the bottom of the stack. */
-.add-wrap { margin-top: 12px; }
+.add-wrap { margin-top: 8px; }
 .add-btn {
   display: flex; align-items: center; justify-content: center; gap: 6px;
   width: 100%; height: 32px;
@@ -436,11 +436,21 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 }
 /* Panel divider: the same hairline as under the section headers,
    separating the Arrange/Align block from the Group/Behaviours
-   controls below it. Spacing comes from the sections around it:
-   18px above from the section's own margin, 14px below from the
-   following element — the Group/Ungroup action's top padding, or
-   the first layer card's top margin, so no card edge touches it. */
+   controls below it. One rhythm around every divider: 14px above
+   and below it, whatever sits on either side. The element above
+   the divider carries the top gap (a section's margin, a card's
+   margin, a pill's padding, the empty line's padding); the element
+   below carries the bottom gap (a card's margin, a pill's padding,
+   the empty line's padding). 14px is the divider clearance already
+   in the CSS; the 18px section gap stays for section-to-section
+   breaks, and 8px stays the gap between cards — and from a pill to
+   what follows it (the Group action's bottom padding is 0, the Add
+   wrap's top margin is 8px). */
 .pdiv { height: 1px; background: var(--hairline); }
+.psection:has(+ .pdiv) { margin-bottom: 14px; }
+.blayer:has(+ .pdiv) { margin-bottom: 14px; }
+.group-action:has(+ .pdiv) { padding-bottom: 14px; }
+.no-behaviours:has(+ .pdiv) { padding-bottom: 14px; }
 .pdiv + .blayer { margin-top: 14px; }
 /* Empty stack after a divider: the same 14px below the hairline —
    the line's own top padding is 8px, so raise it to match. */

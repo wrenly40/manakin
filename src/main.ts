@@ -2125,9 +2125,13 @@ function groupLayer(host: LayerHost, group: BehaviourGroup): HTMLDivElement {
   ungroup.className = 'ungroup-btn';
   ungroup.title = 'Ungroup behaviours';
   ungroup.setAttribute('aria-label', `Ungroup ${group.name}`);
-  // Breaking apart: two rounded squares with a zigzag crack between
-  // them — the group icon, broken. The old two tall rects read "00".
-  ungroup.innerHTML = '<svg viewBox="0 0 24 24"><rect x="2" y="8" width="7" height="8" rx="2"/><rect x="15" y="8" width="7" height="8" rx="2"/><path d="M12 6l-1.6 3.4 2.4 2.6-1.6 3.4L12 18"/></svg>';
+  // One square with a crack in it: a single rounded-square outline
+  // with a zigzag crack running from the top edge to the bottom edge.
+  // The two-squares version read as two shapes; this one is one
+  // shape, broken. Same 16px / stroke 1.8 treatment as the other
+  // header icons. Only the behaviour ungroup uses this glyph — the
+  // item-group ungroup is a labelled pill, not an icon.
+  ungroup.innerHTML = '<svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2.5"/><path d="M13 5 L9.5 9 L14 12.5 L10 16 L13 19"/></svg>';
   ungroup.addEventListener('click', (e) => {
     e.stopPropagation();
     pushHistory();
