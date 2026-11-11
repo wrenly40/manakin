@@ -11,4 +11,9 @@ contextBridge.exposeInMainWorld('manakin', {
   maximise: () => ipcRenderer.invoke('manakin:maximise'),
   fullscreen: () => ipcRenderer.invoke('manakin:fullscreen'),
   windowState: () => ipcRenderer.invoke('manakin:window-state'),
+  // PNG sequence export: pick a folder, then write one frame file at a
+  // time into it. Returns null when the user cancels the dialog.
+  pickSequenceFolder: () => ipcRenderer.invoke('manakin:pick-sequence-folder'),
+  writeSequenceFile: (dir: string, name: string, dataUrl: string) =>
+    ipcRenderer.invoke('manakin:write-sequence-file', dir, name, dataUrl),
 });

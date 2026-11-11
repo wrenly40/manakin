@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, session } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -59,6 +59,28 @@ ipcMain.handle('manakin:window-state', () => ({
   maximised: win ? win.isMaximized() : false,
   fullscreen: win ? win.isFullScreen() : false,
 }));
+
+// PNG sequence export: the renderer picks a folder, then writes one
+// frame-NNNN.png per frame into it. The write surface is deliberately
+// narrow — only frame-NNNN.png names, only PNG data.
+ipcMain.handle('manakin:pick-sequence-folder', async () => {
+  if (!win) return null;
+  const r = await dialog.showOpenDialog(win, {
+    properties: ['openDirectory', 'createDirectory'],
+    defaultPath: app.getPath('downloads'),
+  });
+  if (r.canceled || r.filePaths.length === 0) return null;
+  return r.filePaths[0];
+});
+ipcMain.handle('manakin:write-sequence-file', async (_event, dir: unknown, name: unknown, dataUrl: unknown) => {
+  if (typeof dir !== 'string' || typeof name !== 'string' || typeof dataUrl !== 'string') return false;
+  if (!/^frame-\d{4}\.png$/.test(name)) return false;
+  const prefix = 'data:image/png;base64,';
+  if (!dataUrl.startsWith(prefix)) return false;
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, name), Buffer.from(dataUrl.slice(prefix.length), 'base64'));
+  return true;
+});
 
 void app.whenReady().then(() => {
   // Save renderer downloads (PNG / Video export) straight to Downloads, no dialog.

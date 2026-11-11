@@ -1,4 +1,6 @@
 import './styles.css';
+import { GIFEncoder, quantize, applyPalette } from 'gifenc';
+import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 
 // The frameless window's controls, exposed by electron/preload.ts.
 // Absent when the page runs outside Electron (e.g. vite preview).
@@ -9,6 +11,8 @@ type ManakinBridge = {
   maximise: () => Promise<boolean>;
   fullscreen: () => Promise<boolean>;
   windowState: () => Promise<{ maximised: boolean; fullscreen: boolean }>;
+  pickSequenceFolder: () => Promise<string | null>;
+  writeSequenceFile: (dir: string, name: string, dataUrl: string) => Promise<boolean>;
 };
 declare global {
   interface Window { manakin?: ManakinBridge; }
@@ -174,12 +178,16 @@ let stageBgCustom: string | null = null;
 let gridMode: GridMode = 'empty';
 let projectName = 'Untitled';
 let panelOpen = true;
-// Export choices (persisted in the save, like panelOpen).
-let exportFormat: 'png' | 'webm' = 'png';
-let exportScale: 1 | 2 = 1;
-let exportFrame: 'current' | 'start' = 'current';
-let exportOpen = false; // the inline export section under the Export button is expanded
-let exporting = false; // a video export is recording right now
+let exporting = false; // an export (PNG sequence or video) is running right now
+let exportProgress: { text: string; target: 'png' | 'video' } | null = null;
+// "Exporting 45/120" while an offline export runs, on the button doing it.
+function setExportProgress(text: string, target: 'png' | 'video'): void {
+  exportProgress = { text, target };
+  const b = document.getElementById(target === 'png' ? 'export-png-btn' : 'export-video-btn');
+  if (b) b.textContent = text;
+}
+type VideoFormat = 'gif' | 'webm' | 'mp4';
+let videoFormat: VideoFormat = 'webm'; // video export format, persisted like panelOpen
 let panelView: 'auto' | 'colour' = 'auto';
 let colourSlot: 'fg' | 'bg' = 'fg';
 let expandedLayerId: string | null = null;
@@ -220,7 +228,7 @@ function save(): void {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
       items, stageId, projectName, stageBgId, stageBgCustom, gridMode, panelOpen,
       fg: color, bg: bgColour, penWidth, recent: recentColours, saved: savedColours,
-      exportFormat, exportScale, exportFrame,
+      videoFormat,
     }));
   } catch { /* storage full or unavailable */ }
 }
@@ -541,7 +549,7 @@ function load(): void {
         items: Item[]; stageId: typeof stageId; projectName?: string;
         stageBgId?: StageBgId; stageBgCustom?: string | null; gridMode?: unknown; panelOpen?: boolean;
         fg?: string; bg?: string; penWidth?: number; recent?: string[]; saved?: string[];
-        exportFormat?: unknown; exportScale?: unknown; exportFrame?: unknown;
+        videoFormat?: unknown;
       };
       if (Array.isArray(data.items) && data.items.length > 0) {
         items = data.items;
@@ -552,9 +560,7 @@ function load(): void {
         if (typeof data.stageBgCustom === 'string') stageBgCustom = data.stageBgCustom;
         const gm = migrateGridMode(data.gridMode);
         if (gm !== null) gridMode = gm;
-        if (data.exportFormat === 'png' || data.exportFormat === 'webm') exportFormat = data.exportFormat;
-        if (data.exportScale === 1 || data.exportScale === 2) exportScale = data.exportScale;
-        if (data.exportFrame === 'current' || data.exportFrame === 'start') exportFrame = data.exportFrame;
+        if (data.videoFormat === 'gif' || data.videoFormat === 'webm' || data.videoFormat === 'mp4') videoFormat = data.videoFormat;
         if (typeof data.panelOpen === 'boolean') panelOpen = data.panelOpen;
         if (typeof data.fg === 'string') color = data.fg;
         if (typeof data.bg === 'string') bgColour = data.bg;
@@ -1853,63 +1859,6 @@ function renderAddPicker(anchorBtn: HTMLElement): void {
   pop.style.top = `${top}px`;
 }
 
-// The Export section: the same Format / Scale / Frame controls the old
-// popover had, but expanded in place directly under the Export button,
-// inside the panel flow. It stays open after an export, and closes only
-// when the Export button is tapped again. Choices are saved as they are
-// picked and survive a reload; the open/collapsed state does not persist.
-function renderExportSection(): HTMLElement {
-  const sec = document.createElement('div');
-  sec.className = 'export-section';
-  const mkLabel = (text: string): void => {
-    const l = document.createElement('div');
-    l.className = 'export-label';
-    l.textContent = text;
-    sec.appendChild(l);
-  };
-  const mkSeg = <T extends string | number>(options: { id: T; label: string }[], current: T, onPick: (v: T) => void): void => {
-    const seg = document.createElement('div');
-    seg.className = 'seg';
-    for (const o of options) {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = current === o.id ? 'active' : '';
-      b.textContent = o.label;
-      b.addEventListener('click', () => {
-        onPick(o.id);
-        save();
-        renderPanel();
-      });
-      seg.appendChild(b);
-    }
-    sec.appendChild(seg);
-  };
-  mkLabel('Format');
-  mkSeg([{ id: 'png', label: 'PNG' }, { id: 'webm', label: 'Video' }] as const, exportFormat, (v) => { exportFormat = v; });
-  mkLabel('Scale');
-  mkSeg([{ id: 1, label: '1×' }, { id: 2, label: '2×' }] as const, exportScale, (v) => { exportScale = v; });
-  if (exportFormat === 'png') {
-    mkLabel('Frame');
-    mkSeg([{ id: 'current', label: 'Current' }, { id: 'start', label: 'Start' }] as const, exportFrame, (v) => { exportFrame = v; });
-  } else {
-    const loop = document.createElement('div');
-    loop.className = 'export-loop';
-    loop.textContent = `${(loopMs() / 1000).toFixed(1)}s loop`;
-    sec.appendChild(loop);
-  }
-  const go = document.createElement('button');
-  go.type = 'button';
-  go.className = 'pbtn';
-  go.textContent = exportFormat === 'png' ? 'Export PNG' : 'Export Video';
-  go.disabled = exporting;
-  go.addEventListener('click', () => {
-    if (exportFormat === 'png') exportPNG(exportScale, exportFrame);
-    else void exportVideo(exportScale);
-  });
-  sec.appendChild(go);
-  return sec;
-}
-
 function renderBehavioursPanel(sel: Item): void {
   panelTitle.textContent = 'Behaviours';
   if (checkedItemId !== sel.id) { checkedLayers.clear(); checkedItemId = sel.id; addPickerOpen = false; }
@@ -2087,19 +2036,39 @@ function renderCanvasPanel(): void {
     if (saveTimer !== null) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => { saveBtn.textContent = 'Save'; }, 1500);
   });
-  const exportBtn = mkAction('Export', 'export-btn', () => {
-    exportOpen = !exportOpen;
-    renderPanel();
-  });
-  exportBtn.classList.add('export-toggle');
-  exportBtn.innerHTML = `<span>Export</span><svg viewBox="0 0 24 24" class="chev${exportOpen ? ' open' : ''}"><path d="M6 9l6 6 6-6"/></svg>`;
-  exportBtn.setAttribute('aria-expanded', String(exportOpen));
-  if (exporting) {
-    exportBtn.disabled = true;
-    exportBtn.classList.add('busy');
-    exportBtn.title = 'Recording…';
+  const pngBtn = mkAction('Export PNG', 'export-png-btn', () => { void exportPNGSequence(); });
+  // Video format: a small segmented control directly above the Export
+  // Video button. No other parameters — no scale, no frame choice.
+  const fmtSeg = document.createElement('div');
+  fmtSeg.className = 'seg';
+  fmtSeg.id = 'video-format-seg';
+  fmtSeg.setAttribute('role', 'group');
+  fmtSeg.setAttribute('aria-label', 'Video format');
+  for (const f of [{ id: 'gif', label: 'GIF' }, { id: 'webm', label: 'WebM' }, { id: 'mp4', label: 'MP4' }] as const) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = videoFormat === f.id ? 'active' : '';
+    b.textContent = f.label;
+    b.setAttribute('aria-label', `Video format ${f.label}`);
+    b.addEventListener('click', () => {
+      if (videoFormat === f.id) return;
+      videoFormat = f.id;
+      save();
+      renderPanel();
+    });
+    fmtSeg.appendChild(b);
   }
-  if (exportOpen) actionsSec.appendChild(renderExportSection());
+  actionsSec.appendChild(fmtSeg);
+  const videoBtn = mkAction(videoFormat === 'gif' ? 'Export GIF' : videoFormat === 'mp4' ? 'Export MP4' : 'Export WebM', 'export-video-btn', () => { void exportVideo(); });
+  if (exporting) {
+    pngBtn.disabled = true;
+    videoBtn.disabled = true;
+    // An offline export (PNG sequence, GIF, MP4) shows its progress on
+    // the button doing it; a WebM recording has no progress to show.
+    if (exportProgress?.target === 'png') pngBtn.textContent = exportProgress.text;
+    else if (exportProgress?.target === 'video') videoBtn.textContent = exportProgress.text;
+    else videoBtn.textContent = 'Recording…';
+  }
   mkAction('Clear', 'clear-btn', clearStage);
 }
 
@@ -2626,28 +2595,137 @@ stopBtn.addEventListener('click', () => {
   setPlayLabel();
 });
 forwardBtn.addEventListener('click', () => { playTime = loopMs() - 1; });
-function exportPNG(scale: number, frame: 'current' | 'start'): void {
-  const { w, h } = stageSize();
-  const off = document.createElement('canvas');
-  off.width = w * scale; off.height = h * scale;
-  const octx = off.getContext('2d')!;
-  const t01 = frame === 'start' ? 0 : playTime / loopMs();
-  renderFrame(t01, octx, scale);
-  off.toBlob((blob) => {
-    if (!blob) return;
-    downloadBlob(blob, 'manakin.png');
-  }, 'image/png');
+// PNG export writes a sequence of one PNG per frame over one full loop
+// (30fps, stage size), into a folder the user picks. Frames render
+// offline to an offscreen canvas — the on-screen canvas and play state
+// are left alone, and exports never carry the grid, focus dimming or
+// selection outline (renderFrame gates those to the on-screen target).
+async function exportPNGSequence(): Promise<void> {
+  if (exporting) return;
+  const bridge = window.manakin;
+  if (!bridge) return; // folder picking needs Electron
+  const dir = await bridge.pickSequenceFolder();
+  if (!dir) return; // user cancelled the folder dialog
+  exporting = true;
+  exportProgress = null;
+  renderPanel();
+  try {
+    const { w, h } = stageSize();
+    const n = Math.max(1, Math.round((loopMs() / 1000) * 30));
+    const off = document.createElement('canvas');
+    off.width = w; off.height = h;
+    const octx = off.getContext('2d')!;
+    for (let i = 0; i < n; i++) {
+      renderFrame(i / n, octx, 1);
+      const dataUrl = off.toDataURL('image/png');
+      await bridge.writeSequenceFile(dir, `frame-${String(i + 1).padStart(4, '0')}.png`, dataUrl);
+      setExportProgress(`Exporting ${i + 1}/${n}`, 'png');
+    }
+  } finally {
+    exporting = false;
+    exportProgress = null;
+    renderPanel();
+  }
 }
-// Video records one full loop to an offscreen canvas at stage size ×
-// scale, driven in real time — the on-screen canvas and play state are
-// left alone.
-async function exportVideo(scale: number): Promise<void> {
+// Video export: GIF, WebM or MP4, one full loop at 30fps, stage size,
+// artwork only. The format is picked in the Actions area; no other
+// parameters.
+async function exportVideo(): Promise<void> {
+  if (exporting) return;
+  if (videoFormat === 'gif') { await exportGIF(); return; }
+  if (videoFormat === 'mp4') { await exportMP4(); return; }
+  await exportWebM();
+}
+// GIF: animated, looping forever. Frames render offline the same way as
+// the PNG sequence; gifenc quantizes each frame to a 256-colour palette.
+// GIF delays are stored in 10ms units, so the per-frame delay alternates
+// 30/40ms to average exactly 1/30s.
+async function exportGIF(): Promise<void> {
+  exporting = true;
+  renderPanel();
+  try {
+    const { w, h } = stageSize();
+    const n = Math.max(1, Math.round((loopMs() / 1000) * 30));
+    const off = document.createElement('canvas');
+    off.width = w; off.height = h;
+    const octx = off.getContext('2d')!;
+    const gif = GIFEncoder();
+    for (let i = 0; i < n; i++) {
+      renderFrame(i / n, octx, 1);
+      const img = octx.getImageData(0, 0, w, h);
+      const palette = quantize(img.data, 256);
+      const index = applyPalette(img.data, palette);
+      const delay = (Math.round(((i + 1) * 10) / 3) - Math.round((i * 10) / 3)) * 10;
+      gif.writeFrame(index, w, h, { palette, delay, repeat: 0 });
+      setExportProgress(`Exporting ${i + 1}/${n}`, 'video');
+    }
+    gif.finish();
+    downloadBlob(new Blob([gif.bytes() as BlobPart], { type: 'image/gif' }), 'manakin.gif');
+  } finally {
+    exporting = false;
+    exportProgress = null;
+    renderPanel();
+  }
+}
+// MP4: H.264 via WebCodecs (VideoEncoder) + mp4-muxer, both JS-only.
+// Chromium cannot do this with MediaRecorder. If this build has no
+// H.264 encoder, isConfigSupported says so and nothing is exported.
+async function exportMP4(): Promise<void> {
+  if (typeof VideoEncoder === 'undefined') return;
+  const { w, h } = stageSize();
+  const config: VideoEncoderConfig = {
+    codec: 'avc1.42001f', width: w, height: h,
+    bitrate: 8_000_000, framerate: 30, avc: { format: 'avc' },
+  };
+  const support = await VideoEncoder.isConfigSupported(config);
+  if (!support.supported) return;
+  exporting = true;
+  renderPanel();
+  try {
+    const n = Math.max(1, Math.round((loopMs() / 1000) * 30));
+    const muxer = new Muxer({
+      target: new ArrayBufferTarget(),
+      video: { codec: 'avc', width: w, height: h, frameRate: 30 },
+      fastStart: 'in-memory',
+    });
+    let encoderError: Error | null = null;
+    const encoder = new VideoEncoder({
+      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+      error: (e) => { encoderError = e; },
+    });
+    encoder.configure(config);
+    const off = document.createElement('canvas');
+    off.width = w; off.height = h;
+    const octx = off.getContext('2d')!;
+    for (let i = 0; i < n; i++) {
+      renderFrame(i / n, octx, 1);
+      const frame = new VideoFrame(off, { timestamp: (i * 1e6) / 30 });
+      encoder.encode(frame, { keyFrame: i === 0 });
+      frame.close();
+      setExportProgress(`Exporting ${i + 1}/${n}`, 'video');
+      while (encoder.encodeQueueSize > 4) await new Promise((r) => setTimeout(r, 10));
+    }
+    await encoder.flush();
+    encoder.close();
+    if (encoderError) throw encoderError;
+    muxer.finalize();
+    downloadBlob(new Blob([muxer.target.buffer], { type: 'video/mp4' }), 'manakin.mp4');
+  } finally {
+    exporting = false;
+    exportProgress = null;
+    renderPanel();
+  }
+}
+// WebM: the existing path — one full loop, recorded in real time to an
+// offscreen canvas at stage size. The on-screen canvas and play state
+// are left alone.
+async function exportWebM(): Promise<void> {
   if (exporting) return;
   exporting = true;
   renderPanel();
   const { w, h } = stageSize();
   const off = document.createElement('canvas');
-  off.width = w * scale; off.height = h * scale;
+  off.width = w; off.height = h;
   const octx = off.getContext('2d')!;
   const stream = off.captureStream(30);
   const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
@@ -2662,8 +2740,8 @@ async function exportVideo(scale: number): Promise<void> {
   await new Promise<void>((resolve) => {
     const tick = () => {
       const el = performance.now() - start;
-      if (el >= L) { renderFrame(0, octx, scale); resolve(); return; }
-      renderFrame(el / L, octx, scale);
+      if (el >= L) { renderFrame(0, octx, 1); resolve(); return; }
+      renderFrame(el / L, octx, 1);
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
