@@ -1519,7 +1519,14 @@ function drawItem(c: CanvasRenderingContext2D, it: Item, t01: number, applyFocus
     if (it.kind === 'rect') c.rect(it.x, it.y, it.w, it.h);
     else c.ellipse(it.x + it.w / 2, it.y + it.h / 2, Math.abs(it.w) / 2, Math.abs(it.h) / 2, 0, 0, Math.PI * 2);
     if (it.fillSolid) c.fill();
-    else { c.fillStyle = hexToRgba(it.color, 0.12); c.fill(); }
+    else {
+      // Opaque paper base, then the tint: a shape occludes what is
+      // beneath it, so Arrange visibly reorders — the body brought to
+      // front really covers the head and wing. An isolated shape looks
+      // exactly as before: the tint over the stage colour.
+      c.fillStyle = stageBgValue(); c.fill();
+      c.fillStyle = hexToRgba(it.color, 0.12); c.fill();
+    }
     c.stroke();
   } else {
     c.font = `${it.size}px -apple-system, "Segoe UI", system-ui, sans-serif`;
@@ -2263,6 +2270,7 @@ function reanchorAddPicker(): void {
 function renderBehavioursPanel(sel: Item): void {
   panelTitle.textContent = 'Behaviours';
   panelBody.appendChild(renderArrangeSection());
+  panelBody.appendChild(panelDivider());
   if (checkedItemId !== sel.id) { checkedLayers.clear(); checkedItemId = sel.id; addPickerOpen = false; }
   const grouped = new Set(sel.groups.flatMap((g) => g.members));
   // Drop checks for layers that left the stack or joined a group.
@@ -2686,6 +2694,7 @@ function renderMultiSelectPanel(sel: Item[]): void {
 function renderItemGroupPanel(group: ItemGroup): void {
   panelTitle.textContent = 'Behaviours';
   panelBody.appendChild(renderArrangeSection());
+  panelBody.appendChild(panelDivider());
   const host: LayerHost = { kind: 'group', group };
   for (const layer of group.layers) {
     panelBody.appendChild(behaviourLayer(host, layer, { checkable: false }).layer);
