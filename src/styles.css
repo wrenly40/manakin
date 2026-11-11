@@ -328,8 +328,8 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 .export-dropdown #export-card { margin-bottom: 0; }
 /* Export button: label left, chevron right; the chevron turns up
    while the dropdown is open. */
-.export-btn { display: flex; align-items: center; justify-content: space-between; padding: 0 10px; }
-.export-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.15s ease; }
+.export-btn { display: flex; align-items: center; justify-content: center; padding: 0 10px; position: relative; }
+.export-btn svg { position: absolute; right: 10px; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.15s ease; }
 .export-btn.open svg { transform: rotate(180deg); }
 .bg-dots { display: flex; gap: 8px; }
 .bg-dot {
