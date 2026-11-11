@@ -290,8 +290,6 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
   font-size: 13px; font-weight: 500; color: var(--ink);
 }
 .add-btn:hover { background: var(--bg-system); }
-.add-btn:disabled { opacity: 0.35; cursor: default; }
-.add-btn:disabled:hover { background: #fff; }
 .add-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 /* Add behavior picker: a small frosted popover like Bowerbird's
    shape-picker flyout, anchored to the Add button. */
@@ -310,10 +308,7 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
   font-size: 13px; font-weight: 500; color: var(--ink); text-align: left;
 }
 .add-picker-row:hover { background: rgba(0, 0, 0, 0.05); }
-.add-picker-row.in-stack { opacity: 0.45; cursor: default; }
-.add-picker-row.in-stack:hover { background: transparent; }
 .add-picker-row .layer-name { flex: 1; }
-.pick-check { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .layer-chev {
   flex: none; width: 28px; height: 28px; border: none; border-radius: 7px;
   background: transparent; color: var(--grey);

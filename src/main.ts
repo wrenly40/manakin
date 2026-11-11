@@ -18,24 +18,36 @@ const LAYER_ICONS: string[] = [
 type BehaviourGroup = {
   id: string;
   name: string;
-  members: number[]; // behaviour indices, ascending; a behaviour belongs to at most one group
+  members: string[]; // layer ids; a layer belongs to at most one group
   active: boolean; // group off suspends its members without losing their own on/off states
   speed: number; // 0.25-3, multiplies each member's speed
   amount: number; // 0-100, scales each member's amount
+};
+// One layer = one instance of a behaviour on one item. The same behaviour
+// can appear several times in a stack, each instance with its own id and
+// its own parameters; only the parameters relevant to its behaviour are
+// used (Blink also uses blinkDuration, Spin also spinReverse, Wander also
+// wanderSmooth).
+type LayerParams = {
+  on: boolean;
+  speed: number; // 0.25-3
+  amount: number; // 0-100
+  phase: number; // 0-100% shift of the motion within the loop
+  blinkDuration: number; // % of the cycle the blink bump spans (Blink only)
+  spinReverse: boolean; // Spin only: run the spin backwards
+  wanderSmooth: number; // 0-100% (Wander only); 50+ is the smooth drift
+};
+type BehaviourLayer = LayerParams & {
+  id: string; // unique within the item; never reused
+  behaviour: number; // 0-5, index into BEHAVIOURS
 };
 type ItemBase = {
   id: string;
   color: string;
   width: number;
-  active: boolean[]; // one on/off layer per behaviour, on for the whole loop
-  speeds: number[];
-  amounts: number[];
-  phases: number[]; // 0-100% shift of the motion within the loop, per behaviour
-  blinkDuration: number; // % of the cycle the blink bump spans (Blink only)
-  spinReverse: boolean; // Spin only: run the spin backwards
-  wanderSmooth: number; // 0-100% (Wander only); 50+ is the smooth drift
-  layers: number[]; // ordered behaviour stack, top-to-bottom as shown in the panel; only these are listed and contribute to the motion
+  layers: BehaviourLayer[]; // ordered behaviour stack, top-to-bottom as shown in the panel; only these are listed and contribute to the motion
   groups: BehaviourGroup[]; // per-item behaviour groups; flat only, no groups in groups
+  stash: Partial<Record<number, LayerParams>>; // most recently removed instance's params, keyed by behaviour index, so re-adding restores them
 };
 type StrokeItem = ItemBase & { type: 'stroke'; points: Pt[] };
 type ShapeItem = ItemBase & {
@@ -68,13 +80,16 @@ function nid(): string {
   uid += 1;
   return `i${Date.now().toString(36)}${uid}`;
 }
-function defaultActive(): boolean[] { return [false, false, false, false, false, false]; }
-function defaultSpeeds(): number[] { return [1, 1, 1, 1, 1, 1]; }
-function defaultAmounts(): number[] { return [66, 66, 66, 66, 66, 66]; }
-function defaultPhases(): number[] { return [0, 0, 0, 0, 0, 0]; }
-function defaultBlinkDuration(): number { return 26; } // raised-cosine bump whose half-depth width (13%) matches the old sin^8 blink
+function defaultLayerParams(): LayerParams {
+  return { on: true, speed: 1, amount: 66, phase: 0, blinkDuration: 26, spinReverse: false, wanderSmooth: 50 };
+}
+// The default blink duration of 26% is a raised-cosine bump whose
+// half-depth width (13%) matches the old sin^8 blink.
+function newLayer(b: number, params?: Partial<LayerParams>): BehaviourLayer {
+  return { id: nid(), behaviour: b, ...defaultLayerParams(), ...params };
+}
 function baseItem(color: string, width: number): ItemBase {
-  return { id: nid(), color, width, active: defaultActive(), speeds: defaultSpeeds(), amounts: defaultAmounts(), phases: defaultPhases(), blinkDuration: defaultBlinkDuration(), spinReverse: false, wanderSmooth: 50, layers: [], groups: [] };
+  return { id: nid(), color, width, layers: [], groups: [], stash: {} };
 }
 
 // ---------- state ----------
@@ -95,10 +110,10 @@ let projectName = 'Untitled';
 let panelOpen = true;
 let panelView: 'auto' | 'colour' = 'auto';
 let colourSlot: 'fg' | 'bg' = 'fg';
-let expandedBehaviour: number | null = null;
+let expandedLayerId: string | null = null;
 let expandedGroup: string | null = null; // id of the open group in the Behaviours panel
 let addPickerOpen = false; // the Add behavior popover is showing
-let checkedBehaviours: Set<number> = new Set(); // top-level rows picked for grouping
+let checkedLayers: Set<string> = new Set(); // top-level layer ids picked for grouping
 let checkedItemId: string | null = null; // the item the checked rows belong to
 let recentColours: string[] = [];
 let savedColours: string[] = [];
@@ -107,7 +122,7 @@ let playTime = 0; // ms within the loop, frozen when paused
 let lastTs = 0;
 let history: string[] = [];
 let redoStack: string[] = [];
-const smoothed = new Map<string, number[]>(); // item id -> per-behaviour smoothed amplitude 0..1
+const smoothed = new Map<string, number>(); // layer id -> smoothed amplitude 0..1
 
 function stageSize(): { w: number; h: number } {
   const s = STAGES.find((s) => s.id === stageId) ?? STAGES[0];
@@ -218,7 +233,10 @@ function normHex(s: string): string | null {
 function sampleBird(): Item[] {
   // Bob, Sway, Breathe, Blink on; Spin, Wander off.
   const act = [true, true, true, true, false, false];
-  const withAct = (it: Item): Item => { it.active = [...act]; return it; };
+  const withAct = (it: Item): Item => {
+    it.layers = act.map((on, b) => (on ? newLayer(b) : null)).filter((l): l is BehaviourLayer => l !== null);
+    return it;
+  };
   const body: ShapeItem = { ...baseItem('#1d1d1f', 4), type: 'shape', kind: 'ellipse', x: 370, y: 230, w: 220, h: 150, fillSolid: false };
   const head: ShapeItem = { ...baseItem('#1d1d1f', 4), type: 'shape', kind: 'ellipse', x: 545, y: 175, w: 95, h: 95, fillSolid: false };
   const eye: ShapeItem = { ...baseItem('#1d1d1f', 2), type: 'shape', kind: 'ellipse', x: 578, y: 208, w: 14, h: 14, fillSolid: true };
@@ -229,64 +247,161 @@ function sampleBird(): Item[] {
   return [body, head, eye, beak, wing, leg1, leg2].map(withAct);
 }
 
+// The per-behaviour parameter arrays are retired: after migration an item
+// carries only layer instances (plus the stash). Drop the legacy fields so
+// saved JSON stays clean.
+function dropLegacy(anyIt: Record<string, unknown>): void {
+  delete anyIt.pattern;
+  delete anyIt.active;
+  delete anyIt.speeds;
+  delete anyIt.amounts;
+  delete anyIt.phases;
+  delete anyIt.blinkDuration;
+  delete anyIt.spinReverse;
+  delete anyIt.wanderSmooth;
+}
+
 function migrateItem(it: Item): void {
   const anyIt = it as unknown as Record<string, unknown>;
-  // v2 saves stored a 6x8 beat grid; a row with any cell on becomes layer on.
-  if (Array.isArray(anyIt.pattern)) {
-    const grid = anyIt.pattern as boolean[][];
-    it.active = BEHAVIOURS.map((_, b) => Array.isArray(grid[b]) && grid[b].some(Boolean));
-    delete anyIt.pattern;
-  }
-  if (!Array.isArray(it.active) || it.active.length !== BEHAVIOURS.length) it.active = defaultActive();
-  if (!Array.isArray(it.speeds) || it.speeds.length !== BEHAVIOURS.length) it.speeds = defaultSpeeds();
-  if (!Array.isArray(it.amounts) || it.amounts.length !== BEHAVIOURS.length) it.amounts = defaultAmounts();
-  else it.amounts = it.amounts.map((a) => (a === 0.5 ? 33 : a === 1 ? 66 : a === 2 ? 100 : a > 2 ? a : 66));
-  if (!Array.isArray(it.phases) || it.phases.length !== BEHAVIOURS.length) it.phases = defaultPhases();
-  else it.phases = it.phases.map((p) => (typeof p === 'number' && p >= 0 && p <= 100 ? p : 0));
-  if (typeof it.blinkDuration !== 'number' || it.blinkDuration < 10 || it.blinkDuration > 60) it.blinkDuration = defaultBlinkDuration();
-  if (typeof it.spinReverse !== 'boolean') it.spinReverse = false;
-  if (typeof it.wanderSmooth !== 'number' || it.wanderSmooth < 0 || it.wanderSmooth > 100) it.wanderSmooth = 50;
-  // Groups: flat only, a behaviour in at most one group, members valid and ascending.
   const clampNum = (v: unknown, min: number, max: number, dflt: number): number =>
     (typeof v === 'number' && Number.isFinite(v)) ? Math.min(max, Math.max(min, v)) : dflt;
-  if (!Array.isArray(it.groups)) it.groups = [];
-  else {
-    const seen = new Set<number>();
-    it.groups = (it.groups as unknown[]).map((raw) => {
+  const cleanParams = (p: Partial<LayerParams>): LayerParams => ({
+    on: typeof p.on === 'boolean' ? p.on : true,
+    speed: clampNum(p.speed, 0.25, 3, 1),
+    amount: clampNum(p.amount, 0, 100, 66),
+    phase: clampNum(p.phase, 0, 100, 0),
+    blinkDuration: clampNum(p.blinkDuration, 10, 60, 26),
+    spinReverse: p.spinReverse === true,
+    wanderSmooth: clampNum(p.wanderSmooth, 0, 100, 50),
+  });
+  // New format: layers are instances with ids (an empty array is a valid
+  // empty stack). Just validate, in place.
+  const layersAreInstances = Array.isArray(it.layers) &&
+    (it.layers.length === 0 || (typeof it.layers[0] === 'object' && it.layers[0] !== null));
+  if (layersAreInstances) {
+    const seenIds = new Set<string>();
+    const clean: BehaviourLayer[] = [];
+    for (const raw of it.layers as unknown[]) {
+      const l = (raw ?? {}) as Partial<BehaviourLayer>;
+      if (typeof l.behaviour !== 'number' || !Number.isInteger(l.behaviour) || l.behaviour < 0 || l.behaviour >= BEHAVIOURS.length) continue;
+      let id = typeof l.id === 'string' && l.id ? l.id : nid();
+      if (seenIds.has(id)) id = nid();
+      seenIds.add(id);
+      clean.push({ id, behaviour: l.behaviour, ...cleanParams(l) });
+    }
+    it.layers = clean;
+    const ids = new Set(clean.map((l) => l.id));
+    const seenMember = new Set<string>();
+    it.groups = (Array.isArray(it.groups) ? it.groups : []).map((raw) => {
       const g = (raw ?? {}) as Partial<BehaviourGroup>;
       const members = (Array.isArray(g.members) ? g.members : [])
-        .filter((m): m is number => Number.isInteger(m) && m >= 0 && m < BEHAVIOURS.length && !seen.has(m));
-      members.forEach((m) => seen.add(m));
+        .filter((m): m is string => typeof m === 'string' && ids.has(m) && !seenMember.has(m));
+      members.forEach((m) => seenMember.add(m));
+      if (members.length === 0) return null;
       return {
         id: typeof g.id === 'string' && g.id ? g.id : nid(),
         name: typeof g.name === 'string' && g.name.trim() ? g.name.trim() : 'Group',
-        members: [...members].sort((a, b) => a - b),
+        members: [...new Set(members)],
         active: typeof g.active === 'boolean' ? g.active : true,
         speed: clampNum(g.speed, 0.25, 3, 1),
         amount: clampNum(g.amount, 0, 100, 100),
       };
-    }).filter((g) => g.members.length > 0);
-  }
-  // Layer stack: a behaviour is in the stack when it is on or has any
-  // non-default parameter. Off + fully-default behaviours drop out — they
-  // contribute nothing to the motion, so dropping them changes nothing,
-  // and they show as available in the Add behavior picker. Group members
-  // are always in the stack, whatever their own state.
-  const hasCustom = (b: number): boolean =>
-    (it.speeds[b] ?? 1) !== 1 || (it.amounts[b] ?? 66) !== 66 || (it.phases?.[b] ?? 0) !== 0 ||
-    (b === 3 && (it.blinkDuration ?? 26) !== 26) ||
-    (b === 4 && it.spinReverse === true) ||
-    (b === 5 && (it.wanderSmooth ?? 50) !== 50);
-  if (Array.isArray(it.layers)) {
-    const clean: number[] = [];
-    for (const m of it.layers) {
-      if (Number.isInteger(m) && m >= 0 && m < BEHAVIOURS.length && !clean.includes(m)) clean.push(m);
+    }).filter((g): g is BehaviourGroup => g !== null);
+    if (!it.stash || typeof it.stash !== 'object' || Array.isArray(it.stash)) {
+      it.stash = {};
+    } else {
+      const cleanStash: Partial<Record<number, LayerParams>> = {};
+      for (const [k, v] of Object.entries(it.stash)) {
+        const b = Number(k);
+        if (!Number.isInteger(b) || b < 0 || b >= BEHAVIOURS.length || !v || typeof v !== 'object') continue;
+        cleanStash[b] = cleanParams(v as Partial<LayerParams>);
+      }
+      it.stash = cleanStash;
     }
-    it.layers = clean;
-  } else {
-    it.layers = BEHAVIOURS.map((_, b) => b).filter((b) => it.active[b] || hasCustom(b));
+    dropLegacy(anyIt);
+    return;
   }
-  for (const g of it.groups) for (const m of g.members) if (!it.layers.includes(m)) it.layers.push(m);
+  // Old format: per-behaviour parameter arrays, with an optional
+  // layers: number[] stack (v10) or no stack at all (pre-v10).
+  // v2 saves stored a 6x8 beat grid; a row with any cell on becomes layer on.
+  let active = [false, false, false, false, false, false];
+  if (Array.isArray(anyIt.pattern)) {
+    const grid = anyIt.pattern as boolean[][];
+    active = BEHAVIOURS.map((_, b) => Array.isArray(grid[b]) && grid[b].some(Boolean));
+  } else if (Array.isArray(anyIt.active) && anyIt.active.length === BEHAVIOURS.length) {
+    active = (anyIt.active as unknown[]).map((v) => v === true);
+  }
+  const speeds = (Array.isArray(anyIt.speeds) && anyIt.speeds.length === BEHAVIOURS.length
+    ? (anyIt.speeds as unknown[]).map((v) => clampNum(v, 0.25, 3, 1)) : [1, 1, 1, 1, 1, 1]);
+  const amounts = (Array.isArray(anyIt.amounts) && anyIt.amounts.length === BEHAVIOURS.length
+    ? (anyIt.amounts as unknown[]).map((a) => {
+        const n = typeof a === 'number' ? a : NaN;
+        return n === 0.5 ? 33 : n === 1 ? 66 : n === 2 ? 100 : n > 2 ? n : 66;
+      }) : [66, 66, 66, 66, 66, 66]);
+  const phases = (Array.isArray(anyIt.phases) && anyIt.phases.length === BEHAVIOURS.length
+    ? (anyIt.phases as unknown[]).map((p) => (typeof p === 'number' && p >= 0 && p <= 100 ? p : 0)) : [0, 0, 0, 0, 0, 0]);
+  const blinkDuration = clampNum(anyIt.blinkDuration, 10, 60, 26);
+  const spinReverse = anyIt.spinReverse === true;
+  const wanderSmooth = clampNum(anyIt.wanderSmooth, 0, 100, 50);
+  const paramsOf = (b: number): LayerParams => ({
+    on: active[b], speed: speeds[b], amount: amounts[b], phase: phases[b],
+    blinkDuration, spinReverse, wanderSmooth,
+  });
+  const hasCustom = (b: number): boolean =>
+    speeds[b] !== 1 || amounts[b] !== 66 || phases[b] !== 0 ||
+    (b === 3 && blinkDuration !== 26) ||
+    (b === 4 && spinReverse === true) ||
+    (b === 5 && wanderSmooth !== 50);
+  // Groups: flat only, a behaviour in at most one group, members valid and
+  // ascending. Members are behaviour indices here; they become layer ids below.
+  const seen = new Set<number>();
+  const oldGroups = (Array.isArray(anyIt.groups) ? anyIt.groups : []).map((raw) => {
+    const g = (raw ?? {}) as Partial<BehaviourGroup>;
+    const rawMembers = (Array.isArray(g.members) ? g.members : []) as unknown[];
+    const members = rawMembers
+      .filter((m): m is number => typeof m === 'number' && Number.isInteger(m) && m >= 0 && m < BEHAVIOURS.length && !seen.has(m));
+    members.forEach((m) => seen.add(m));
+    return {
+      id: typeof g.id === 'string' && g.id ? g.id : nid(),
+      name: typeof g.name === 'string' && g.name.trim() ? g.name.trim() : 'Group',
+      members: [...members].sort((a, b) => a - b),
+      active: typeof g.active === 'boolean' ? g.active : true,
+      speed: clampNum(g.speed, 0.25, 3, 1),
+      amount: clampNum(g.amount, 0, 100, 100),
+    };
+  }).filter((g) => g.members.length > 0);
+  // The old stack: v10's layers: number[] when present, else the v10 rule
+  // (a behaviour is in the stack when it is on or has any non-default
+  // parameter). Group members are always in the stack.
+  let oldStack: number[];
+  if (Array.isArray(anyIt.layers) && (anyIt.layers as unknown[]).every((m) => Number.isInteger(m))) {
+    oldStack = [...new Set((anyIt.layers as number[]).filter((m) => m >= 0 && m < BEHAVIOURS.length))];
+  } else {
+    oldStack = BEHAVIOURS.map((_, b) => b).filter((b) => active[b] || hasCustom(b));
+  }
+  const indexToId = new Map<number, string>();
+  const layers: BehaviourLayer[] = [];
+  const addInstance = (b: number): string => {
+    const layer = newLayer(b, paramsOf(b));
+    layers.push(layer);
+    indexToId.set(b, layer.id);
+    return layer.id;
+  };
+  for (const b of oldStack) addInstance(b);
+  for (const g of oldGroups) for (const m of g.members) if (!indexToId.has(m)) addInstance(m);
+  it.layers = layers;
+  // Behaviours left out of the stack keep their settings in the stash when
+  // they are non-default, so re-adding restores them (the v10 promise).
+  // Off + fully-default ones need no stash: the defaults restore exactly
+  // what re-adding gave in v10.
+  const stash: Partial<Record<number, LayerParams>> = {};
+  for (let b = 0; b < BEHAVIOURS.length; b++) if (!indexToId.has(b) && hasCustom(b)) stash[b] = paramsOf(b);
+  it.stash = stash;
+  it.groups = oldGroups.map((g) => ({
+    ...g,
+    members: g.members.map((m) => indexToId.get(m)).filter((id): id is string => typeof id === 'string'),
+  })).filter((g) => g.members.length > 0);
+  dropLegacy(anyIt);
 }
 
 function load(): void {
@@ -317,10 +432,9 @@ function load(): void {
     }
   } catch { /* corrupted save: fall through to sample */ }
   items = sampleBird();
-  // first launch: build each item's layer stack from its on/non-default behaviours.
-  // baseItem() pre-populates layers: [] for new items, so drop it first —
-  // otherwise migrateItem treats the empty array as an already-migrated stack.
-  items.forEach((it) => { delete (it as Partial<Item>).layers; migrateItem(it); });
+  // The sample bird already carries new-format layer instances; migrate
+  // only validates them (and drops any legacy fields).
+  items.forEach(migrateItem);
   save();
 }
 
@@ -607,24 +721,24 @@ function hexToRgba(hex: string, alpha: number): string {
 // A behaviour layer is on for the whole loop when toggled on.
 // All on layers superpose; amplitude eases in/out so toggling is smooth.
 // ---------- groups ----------
-// A behaviour's effective parameters fold in its group's multipliers.
+// A layer's effective parameters fold in its group's multipliers.
 // A member contributes only when both its own toggle and its group's toggle are on.
-function groupOf(it: Item, b: number): BehaviourGroup | undefined {
-  return it.groups.find((g) => g.members.includes(b));
+function groupOf(it: Item, layer: BehaviourLayer): BehaviourGroup | undefined {
+  return it.groups.find((g) => g.members.includes(layer.id));
 }
-function effActive(it: Item, b: number): boolean {
-  const g = groupOf(it, b);
-  // Only behaviours in the stack contribute — removing a layer stops its
-  // motion even though its parameters (and on/off) stay stored.
-  return (it.layers ?? []).includes(b) && it.active[b] && (!g || g.active);
+function effActive(it: Item, layer: BehaviourLayer): boolean {
+  const g = groupOf(it, layer);
+  // Only layers in the stack contribute; a member contributes only when
+  // both its own toggle and its group's toggle are on.
+  return layer.on && (!g || g.active);
 }
-function effSpeed(it: Item, b: number): number {
-  const g = groupOf(it, b);
-  return (it.speeds[b] ?? 1) * (g ? g.speed : 1);
+function effSpeed(it: Item, layer: BehaviourLayer): number {
+  const g = groupOf(it, layer);
+  return layer.speed * (g ? g.speed : 1);
 }
-function effAmount(it: Item, b: number): number {
-  const g = groupOf(it, b);
-  return (it.amounts[b] ?? 1) * (g ? g.amount / 100 : 1);
+function effAmount(it: Item, layer: BehaviourLayer): number {
+  const g = groupOf(it, layer);
+  return layer.amount * (g ? g.amount / 100 : 1);
 }
 
 function amountScale(a: number): number {
@@ -634,15 +748,12 @@ function amountScale(a: number): number {
   // a group Amount of 0% behave like 100%.)
   return (a / 100) * 1.8;
 }
-function smoothedAmps(it: Item): number[] {
-  let arr = smoothed.get(it.id);
-  if (!arr) { arr = [0, 0, 0, 0, 0, 0]; smoothed.set(it.id, arr); }
-  for (let b = 0; b < BEHAVIOURS.length; b++) {
-    const target = effActive(it, b) ? 1 : 0;
-    arr[b] += (target - arr[b]) * 0.06;
-    if (Math.abs(arr[b] - target) < 0.002) arr[b] = target;
-  }
-  return arr;
+function smoothedAmp(layer: BehaviourLayer, target: number): number {
+  const cur = smoothed.get(layer.id) ?? 0;
+  let next = cur + (target - cur) * 0.06;
+  if (Math.abs(next - target) < 0.002) next = target;
+  smoothed.set(layer.id, next);
+  return next;
 }
 type Motion = { dx: number; dy: number; scale: number; rot: number; opacity: number };
 // Blink pulse: a smooth raised-cosine bump centred where sin(ph) peaks
@@ -663,45 +774,43 @@ function wanderJitterAmp(smooth: number): number {
   return smooth >= 50 ? 0 : ((50 - smooth) / 50) * 0.9;
 }
 // Wander drift terms, shared by the motion and the graph so the two agree.
-function wanderTerms(it: Item, t01: number): { x: number; y: number } {
+function wanderTerms(layer: BehaviourLayer, sp: number, t01: number): { x: number; y: number } {
   const twoPi = Math.PI * 2;
-  const sp = effSpeed(it, 5);
-  const ph = twoPi * ((it.phases?.[5] ?? 0) / 100);
-  const j = wanderJitterAmp(it.wanderSmooth ?? 50);
+  const ph = twoPi * (layer.phase / 100);
+  const j = wanderJitterAmp(layer.wanderSmooth);
   return {
     x: Math.sin(twoPi * 0.5 * sp * t01 + ph) + j * Math.sin(twoPi * 2.3 * sp * t01 + 0.4 + ph),
     y: Math.sin(twoPi * 0.7 * sp * t01 + 1.3 + ph) + j * Math.sin(twoPi * 3.1 * sp * t01 + 2.1 + ph),
   };
 }
 function motionFor(it: Item, t01: number): Motion {
-  const amps = smoothedAmps(it);
   const twoPi = Math.PI * 2;
   let dx = 0, dy = 0, scale = 1, rot = 0, opacity = 1;
-  for (let b = 0; b < BEHAVIOURS.length; b++) {
-    const a = amps[b];
+  for (const layer of it.layers) {
+    const a = smoothedAmp(layer, effActive(it, layer) ? 1 : 0);
     if (a < 0.01) continue;
-    const sp = effSpeed(it, b);
-    const am = amountScale(effAmount(it, b));
-    const ph = twoPi * sp * t01 + twoPi * ((it.phases?.[b] ?? 0) / 100); // Phase shifts the motion within the loop
-    if (b === 0) dy += a * am * 16 * Math.sin(ph); // Bob
-    if (b === 1) dx += a * am * 16 * Math.sin(ph + Math.PI / 2); // Sway
-    if (b === 2) scale += a * am * 0.08 * Math.sin(ph); // Breathe
-    if (b === 3) opacity -= a * 0.85 * blinkPulse(ph, it.blinkDuration ?? 26); // Blink
-    if (b === 4) rot += (it.spinReverse ? -1 : 1) * a * am * 0.35 * Math.sin(ph); // Spin
-    if (b === 5) { const w = wanderTerms(it, t01); dx += a * am * 18 * w.x; dy += a * am * 14 * w.y; } // Wander
+    const sp = effSpeed(it, layer);
+    const am = amountScale(effAmount(it, layer));
+    const ph = twoPi * sp * t01 + twoPi * (layer.phase / 100); // Phase shifts the motion within the loop
+    if (layer.behaviour === 0) dy += a * am * 16 * Math.sin(ph); // Bob
+    if (layer.behaviour === 1) dx += a * am * 16 * Math.sin(ph + Math.PI / 2); // Sway
+    if (layer.behaviour === 2) scale += a * am * 0.08 * Math.sin(ph); // Breathe
+    if (layer.behaviour === 3) opacity -= a * 0.85 * blinkPulse(ph, layer.blinkDuration); // Blink
+    if (layer.behaviour === 4) rot += (layer.spinReverse ? -1 : 1) * a * am * 0.35 * Math.sin(ph); // Spin
+    if (layer.behaviour === 5) { const w = wanderTerms(layer, sp, t01); dx += a * am * 18 * w.x; dy += a * am * 14 * w.y; } // Wander
   }
   return { dx, dy, scale, rot, opacity: Math.max(0.05, Math.min(1, opacity)) };
 }
-// Motion value of one behaviour over the loop, for the layer graph.
+// Motion value of one layer over the loop, for the layer graph.
 // Reads the same parameters as motionFor, so the graph and the motion agree.
-function behaviourValue(it: Item, b: number, t01: number): number {
+function behaviourValue(it: Item, layer: BehaviourLayer, t01: number): number {
   const twoPi = Math.PI * 2;
-  const am = amountScale(effAmount(it, b));
-  const sp = effSpeed(it, b);
-  const ph = twoPi * sp * t01 + twoPi * ((it.phases?.[b] ?? 0) / 100);
-  if (b === 3) return am * blinkPulse(ph, it.blinkDuration ?? 26); // Blink: the widened pulse itself, not a square wave
-  if (b === 4) return (it.spinReverse ? -1 : 1) * am * Math.sin(ph); // Spin: mirrors when reversed
-  if (b === 5) { const w = wanderTerms(it, t01); return am * (w.x + 0.7 * w.y) / 1.7; } // Wander
+  const am = amountScale(effAmount(it, layer));
+  const sp = effSpeed(it, layer);
+  const ph = twoPi * sp * t01 + twoPi * (layer.phase / 100);
+  if (layer.behaviour === 3) return am * blinkPulse(ph, layer.blinkDuration); // Blink: the widened pulse itself, not a square wave
+  if (layer.behaviour === 4) return (layer.spinReverse ? -1 : 1) * am * Math.sin(ph); // Spin: mirrors when reversed
+  if (layer.behaviour === 5) { const w = wanderTerms(layer, sp, t01); return am * (w.x + 0.7 * w.y) / 1.7; } // Wander
   return am * Math.sin(ph);
 }
 
@@ -846,7 +955,7 @@ function paramSlider(opts: {
   return row;
 }
 
-function drawGraph(cv: HTMLCanvasElement, it: Item, b: number): void {
+function drawGraph(cv: HTMLCanvasElement, it: Item, layer: BehaviourLayer): void {
   const W = 232, H = 48;
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   cv.width = Math.round(W * dpr);
@@ -870,7 +979,7 @@ function drawGraph(cv: HTMLCanvasElement, it: Item, b: number): void {
   g.beginPath();
   for (let i = 0; i <= N; i++) {
     const t = i / N;
-    const v = behaviourValue(it, b, t) / maxAmp;
+    const v = behaviourValue(it, layer, t) / maxAmp;
     const x = (t * (W - 4)) + 2;
     const y = H / 2 - v * (H / 2 - 5);
     if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
@@ -915,14 +1024,15 @@ function drawGroupGraph(cv: HTMLCanvasElement, it: Item, group: BehaviourGroup):
   g.lineTo(W, H / 2 + 0.5);
   g.stroke();
   const N = 120;
+  const members = group.members.map((id) => it.layers.find((l) => l.id === id)).filter((l): l is BehaviourLayer => !!l);
   const vals: number[] = [];
   let scale = 0;
-  for (const b of group.members) if (effActive(it, b)) scale += amountScale(it.amounts[b] ?? 1);
+  for (const layer of members) if (effActive(it, layer)) scale += amountScale(layer.amount);
   if (scale < 0.01) scale = 1;
   for (let i = 0; i <= N; i++) {
     const t = i / N;
     let v = 0;
-    for (const b of group.members) if (effActive(it, b)) v += behaviourValue(it, b, t);
+    for (const layer of members) if (effActive(it, layer)) v += behaviourValue(it, layer, t);
     vals.push(v);
   }
   g.strokeStyle = '#1d1d1f';
@@ -937,27 +1047,42 @@ function drawGroupGraph(cv: HTMLCanvasElement, it: Item, group: BehaviourGroup):
   g.stroke();
 }
 
-// One behaviour row: on/off toggle, name, expand chevron, and — when
+// Display name is derived, not stored: when a stack holds more than one
+// instance of a behaviour, each shows its ordinal among instances of that
+// behaviour in stack order — first "Bob", second "Bob 2", third "Bob 3".
+// A lone instance shows just "Bob".
+function layerDisplayName(it: Item, layer: BehaviourLayer): string {
+  const same = it.layers.filter((l) => l.behaviour === layer.behaviour);
+  if (same.length <= 1) return BEHAVIOURS[layer.behaviour];
+  const idx = same.indexOf(layer);
+  return idx === 0 ? BEHAVIOURS[layer.behaviour] : `${BEHAVIOURS[layer.behaviour]} ${idx + 1}`;
+}
+
+// One behaviour layer row: on/off toggle, name, expand chevron, and — when
 // expanded — its graph plus Speed/Amount/Phase and its own extra controls.
 // Returns the row and its graph canvas (null while collapsed) so a group
 // can redraw member graphs when a group slider moves.
-function behaviourLayer(sel: Item, b: number, opts: { checkable: boolean; onParamChange?: () => void }): { layer: HTMLDivElement; graph: HTMLCanvasElement | null } {
+function behaviourLayer(sel: Item, inst: BehaviourLayer, opts: { checkable: boolean; onParamChange?: () => void }): { layer: HTMLDivElement; graph: HTMLCanvasElement | null } {
+  const b = inst.behaviour;
+  const displayName = layerDisplayName(sel, inst);
+  const liveLayer = (): BehaviourLayer | undefined => selected()?.layers.find((l) => l.id === inst.id);
   const layer = document.createElement('div');
-  layer.className = 'blayer' + (expandedBehaviour === b ? ' expanded' : '');
+  layer.className = 'blayer' + (expandedLayerId === inst.id ? ' expanded' : '');
   layer.dataset.behaviour = String(b);
+  layer.dataset.layerId = inst.id;
   const head = document.createElement('div');
   head.className = 'layer-head';
   if (opts.checkable) {
     const check = document.createElement('button');
     check.type = 'button';
-    check.className = 'layer-check' + (checkedBehaviours.has(b) ? ' checked' : '');
-    check.setAttribute('aria-label', `Select ${BEHAVIOURS[b]} for grouping`);
-    check.setAttribute('aria-pressed', String(checkedBehaviours.has(b)));
+    check.className = 'layer-check' + (checkedLayers.has(inst.id) ? ' checked' : '');
+    check.setAttribute('aria-label', `Select ${displayName} for grouping`);
+    check.setAttribute('aria-pressed', String(checkedLayers.has(inst.id)));
     check.innerHTML = '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
     check.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (checkedBehaviours.has(b)) checkedBehaviours.delete(b);
-      else checkedBehaviours.add(b);
+      if (checkedLayers.has(inst.id)) checkedLayers.delete(inst.id);
+      else checkedLayers.add(inst.id);
       renderPanel();
     });
     head.appendChild(check);
@@ -967,40 +1092,40 @@ function behaviourLayer(sel: Item, b: number, opts: { checkable: boolean; onPara
   icon.innerHTML = LAYER_ICONS[b];
   const toggle = document.createElement('button');
   toggle.type = 'button';
-  toggle.className = 'layer-toggle' + (sel.active[b] ? ' on' : '');
-  toggle.setAttribute('aria-label', `${BEHAVIOURS[b]} on or off`);
-  toggle.setAttribute('aria-pressed', String(sel.active[b]));
+  toggle.className = 'layer-toggle' + (inst.on ? ' on' : '');
+  toggle.setAttribute('aria-label', `${displayName} on or off`);
+  toggle.setAttribute('aria-pressed', String(inst.on));
   toggle.innerHTML = '<span class="knob"></span>';
   toggle.addEventListener('click', (e) => {
     e.stopPropagation();
-    const s = selected();
-    if (!s) return;
-    s.active[b] = !s.active[b];
+    const l = liveLayer();
+    if (!l) return;
+    l.on = !l.on;
     save();
     renderPanel();
   });
   const name = document.createElement('span');
   name.className = 'layer-name';
-  name.textContent = BEHAVIOURS[b];
+  name.textContent = displayName;
   const remove = document.createElement('button');
   remove.type = 'button';
   remove.className = 'layer-remove';
   remove.title = 'Remove';
-  remove.setAttribute('aria-label', `Remove ${BEHAVIOURS[b]}`);
+  remove.setAttribute('aria-label', `Remove ${displayName}`);
   remove.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
   remove.addEventListener('click', (e) => {
     e.stopPropagation();
     const s = selected();
     if (!s) return;
-    removeBehaviourLayer(s, b);
+    removeBehaviourLayer(s, inst.id);
   });
   const chev = document.createElement('button');
   chev.type = 'button';
   chev.className = 'layer-chev';
-  chev.setAttribute('aria-label', expandedBehaviour === b ? `Collapse ${BEHAVIOURS[b]}` : `Expand ${BEHAVIOURS[b]}`);
+  chev.setAttribute('aria-label', expandedLayerId === inst.id ? `Collapse ${displayName}` : `Expand ${displayName}`);
   chev.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>';
   const toggleExpand = (): void => {
-    expandedBehaviour = expandedBehaviour === b ? null : b;
+    expandedLayerId = expandedLayerId === inst.id ? null : inst.id;
     renderPanel();
   };
   chev.addEventListener('click', (e) => {
@@ -1018,45 +1143,46 @@ function behaviourLayer(sel: Item, b: number, opts: { checkable: boolean; onPara
   });
   layer.appendChild(head);
   let graph: HTMLCanvasElement | null = null;
-  if (expandedBehaviour === b) {
+  if (expandedLayerId === inst.id) {
     const body = document.createElement('div');
     body.className = 'layer-body';
     graph = document.createElement('canvas');
     graph.className = 'graph';
-    graph.setAttribute('aria-label', `${BEHAVIOURS[b]} motion graph`);
+    graph.setAttribute('aria-label', `${displayName} motion graph`);
     body.appendChild(graph);
     const redraw = (): void => {
       const s = selected();
-      if (s && graph) drawGraph(graph, s, b);
+      const l = s?.layers.find((x) => x.id === inst.id);
+      if (s && graph && l) drawGraph(graph, s, l);
       opts.onParamChange?.();
     };
     body.appendChild(paramSlider({
-      label: 'Speed', min: 0.25, max: 3, step: 0.05, value: sel.speeds[b],
+      label: 'Speed', min: 0.25, max: 3, step: 0.05, value: inst.speed,
       format: (v) => `${v.toFixed(2).replace(/0$/, '').replace(/\.$/, '')}x`,
-      aria: `${BEHAVIOURS[b]} speed`,
-      onInput: (v) => { const s = selected(); if (!s) return; s.speeds[b] = v; redraw(); },
+      aria: `${displayName} speed`,
+      onInput: (v) => { const l = liveLayer(); if (!l) return; l.speed = v; redraw(); },
       onCommit: () => save(),
     }));
     body.appendChild(paramSlider({
-      label: 'Amount', min: 0, max: 100, step: 1, value: sel.amounts[b],
+      label: 'Amount', min: 0, max: 100, step: 1, value: inst.amount,
       format: (v) => `${Math.round(v)}%`,
-      aria: `${BEHAVIOURS[b]} amount`,
-      onInput: (v) => { const s = selected(); if (!s) return; s.amounts[b] = v; redraw(); },
+      aria: `${displayName} amount`,
+      onInput: (v) => { const l = liveLayer(); if (!l) return; l.amount = v; redraw(); },
       onCommit: () => save(),
     }));
     body.appendChild(paramSlider({
-      label: 'Phase', min: 0, max: 100, step: 1, value: sel.phases[b] ?? 0,
+      label: 'Phase', min: 0, max: 100, step: 1, value: inst.phase,
       format: (v) => `${Math.round(v)}%`,
-      aria: `${BEHAVIOURS[b]} phase`,
-      onInput: (v) => { const s = selected(); if (!s) return; s.phases[b] = v; redraw(); },
+      aria: `${displayName} phase`,
+      onInput: (v) => { const l = liveLayer(); if (!l) return; l.phase = v; redraw(); },
       onCommit: () => save(),
     }));
     if (b === 3) {
       body.appendChild(paramSlider({
-        label: 'Duration', min: 10, max: 60, step: 1, value: sel.blinkDuration ?? 26,
+        label: 'Duration', min: 10, max: 60, step: 1, value: inst.blinkDuration,
         format: (v) => `${Math.round(v)}%`,
         aria: 'Blink duration',
-        onInput: (v) => { const s = selected(); if (!s) return; s.blinkDuration = v; redraw(); },
+        onInput: (v) => { const l = liveLayer(); if (!l) return; l.blinkDuration = v; redraw(); },
         onCommit: () => save(),
       }));
     }
@@ -1068,20 +1194,20 @@ function behaviourLayer(sel: Item, b: number, opts: { checkable: boolean; onPara
       revLab.textContent = 'Reverse';
       const revToggle = document.createElement('button');
       revToggle.type = 'button';
-      revToggle.className = 'layer-toggle' + (sel.spinReverse ? ' on' : '');
+      revToggle.className = 'layer-toggle' + (inst.spinReverse ? ' on' : '');
       revToggle.setAttribute('aria-label', 'Spin reverse');
-      revToggle.setAttribute('aria-pressed', String(sel.spinReverse));
+      revToggle.setAttribute('aria-pressed', String(inst.spinReverse));
       revToggle.innerHTML = '<span class="knob"></span>';
       const revVal = document.createElement('span');
       revVal.className = 'pslider-value';
-      revVal.textContent = sel.spinReverse ? 'On' : 'Off';
+      revVal.textContent = inst.spinReverse ? 'On' : 'Off';
       revToggle.addEventListener('click', () => {
-        const s = selected();
-        if (!s) return;
-        s.spinReverse = !s.spinReverse;
-        revToggle.classList.toggle('on', s.spinReverse);
-        revToggle.setAttribute('aria-pressed', String(s.spinReverse));
-        revVal.textContent = s.spinReverse ? 'On' : 'Off';
+        const l = liveLayer();
+        if (!l) return;
+        l.spinReverse = !l.spinReverse;
+        revToggle.classList.toggle('on', l.spinReverse);
+        revToggle.setAttribute('aria-pressed', String(l.spinReverse));
+        revVal.textContent = l.spinReverse ? 'On' : 'Off';
         redraw();
         save();
       });
@@ -1092,15 +1218,15 @@ function behaviourLayer(sel: Item, b: number, opts: { checkable: boolean; onPara
     }
     if (b === 5) {
       body.appendChild(paramSlider({
-        label: 'Smooth', min: 0, max: 100, step: 1, value: sel.wanderSmooth ?? 50,
+        label: 'Smooth', min: 0, max: 100, step: 1, value: inst.wanderSmooth,
         format: (v) => `${Math.round(v)}%`,
         aria: 'Wander smoothness',
-        onInput: (v) => { const s = selected(); if (!s) return; s.wanderSmooth = v; redraw(); },
+        onInput: (v) => { const l = liveLayer(); if (!l) return; l.wanderSmooth = v; redraw(); },
         onCommit: () => save(),
       }));
     }
     layer.appendChild(body);
-    drawGraph(graph, sel, b);
+    drawGraph(graph, sel, inst);
   }
   return { layer, graph };
 }
@@ -1208,7 +1334,7 @@ function groupLayer(sel: Item, group: BehaviourGroup): HTMLDivElement {
     graph.className = 'graph';
     graph.setAttribute('aria-label', `${group.name} combined graph`);
     body.appendChild(graph);
-    const memberGraphs = new Map<number, HTMLCanvasElement>();
+    const memberGraphs = new Map<string, HTMLCanvasElement>();
     const redrawGroupGraph = (): void => {
       const s = selected();
       if (s) {
@@ -1219,7 +1345,10 @@ function groupLayer(sel: Item, group: BehaviourGroup): HTMLDivElement {
     const redrawMemberGraphs = (): void => {
       const s = selected();
       if (!s) return;
-      for (const [b, cv] of memberGraphs) drawGraph(cv, s, b);
+      for (const [id, cv] of memberGraphs) {
+        const l = s.layers.find((x) => x.id === id);
+        if (l) drawGraph(cv, s, l);
+      }
     };
     body.appendChild(paramSlider({
       label: 'Speed', min: 0.25, max: 3, step: 0.05, value: group.speed,
@@ -1237,13 +1366,15 @@ function groupLayer(sel: Item, group: BehaviourGroup): HTMLDivElement {
     }));
     const membersWrap = document.createElement('div');
     membersWrap.className = 'group-members';
-    for (const b of group.members) {
-      const { layer: mLayer, graph: mGraph } = behaviourLayer(sel, b, {
+    for (const memberId of group.members) {
+      const member = sel.layers.find((l) => l.id === memberId);
+      if (!member) continue;
+      const { layer: mLayer, graph: mGraph } = behaviourLayer(sel, member, {
         checkable: false,
         onParamChange: () => redrawGroupGraph(),
       });
       mLayer.classList.add('in-group');
-      if (mGraph) memberGraphs.set(b, mGraph);
+      if (mGraph) memberGraphs.set(member.id, mGraph);
       membersWrap.appendChild(mLayer);
     }
     body.appendChild(membersWrap);
@@ -1253,29 +1384,41 @@ function groupLayer(sel: Item, group: BehaviourGroup): HTMLDivElement {
   return layer;
 }
 
-// Remove a layer from the stack. Its parameters and on/off stay stored in
-// the item, so adding it again from the picker restores them exactly.
+// Remove a layer from the stack. Its parameters are stashed by behaviour,
+// so adding that behaviour again restores them exactly; a later removal of
+// the same behaviour overwrites the stash with the most recently removed
+// instance. Other instances of the same behaviour are untouched.
 // A grouped member leaves its group; an emptied group is removed.
-function removeBehaviourLayer(sel: Item, b: number): void {
+function removeBehaviourLayer(sel: Item, layerId: string): void {
+  const layer = sel.layers.find((l) => l.id === layerId);
+  if (!layer) return;
   pushHistory();
-  sel.layers = sel.layers.filter((m) => m !== b);
-  for (const g of sel.groups) g.members = g.members.filter((m) => m !== b);
+  sel.stash[layer.behaviour] = {
+    on: layer.on, speed: layer.speed, amount: layer.amount, phase: layer.phase,
+    blinkDuration: layer.blinkDuration, spinReverse: layer.spinReverse, wanderSmooth: layer.wanderSmooth,
+  };
+  sel.layers = sel.layers.filter((l) => l.id !== layerId);
+  for (const g of sel.groups) g.members = g.members.filter((m) => m !== layerId);
   sel.groups = sel.groups.filter((g) => g.members.length > 0);
   if (expandedGroup && !sel.groups.some((g) => g.id === expandedGroup)) expandedGroup = null;
-  checkedBehaviours.delete(b);
-  if (expandedBehaviour === b) expandedBehaviour = null;
+  checkedLayers.delete(layerId);
+  if (expandedLayerId === layerId) expandedLayerId = null;
   save();
   renderPanel();
 }
 
-// Add a behaviour to the stack. It turns on; its stored parameters are
-// kept, so a re-added layer comes back with its previous settings (a
-// never-added behaviour has the defaults).
+// Add a behaviour to the stack. Always a NEW instance, even when one of
+// that behaviour is already there. A stashed instance (the most recently
+// removed one of this behaviour) restores its parameters; a never-added
+// behaviour starts at the defaults.
 function addBehaviour(sel: Item, b: number): void {
-  if (sel.layers.includes(b)) return;
   pushHistory();
-  sel.layers.push(b);
-  sel.active[b] = true;
+  const stashed = sel.stash[b];
+  const layer = stashed
+    ? { id: nid(), behaviour: b, ...stashed }
+    : newLayer(b);
+  if (stashed) delete sel.stash[b];
+  sel.layers.push(layer);
   addPickerOpen = false;
   save();
   renderPanel();
@@ -1286,31 +1429,28 @@ function closeAddPickerEl(): void {
 }
 
 // The Add behavior picker: a small popover anchored to the Add button,
-// listing all six behaviours with their icons. In-stack ones show a check
-// and are disabled. Fixed-position so the panel's scroll cannot clip it;
-// flips above the button when there is no room below.
-function renderAddPicker(anchorBtn: HTMLElement, sel: Item): void {
+// listing all six behaviours with their icons. Every row is always
+// enabled: the same behaviour can be added several times, each add
+// creating a new instance. Fixed-position so the panel's scroll cannot
+// clip it; flips above the button when there is no room below.
+function renderAddPicker(anchorBtn: HTMLElement): void {
   closeAddPickerEl();
   const pop = document.createElement('div');
   pop.className = 'add-picker';
   pop.setAttribute('role', 'menu');
   for (let b = 0; b < BEHAVIOURS.length; b++) {
-    const inStack = sel.layers.includes(b);
     const row = document.createElement('button');
     row.type = 'button';
-    row.className = 'add-picker-row' + (inStack ? ' in-stack' : '');
-    row.disabled = inStack;
+    row.className = 'add-picker-row';
     row.setAttribute('role', 'menuitem');
-    row.setAttribute('aria-label', inStack ? `${BEHAVIOURS[b]} already added` : `Add ${BEHAVIOURS[b]}`);
-    row.innerHTML = `<span class="layer-icon">${LAYER_ICONS[b]}</span><span class="layer-name">${BEHAVIOURS[b]}</span>${inStack ? '<svg class="pick-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>' : ''}`;
-    if (!inStack) {
-      row.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const s = selected();
-        if (!s) return;
-        addBehaviour(s, b);
-      });
-    }
+    row.setAttribute('aria-label', `Add ${BEHAVIOURS[b]}`);
+    row.innerHTML = `<span class="layer-icon">${LAYER_ICONS[b]}</span><span class="layer-name">${BEHAVIOURS[b]}</span>`;
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const s = selected();
+      if (!s) return;
+      addBehaviour(s, b);
+    });
     pop.appendChild(row);
   }
   document.body.appendChild(pop);
@@ -1325,20 +1465,20 @@ function renderAddPicker(anchorBtn: HTMLElement, sel: Item): void {
 
 function renderBehavioursPanel(sel: Item): void {
   panelTitle.textContent = 'Behaviours';
-  if (checkedItemId !== sel.id) { checkedBehaviours.clear(); checkedItemId = sel.id; addPickerOpen = false; }
+  if (checkedItemId !== sel.id) { checkedLayers.clear(); checkedItemId = sel.id; addPickerOpen = false; }
   const grouped = new Set(sel.groups.flatMap((g) => g.members));
-  // Drop checks for behaviours that left the stack or joined a group.
-  for (const b of [...checkedBehaviours]) if (!sel.layers.includes(b) || grouped.has(b)) checkedBehaviours.delete(b);
+  // Drop checks for layers that left the stack or joined a group.
+  for (const id of [...checkedLayers]) if (!sel.layers.some((l) => l.id === id) || grouped.has(id)) checkedLayers.delete(id);
   // Order: each entry sits at its position in the stack, so a group takes
   // the first selected member's place and ungrouping restores members to
   // their original positions.
   type Entry = { pos: number; render: () => HTMLElement };
   const entries: Entry[] = [];
-  for (const b of sel.layers) {
-    if (!grouped.has(b)) entries.push({ pos: sel.layers.indexOf(b), render: () => behaviourLayer(sel, b, { checkable: true }).layer });
+  for (const layer of sel.layers) {
+    if (!grouped.has(layer.id)) entries.push({ pos: sel.layers.indexOf(layer), render: () => behaviourLayer(sel, layer, { checkable: true }).layer });
   }
   for (const g of sel.groups) {
-    const idxs = g.members.map((m) => sel.layers.indexOf(m)).filter((i) => i >= 0);
+    const idxs = g.members.map((id) => sel.layers.findIndex((l) => l.id === id)).filter((i) => i >= 0);
     entries.push({ pos: idxs.length ? Math.min(...idxs) : Number.POSITIVE_INFINITY, render: () => groupLayer(sel, g) });
   }
   entries.sort((a, b) => a.pos - b.pos);
@@ -1349,19 +1489,19 @@ function renderBehavioursPanel(sel: Item): void {
     empty.textContent = 'No behaviours';
     panelBody.appendChild(empty);
   }
-  if (checkedBehaviours.size >= 2) {
+  if (checkedLayers.size >= 2) {
     const action = document.createElement('div');
     action.className = 'group-action';
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'pbtn-quiet';
     btn.textContent = 'Group';
-    btn.setAttribute('aria-label', `Group ${checkedBehaviours.size} behaviours`);
+    btn.setAttribute('aria-label', `Group ${checkedLayers.size} behaviours`);
     btn.addEventListener('click', () => {
       const s = selected();
-      if (!s || checkedBehaviours.size < 2) return;
+      if (!s || checkedLayers.size < 2) return;
       pushHistory();
-      const members = [...checkedBehaviours].sort((a, b) => a - b);
+      const members = [...checkedLayers].sort((a, b) => s.layers.findIndex((l) => l.id === a) - s.layers.findIndex((l) => l.id === b));
       let n = 1;
       for (const g of s.groups) {
         const m = /^Group (\d+)$/.exec(g.name);
@@ -1369,8 +1509,8 @@ function renderBehavioursPanel(sel: Item): void {
       }
       const group: BehaviourGroup = { id: nid(), name: `Group ${n}`, members, active: true, speed: 1, amount: 100 };
       s.groups.push(group);
-      checkedBehaviours.clear();
-      expandedBehaviour = null;
+      checkedLayers.clear();
+      expandedLayerId = null;
       expandedGroup = group.id;
       save();
       renderPanel();
@@ -1378,8 +1518,8 @@ function renderBehavioursPanel(sel: Item): void {
     action.appendChild(btn);
     panelBody.appendChild(action);
   }
-  // Add behavior: a quiet pill at the bottom of the stack. Dimmed once
-  // all six behaviours are in the stack.
+  // Add behavior: a quiet pill at the bottom of the stack. Always
+  // enabled — adding the same behaviour again creates another instance.
   const wrap = document.createElement('div');
   wrap.className = 'add-wrap';
   const addBtn = document.createElement('button');
@@ -1388,16 +1528,14 @@ function renderBehavioursPanel(sel: Item): void {
   addBtn.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Add behavior</span>';
   addBtn.setAttribute('aria-label', 'Add behavior');
   addBtn.setAttribute('aria-expanded', String(addPickerOpen));
-  addBtn.disabled = sel.layers.length >= BEHAVIOURS.length;
   addBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (sel.layers.length >= BEHAVIOURS.length) return;
     addPickerOpen = !addPickerOpen;
     renderPanel();
   });
   wrap.appendChild(addBtn);
   panelBody.appendChild(wrap);
-  if (addPickerOpen) renderAddPicker(addBtn, sel);
+  if (addPickerOpen) renderAddPicker(addBtn);
 }
 
 function renderCanvasPanel(): void {
@@ -1778,7 +1916,7 @@ function eraseAt(p: Pt): void {
   if (hit) {
     items = items.filter((i) => i.id !== hit.id);
     if (selectedId === hit.id) selectedId = null;
-    smoothed.delete(hit.id);
+    for (const l of hit.layers) smoothed.delete(l.id);
     renderPanel();
   }
 }
