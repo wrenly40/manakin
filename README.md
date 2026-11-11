@@ -9,4 +9,4 @@ npm install
 npm run dev
 ```
 
-Runs Electron from source with the Vite dev server. `npm run build` typechecks and builds; `npm start` opens the built app.
+Runs Electron from source with the Vite dev server. `npm start` builds first, then opens the built app — no separate build step needed. (Before this fix, a fresh download failed with "Unable to find Electron app … electron-dist/main.js" because that file is only produced by a build and neither `npm start` nor `npm run dev` built it first.)

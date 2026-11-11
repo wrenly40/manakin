@@ -2,7 +2,11 @@ import { app, BrowserWindow, session } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 
-const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+// Dev is only when the Vite dev server is running: electron/dev.js sets
+// NODE_ENV=development when it spawns Electron. Running the built app from
+// source (`npm start`) must load dist/index.html — app.isPackaged is false
+// for both, so it cannot tell them apart.
+const isDev = process.env.NODE_ENV === 'development';
 
 function createWindow(): void {
   const iconPath = path.join(__dirname, '..', 'assets', 'icon.png');
