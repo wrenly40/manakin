@@ -12,6 +12,10 @@ type ItemBase = {
   active: boolean[]; // one on/off layer per behaviour, on for the whole loop
   speeds: number[];
   amounts: number[];
+  phases: number[]; // 0-100% shift of the motion within the loop, per behaviour
+  blinkDuration: number; // % of the cycle the blink bump spans (Blink only)
+  spinReverse: boolean; // Spin only: run the spin backwards
+  wanderSmooth: number; // 0-100% (Wander only); 50+ is the smooth drift
 };
 type StrokeItem = ItemBase & { type: 'stroke'; points: Pt[] };
 type ShapeItem = ItemBase & {
@@ -47,8 +51,10 @@ function nid(): string {
 function defaultActive(): boolean[] { return [false, false, false, false, false, false]; }
 function defaultSpeeds(): number[] { return [1, 1, 1, 1, 1, 1]; }
 function defaultAmounts(): number[] { return [66, 66, 66, 66, 66, 66]; }
+function defaultPhases(): number[] { return [0, 0, 0, 0, 0, 0]; }
+function defaultBlinkDuration(): number { return 26; } // raised-cosine bump whose half-depth width (13%) matches the old sin^8 blink
 function baseItem(color: string, width: number): ItemBase {
-  return { id: nid(), color, width, active: defaultActive(), speeds: defaultSpeeds(), amounts: defaultAmounts() };
+  return { id: nid(), color, width, active: defaultActive(), speeds: defaultSpeeds(), amounts: defaultAmounts(), phases: defaultPhases(), blinkDuration: defaultBlinkDuration(), spinReverse: false, wanderSmooth: 50 };
 }
 
 // ---------- state ----------
@@ -126,6 +132,7 @@ function restore(json: string): void {
       stageBgCustom = typeof d.stageBgCustom === 'string' ? d.stageBgCustom : null;
     }
   } catch { /* corrupted history entry: keep current items */ }
+  items.forEach(migrateItem); // undo snapshots from older saves may lack the newer parameter fields
   if (selectedId && !items.some((i) => i.id === selectedId)) selectedId = null;
   smoothed.clear();
   save();
@@ -210,6 +217,11 @@ function migrateItem(it: Item): void {
   if (!Array.isArray(it.speeds) || it.speeds.length !== BEHAVIOURS.length) it.speeds = defaultSpeeds();
   if (!Array.isArray(it.amounts) || it.amounts.length !== BEHAVIOURS.length) it.amounts = defaultAmounts();
   else it.amounts = it.amounts.map((a) => (a === 0.5 ? 33 : a === 1 ? 66 : a === 2 ? 100 : a > 2 ? a : 66));
+  if (!Array.isArray(it.phases) || it.phases.length !== BEHAVIOURS.length) it.phases = defaultPhases();
+  else it.phases = it.phases.map((p) => (typeof p === 'number' && p >= 0 && p <= 100 ? p : 0));
+  if (typeof it.blinkDuration !== 'number' || it.blinkDuration < 10 || it.blinkDuration > 60) it.blinkDuration = defaultBlinkDuration();
+  if (typeof it.spinReverse !== 'boolean') it.spinReverse = false;
+  if (typeof it.wanderSmooth !== 'number' || it.wanderSmooth < 0 || it.wanderSmooth > 100) it.wanderSmooth = 50;
 }
 
 function load(): void {
@@ -540,6 +552,34 @@ function smoothedAmps(it: Item): number[] {
   return arr;
 }
 type Motion = { dx: number; dy: number; scale: number; rot: number; opacity: number };
+// Blink pulse: a smooth raised-cosine bump centred where sin(ph) peaks
+// (ph = PI/2), spanning `durationPct` % of the cycle at its base. At the
+// default 26% the eye is more than half closed for ~13% of the cycle,
+// matching the old sin^8 blink.
+function blinkPulse(ph: number, durationPct: number): number {
+  const twoPi = Math.PI * 2;
+  let d = (ph - Math.PI / 2) / twoPi; // distance from the blink centre, in cycles
+  d -= Math.round(d); // wrap to [-0.5, 0.5]
+  const w = durationPct / 100;
+  if (Math.abs(d) >= w / 2) return 0;
+  return 0.5 * (1 + Math.cos((twoPi * d) / w));
+}
+// Wander jitter amplitude: 50+ is the current smooth summed-sines drift;
+// below 50, higher-frequency components creep in, up to 0.9 at 0%.
+function wanderJitterAmp(smooth: number): number {
+  return smooth >= 50 ? 0 : ((50 - smooth) / 50) * 0.9;
+}
+// Wander drift terms, shared by the motion and the graph so the two agree.
+function wanderTerms(it: Item, t01: number): { x: number; y: number } {
+  const twoPi = Math.PI * 2;
+  const sp = it.speeds[5] ?? 1;
+  const ph = twoPi * ((it.phases?.[5] ?? 0) / 100);
+  const j = wanderJitterAmp(it.wanderSmooth ?? 50);
+  return {
+    x: Math.sin(twoPi * 0.5 * sp * t01 + ph) + j * Math.sin(twoPi * 2.3 * sp * t01 + 0.4 + ph),
+    y: Math.sin(twoPi * 0.7 * sp * t01 + 1.3 + ph) + j * Math.sin(twoPi * 3.1 * sp * t01 + 2.1 + ph),
+  };
+}
 function motionFor(it: Item, t01: number): Motion {
   const amps = smoothedAmps(it);
   const twoPi = Math.PI * 2;
@@ -549,23 +589,27 @@ function motionFor(it: Item, t01: number): Motion {
     if (a < 0.01) continue;
     const sp = it.speeds[b] ?? 1;
     const am = amountScale(it.amounts[b] ?? 1);
-    const ph = twoPi * sp * t01;
+    const ph = twoPi * sp * t01 + twoPi * ((it.phases?.[b] ?? 0) / 100); // Phase shifts the motion within the loop
     if (b === 0) dy += a * am * 16 * Math.sin(ph); // Bob
     if (b === 1) dx += a * am * 16 * Math.sin(ph + Math.PI / 2); // Sway
     if (b === 2) scale += a * am * 0.08 * Math.sin(ph); // Breathe
-    if (b === 3) opacity -= a * 0.85 * Math.pow(Math.max(0, Math.sin(ph)), 8); // Blink
-    if (b === 4) rot += a * am * 0.35 * Math.sin(ph); // Spin
-    if (b === 5) { dx += a * am * 18 * Math.sin(twoPi * 0.5 * sp * t01); dy += a * am * 14 * Math.sin(twoPi * 0.7 * sp * t01 + 1.3); } // Wander
+    if (b === 3) opacity -= a * 0.85 * blinkPulse(ph, it.blinkDuration ?? 26); // Blink
+    if (b === 4) rot += (it.spinReverse ? -1 : 1) * a * am * 0.35 * Math.sin(ph); // Spin
+    if (b === 5) { const w = wanderTerms(it, t01); dx += a * am * 18 * w.x; dy += a * am * 14 * w.y; } // Wander
   }
   return { dx, dy, scale, rot, opacity: Math.max(0.05, Math.min(1, opacity)) };
 }
 // Motion value of one behaviour over the loop, for the layer graph.
-function behaviourValue(b: number, t01: number, speed: number, amount: number): number {
+// Reads the same parameters as motionFor, so the graph and the motion agree.
+function behaviourValue(it: Item, b: number, t01: number): number {
   const twoPi = Math.PI * 2;
-  const am = amountScale(amount);
-  if (b === 3) return Math.sin(twoPi * speed * t01) > 0 ? am : -am; // Blink: square wave
-  if (b === 5) return am * (Math.sin(twoPi * 0.5 * speed * t01) + 0.7 * Math.sin(twoPi * 0.7 * speed * t01 + 1.3)) / 1.7; // Wander
-  return am * Math.sin(twoPi * speed * t01);
+  const am = amountScale(it.amounts[b] ?? 1);
+  const sp = it.speeds[b] ?? 1;
+  const ph = twoPi * sp * t01 + twoPi * ((it.phases?.[b] ?? 0) / 100);
+  if (b === 3) return am * blinkPulse(ph, it.blinkDuration ?? 26); // Blink: the widened pulse itself, not a square wave
+  if (b === 4) return (it.spinReverse ? -1 : 1) * am * Math.sin(ph); // Spin: mirrors when reversed
+  if (b === 5) { const w = wanderTerms(it, t01); return am * (w.x + 0.7 * w.y) / 1.7; } // Wander
+  return am * Math.sin(ph);
 }
 
 // ---------- render ----------
@@ -709,7 +753,7 @@ function paramSlider(opts: {
   return row;
 }
 
-function drawGraph(cv: HTMLCanvasElement, b: number, speed: number, amount: number): void {
+function drawGraph(cv: HTMLCanvasElement, it: Item, b: number): void {
   const W = 248, H = 48;
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   cv.width = Math.round(W * dpr);
@@ -733,7 +777,7 @@ function drawGraph(cv: HTMLCanvasElement, b: number, speed: number, amount: numb
   g.beginPath();
   for (let i = 0; i <= N; i++) {
     const t = i / N;
-    const v = behaviourValue(b, t, speed, amount) / maxAmp;
+    const v = behaviourValue(it, b, t) / maxAmp;
     const x = (t * (W - 4)) + 2;
     const y = H / 2 - v * (H / 2 - 5);
     if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
@@ -809,18 +853,73 @@ function renderBehavioursPanel(sel: Item): void {
         label: 'Speed', min: 0.25, max: 3, step: 0.05, value: sel.speeds[b],
         format: (v) => `${v.toFixed(2).replace(/0$/, '').replace(/\.$/, '')}x`,
         aria: `${BEHAVIOURS[b]} speed`,
-        onInput: (v) => { const s = selected(); if (!s) return; s.speeds[b] = v; drawGraph(graph, b, s.speeds[b], s.amounts[b]); },
+        onInput: (v) => { const s = selected(); if (!s) return; s.speeds[b] = v; drawGraph(graph, s, b); },
         onCommit: () => save(),
       }));
       body.appendChild(paramSlider({
         label: 'Amount', min: 0, max: 100, step: 1, value: sel.amounts[b],
         format: (v) => `${Math.round(v)}%`,
         aria: `${BEHAVIOURS[b]} amount`,
-        onInput: (v) => { const s = selected(); if (!s) return; s.amounts[b] = v; drawGraph(graph, b, s.speeds[b], s.amounts[b]); },
+        onInput: (v) => { const s = selected(); if (!s) return; s.amounts[b] = v; drawGraph(graph, s, b); },
         onCommit: () => save(),
       }));
+      body.appendChild(paramSlider({
+        label: 'Phase', min: 0, max: 100, step: 1, value: sel.phases[b] ?? 0,
+        format: (v) => `${Math.round(v)}%`,
+        aria: `${BEHAVIOURS[b]} phase`,
+        onInput: (v) => { const s = selected(); if (!s) return; s.phases[b] = v; drawGraph(graph, s, b); },
+        onCommit: () => save(),
+      }));
+      if (b === 3) {
+        body.appendChild(paramSlider({
+          label: 'Duration', min: 10, max: 60, step: 1, value: sel.blinkDuration ?? 26,
+          format: (v) => `${Math.round(v)}%`,
+          aria: 'Blink duration',
+          onInput: (v) => { const s = selected(); if (!s) return; s.blinkDuration = v; drawGraph(graph, s, b); },
+          onCommit: () => save(),
+        }));
+      }
+      if (b === 4) {
+        const revRow = document.createElement('div');
+        revRow.className = 'ptoggle-row';
+        const revLab = document.createElement('span');
+        revLab.className = 'dctl-label';
+        revLab.textContent = 'Reverse';
+        const revToggle = document.createElement('button');
+        revToggle.type = 'button';
+        revToggle.className = 'layer-toggle' + (sel.spinReverse ? ' on' : '');
+        revToggle.setAttribute('aria-label', 'Spin reverse');
+        revToggle.setAttribute('aria-pressed', String(sel.spinReverse));
+        revToggle.innerHTML = '<span class="knob"></span>';
+        const revVal = document.createElement('span');
+        revVal.className = 'pslider-value';
+        revVal.textContent = sel.spinReverse ? 'On' : 'Off';
+        revToggle.addEventListener('click', () => {
+          const s = selected();
+          if (!s) return;
+          s.spinReverse = !s.spinReverse;
+          revToggle.classList.toggle('on', s.spinReverse);
+          revToggle.setAttribute('aria-pressed', String(s.spinReverse));
+          revVal.textContent = s.spinReverse ? 'On' : 'Off';
+          drawGraph(graph, s, b);
+          save();
+        });
+        revRow.appendChild(revLab);
+        revRow.appendChild(revToggle);
+        revRow.appendChild(revVal);
+        body.appendChild(revRow);
+      }
+      if (b === 5) {
+        body.appendChild(paramSlider({
+          label: 'Smooth', min: 0, max: 100, step: 1, value: sel.wanderSmooth ?? 50,
+          format: (v) => `${Math.round(v)}%`,
+          aria: 'Wander smoothness',
+          onInput: (v) => { const s = selected(); if (!s) return; s.wanderSmooth = v; drawGraph(graph, s, b); },
+          onCommit: () => save(),
+        }));
+      }
       layer.appendChild(body);
-      drawGraph(graph, b, sel.speeds[b], sel.amounts[b]);
+      drawGraph(graph, sel, b);
     }
     panelBody.appendChild(layer);
   }
