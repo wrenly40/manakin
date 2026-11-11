@@ -336,12 +336,9 @@ const TOOLS: { id: ToolId; label: string; key: string; svg: string }[] = [
   { id: 'eraser', label: 'Eraser', key: '', svg: '<path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/>' },
   { id: 'shape', label: 'Geometry', key: 'E', svg: '<rect x="4" y="4" width="16" height="16" rx="2"/>' },
   { id: 'text', label: 'Text', key: 'T', svg: '<path d="M5 6h14M12 6v13"/>' },
-  // Paint bucket: trapezoid body tilted ~30° with an OPEN TOP (the
-  // mouth is the gap between the two top corners), a spout corner,
-  // a pour line falling from the spout and a drop below it. The
-  // gentler tilt keeps the bottom edge distinct from the walls, so
-  // the body reads as a container, not a checkmark.
-  { id: 'paint', label: 'Paint', key: 'B', svg: '<path d="M10.2 4.1 5.5 15.2 12.5 19.2 19.8 9.6"/><path d="M21 11.5 22.3 14"/><path d="M22 16c0.9 1.1 1.3 1.8 1.3 2.5a1.3 1.3 0 1 1-2.6 0c0-0.7 0.4-1.4 1.3-2.5z"/>' },
+  // Paint bucket: the Lucide paint-bucket icon (user's pick from
+  // three candidates), rendered at 1.8 stroke like the other tools.
+  { id: 'paint', label: 'Paint', key: 'B', svg: '<path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11Z"/><path d="m5 2 5 5"/><path d="M2 13h15"/><path d="M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4Z"/>' },
 ];
 const toolbar = document.getElementById('toolbar')!;
 function swapColors(): void {
