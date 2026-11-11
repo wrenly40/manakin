@@ -1,1 +1,1 @@
-{"compilerOptions":{"lib":["ES2022"],"module":"CommonJS","moduleResolution":"node","outDir":"electron-dist","rootDir":"electron","skipLibCheck":true,"strict":true,"target":"ES2022","types":["node"]},"include":["electron/main.ts"]}
+{"compilerOptions":{"lib":["ES2022"],"module":"CommonJS","moduleResolution":"node","outDir":"electron-dist","rootDir":"electron","skipLibCheck":true,"strict":true,"target":"ES2022","types":["node"]},"include":["electron/main.ts","electron/preload.ts"]}

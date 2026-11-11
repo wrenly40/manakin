@@ -1,4 +1,4 @@
-import { app, BrowserWindow, session } from 'electron';
+import { app, BrowserWindow, ipcMain, session } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -8,13 +8,28 @@ import * as path from 'path';
 // for both, so it cannot tell them apart.
 const isDev = process.env.NODE_ENV === 'development';
 
+let win: BrowserWindow | null = null;
+
+// Frameless, like Bowerbird's main window: no native title bar, the
+// renderer draws the window controls in the top bar and the top bar is
+// the window's drag region. backgroundColor (not transparent — that is
+// only Bowerbird's peek window) so the window paints white until the
+// renderer paints the system background over it.
 function createWindow(): void {
   const iconPath = path.join(__dirname, '..', 'assets', 'icon.png');
-  const win = new BrowserWindow({
+  win = new BrowserWindow({
     height: 860,
+    minWidth: 900,
+    minHeight: 600,
+    frame: false,
+    backgroundColor: '#ffffff',
     icon: fs.existsSync(iconPath) ? iconPath : undefined,
     title: 'Manakin',
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
     width: 1280,
   });
   if (isDev) {
@@ -22,7 +37,28 @@ function createWindow(): void {
   } else {
     void win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
+  win.on('closed', () => { win = null; });
 }
+
+// Frameless window controls, invoked from the renderer's top bar.
+ipcMain.handle('manakin:minimise', () => { if (win) win.minimize(); });
+// Close quits the app, not just the window: on macOS closing the only
+// window does not by itself end the app.
+ipcMain.handle('manakin:quit', () => { if (win) win.destroy(); app.quit(); });
+ipcMain.handle('manakin:fullscreen', () => {
+  if (!win) return false;
+  win.setFullScreen(!win.isFullScreen());
+  return win.isFullScreen();
+});
+ipcMain.handle('manakin:maximise', () => {
+  if (!win) return false;
+  if (win.isMaximized()) win.unmaximize(); else win.maximize();
+  return win.isMaximized();
+});
+ipcMain.handle('manakin:window-state', () => ({
+  maximised: win ? win.isMaximized() : false,
+  fullscreen: win ? win.isFullScreen() : false,
+}));
 
 void app.whenReady().then(() => {
   // Save renderer downloads (PNG / Video export) straight to Downloads, no dialog.

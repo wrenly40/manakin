@@ -35,12 +35,102 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
 }
 
 /* Top bar: 48px, white, hairline underneath. Only the app name,
-   the project name, undo/redo, and the panel icon. */
+   the project name, undo/redo, and the panel icon — plus, at the
+   far left, the window controls. The window is frameless, like
+   Bowerbird: this bar is the window's drag region, and every
+   button and input on it opts out of dragging, or a click on it
+   would move the window instead of acting. */
 header {
   flex: none; height: 48px;
   display: flex; align-items: center; gap: 12px; padding: 0 16px;
   background: #fff; border-bottom: 1px solid var(--separator);
+  -webkit-app-region: drag;
 }
+header button, header input { -webkit-app-region: no-drag; }
+/* Window controls: the window is frameless, so there are no native
+   ones — the app draws what each OS would draw, and the renderer
+   puts the group where that OS puts it (left on macOS, right on
+   Windows and Linux). The icon-os icons (Windows and Linux) and
+   the macOS icons are both in the DOM; each platform's rules show
+   only its own set. */
+#window-controls {
+  display: flex; align-items: center; flex: none;
+  -webkit-app-region: no-drag;
+}
+#window-controls button {
+  border: none; background: transparent; border-radius: 9px;
+  width: 32px; height: 32px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--ink); -webkit-app-region: no-drag;
+}
+#window-controls .icon-os { display: none; }
+#window-controls .icon-exit, #window-controls .icon-restore { display: none; }
+#window-controls .win-fullscreen.is-fullscreen .icon-enter { display: none; }
+#window-controls .win-fullscreen.is-fullscreen .icon-exit { display: inline; }
+#window-controls .win-maximise.is-maximised .icon-maximise { display: none; }
+#window-controls .win-maximise.is-maximised .icon-restore { display: inline; }
+#window-controls .icon-restore path:nth-child(2) { fill: #fff; }
+/* macOS: traffic lights, far left, close, minimise, full screen,
+   12px circles in the macOS colours. Hover keeps the colour — only
+   the symbol appears on hover, as on macOS. */
+body.platform-darwin #window-controls { gap: 8px; }
+body.platform-darwin #window-controls button {
+  width: 12px; height: 12px; padding: 0; border-radius: 50%;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.15);
+}
+body.platform-darwin #window-controls .win-close { background: #ff5f57; }
+body.platform-darwin #window-controls .win-minimise { background: #febc2e; }
+body.platform-darwin #window-controls .win-fullscreen { background: #28c840; }
+body.platform-darwin #window-controls .win-close:hover { background: #ff5f57; }
+body.platform-darwin #window-controls .win-minimise:hover { background: #febc2e; }
+body.platform-darwin #window-controls .win-fullscreen:hover { background: #28c840; }
+body.platform-darwin #window-controls .win-maximise { display: none; }
+body.platform-darwin #window-controls svg {
+  width: 8px; height: 8px; fill: none; stroke: rgba(0, 0, 0, 0.55);
+  stroke-width: 1.4; stroke-linecap: round; opacity: 0;
+}
+body.platform-darwin #window-controls:hover svg { opacity: 1; }
+/* Windows: caption buttons, far right, minimise, maximise/restore,
+   close, 46px wide and the full 48px title-bar height, flush to
+   the window edge. Hover is a grey tint, except Close, which goes
+   solid red with a white icon, as on Windows 11. */
+body.platform-win32 header { padding-right: 0; }
+body.platform-win32 #window-controls { gap: 0; height: 48px; }
+body.platform-win32 #window-controls button {
+  width: 46px; height: 48px; padding: 0; border-radius: 0;
+}
+body.platform-win32 #window-controls .win-minimise { order: 1; }
+body.platform-win32 #window-controls .win-maximise { order: 2; }
+body.platform-win32 #window-controls .win-close { order: 3; }
+body.platform-win32 #window-controls .win-fullscreen { display: none; }
+body.platform-win32 #window-controls .icon-mac { display: none; }
+body.platform-win32 #window-controls .icon-os { display: inline; }
+body.platform-win32 #window-controls svg {
+  width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+body.platform-win32 #window-controls .win-minimise:hover,
+body.platform-win32 #window-controls .win-maximise:hover { background: rgba(0, 0, 0, 0.06); }
+body.platform-win32 #window-controls .win-minimise:active,
+body.platform-win32 #window-controls .win-maximise:active { background: rgba(0, 0, 0, 0.12); }
+body.platform-win32 #window-controls .win-close:hover { background: #e81123; color: #fff; }
+body.platform-win32 #window-controls .win-close:active { background: #c50f1f; color: #fff; }
+/* Linux: GNOME-style, far right, minimise, maximise/restore, close,
+   32px round icon buttons. Hover is a grey circle, except Close,
+   whose hover is a red tint with a red icon. */
+body.platform-linux #window-controls { gap: 4px; }
+body.platform-linux #window-controls .win-minimise { order: 1; }
+body.platform-linux #window-controls .win-maximise { order: 2; }
+body.platform-linux #window-controls .win-close { order: 3; }
+body.platform-linux #window-controls .win-fullscreen { display: none; }
+body.platform-linux #window-controls .icon-mac { display: none; }
+body.platform-linux #window-controls .icon-os { display: inline; }
+body.platform-linux #window-controls svg {
+  width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+body.platform-linux #window-controls button:hover { background: rgba(0, 0, 0, 0.05); }
+body.platform-linux #window-controls .win-close:hover { background: rgba(255, 0, 0, 0.12); color: #c00; }
 .header-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
 header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 #project-name {
@@ -171,6 +261,17 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
   display: block; touch-action: none; cursor: crosshair;
 }
 #stage.select-cursor { cursor: default; }
+#stage.eraser-cursor { cursor: none; }
+/* The eraser's reach, drawn at the cursor while the eraser tool is
+   active. A white ring with a dark outline, so it reads on a white
+   stage and on a dark stroke alike. Size and position come from the
+   code (the brush size, scaled to screen pixels). */
+#eraser-ring {
+  position: fixed; display: none; pointer-events: none; z-index: 60;
+  border: 1.5px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 0 1.5px rgba(29, 29, 31, 0.55);
+  border-radius: 50%;
+}
 #text-editor {
   position: absolute; display: none;
   border: 1px solid rgba(0, 122, 255, 0.5); border-radius: 9px;

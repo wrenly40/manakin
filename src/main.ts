@@ -1,5 +1,19 @@
 import './styles.css';
 
+// The frameless window's controls, exposed by electron/preload.ts.
+// Absent when the page runs outside Electron (e.g. vite preview).
+type ManakinBridge = {
+  platform: string;
+  quit: () => Promise<void>;
+  minimise: () => Promise<void>;
+  maximise: () => Promise<boolean>;
+  fullscreen: () => Promise<boolean>;
+  windowState: () => Promise<{ maximised: boolean; fullscreen: boolean }>;
+};
+declare global {
+  interface Window { manakin?: ManakinBridge; }
+}
+
 type Pt = { x: number; y: number };
 type BehaviourName = 'Bob' | 'Sway' | 'Breathe' | 'Blink' | 'Spin' | 'Wander';
 const BEHAVIOURS: BehaviourName[] = ['Bob', 'Sway', 'Breathe', 'Blink', 'Spin', 'Wander'];
@@ -152,10 +166,27 @@ function save(): void {
   } catch { /* storage full or unavailable */ }
 }
 function snapshot(): string {
-  return JSON.stringify({ items, stageBgId, stageBgCustom });
+  // The whole document state: items, stage size, background and grid.
+  // Tool settings (pen width, colours, project name) are not document
+  // state and stay out of undo.
+  return JSON.stringify({ items, stageId, stageBgId, stageBgCustom, gridMode });
 }
 function pushHistory(): void {
   history.push(snapshot());
+  if (history.length > 50) history.shift();
+  redoStack = [];
+}
+// A history entry must capture the state BEFORE the mutation, exactly
+// once per gesture. For gestures that may change nothing — a click
+// without moving, a sweep over empty space — capture the pre-state when
+// the gesture starts and commit it only if something actually changed,
+// so those gestures add no entry at all.
+function gestureStart(): string {
+  return snapshot();
+}
+function gestureCommit(before: string, changed: boolean): void {
+  if (!changed) return;
+  history.push(before);
   if (history.length > 50) history.shift();
   redoStack = [];
 }
@@ -165,10 +196,15 @@ function restore(json: string): void {
     if (Array.isArray(data)) {
       items = data as Item[];
     } else if (data && typeof data === 'object') {
-      const d = data as { items?: Item[]; stageBgId?: StageBgId; stageBgCustom?: string | null };
+      const d = data as {
+        items?: Item[]; stageId?: typeof stageId; stageBgId?: StageBgId;
+        stageBgCustom?: string | null; gridMode?: GridMode;
+      };
       if (Array.isArray(d.items)) items = d.items;
+      if (d.stageId === 'wide' || d.stageId === 'square' || d.stageId === 'portrait') stageId = d.stageId;
       if (d.stageBgId) stageBgId = d.stageBgId;
       stageBgCustom = typeof d.stageBgCustom === 'string' ? d.stageBgCustom : null;
+      if (d.gridMode === 'dots' || d.gridMode === 'lines' || d.gridMode === 'off') gridMode = d.gridMode;
     }
   } catch { /* corrupted history entry: keep current items */ }
   items.forEach(migrateItem); // undo snapshots from older saves may lack the newer parameter fields
@@ -447,6 +483,12 @@ app.innerHTML = `
 <div id="app-row">
   <div id="main-column">
     <header>
+      <div id="window-controls" aria-label="Window controls">
+        <button id="win-close" class="win-close" title="Close" aria-label="Close"><svg class="icon-mac" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 2l6 6M8 2L2 8" /></svg><svg class="icon-os" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13" /></svg></button>
+        <button id="win-minimise" class="win-minimise" title="Minimise" aria-label="Minimise"><svg class="icon-mac" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5h6" /></svg><svg class="icon-os" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13h10" /></svg></button>
+        <button id="win-fullscreen" class="win-fullscreen" title="Full screen" aria-label="Full screen"><svg class="icon-enter" viewBox="0 0 10 10" aria-hidden="true"><path d="M2.5 7.5L7.5 2.5M5.5 2.5H7.5V4.5M4.5 7.5H2.5V5.5" /></svg><svg class="icon-exit" viewBox="0 0 10 10" aria-hidden="true"><path d="M2.5 2.5L7.5 7.5M5.5 7.5H7.5V5.5M4.5 2.5H2.5V4.5" /></svg></button>
+        <button id="win-maximise" class="win-maximise" title="Maximise" aria-label="Maximise"><svg class="icon-maximise" viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" /></svg><svg class="icon-restore" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3h7v7H6z" /><path d="M3 6h7v7H3z" fill="#fff" /></svg></button>
+      </div>
       <div class="header-left">
         <h1>Manakin</h1>
         <input id="project-name" value="Untitled" aria-label="Project name" spellcheck="false" />
@@ -523,6 +565,67 @@ projectInput.addEventListener('change', () => {
 projectInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') projectInput.blur();
 });
+
+// ---------- window controls ----------
+// The window is frameless, like Bowerbird: the app draws what the OS
+// would draw — macOS traffic lights at the far left, Windows caption
+// buttons / GNOME round buttons at the far right on other platforms
+// (same four buttons; the platform CSS moves and restyles them).
+// Close quits the app; minimise minimises; the green light toggles
+// full screen on macOS, maximise toggles maximise on Windows/Linux.
+// Double-clicking the drag region (not on a button or input) toggles
+// maximise, as a native title bar would.
+const headerEl = document.querySelector('header')!;
+const winControls = document.getElementById('window-controls')!;
+const winFullscreenBtn = document.getElementById('win-fullscreen') as HTMLButtonElement;
+const winMaximiseBtn = document.getElementById('win-maximise') as HTMLButtonElement;
+const osPlatform = ((): 'darwin' | 'win32' | 'linux' => {
+  const p = window.manakin?.platform;
+  if (p === 'darwin' || p === 'win32' || p === 'linux') return p;
+  const ua = (navigator as unknown as { userAgentData?: { platform?: string } }).userAgentData?.platform ?? '';
+  if (ua === 'macOS') return 'darwin';
+  if (ua === 'Windows') return 'win32';
+  return 'linux';
+})();
+document.body.classList.add(`platform-${osPlatform}`);
+if (osPlatform !== 'darwin') headerEl.appendChild(winControls); // far right, like the OS puts them
+async function syncWindowState(): Promise<void> {
+  try {
+    const state = await window.manakin?.windowState();
+    if (!state) return;
+    winMaximiseBtn.classList.toggle('is-maximised', state.maximised);
+    winFullscreenBtn.classList.toggle('is-fullscreen', state.fullscreen);
+  } catch { /* icons keep their last state */ }
+}
+document.getElementById('win-close')?.addEventListener('click', () => {
+  save();
+  void window.manakin?.quit();
+});
+document.getElementById('win-minimise')?.addEventListener('click', () => {
+  void window.manakin?.minimise();
+});
+winFullscreenBtn.addEventListener('click', async () => {
+  try {
+    const fullscreen = await window.manakin?.fullscreen();
+    winFullscreenBtn.classList.toggle('is-fullscreen', fullscreen ?? false);
+  } catch { /* state sync on resize will correct the icon */ }
+});
+winMaximiseBtn.addEventListener('click', async () => {
+  try {
+    const maximised = await window.manakin?.maximise();
+    winMaximiseBtn.classList.toggle('is-maximised', maximised ?? false);
+  } catch { /* state sync on resize will correct the icon */ }
+});
+headerEl.addEventListener('dblclick', (e) => {
+  if ((e.target as HTMLElement).closest('button, input')) return;
+  void window.manakin?.maximise().then((m) => winMaximiseBtn.classList.toggle('is-maximised', m ?? false)).catch(() => undefined);
+});
+let windowStateTimer: ReturnType<typeof setTimeout> | undefined;
+window.addEventListener('resize', () => {
+  if (windowStateTimer) clearTimeout(windowStateTimer);
+  windowStateTimer = setTimeout(() => { void syncWindowState(); }, 200);
+});
+void syncWindowState();
 
 // ---------- toolbar ----------
 const TOOLS: { id: ToolId; label: string; key: string; svg: string }[] = [
@@ -668,11 +771,46 @@ function renderToolbar(): void {
   dbl.appendChild(swap);
   toolbar.appendChild(dbl);
 }
+// The eraser's reach, drawn at the cursor while the eraser tool is
+// active — a body-level div like Bowerbird's #eraser-ring, so panel
+// re-renders never wipe it mid-drag. Diameter is the eraser radius
+// (the brush size) times two, scaled from stage units to screen pixels.
+// Declared before updateCursor: that runs at module level and calls
+// updateEraserRing, which reads this binding.
+let eraserRingEl: HTMLDivElement | null = null;
 function updateCursor(): void {
   canvas.classList.toggle('select-cursor', tool === 'select');
+  canvas.classList.toggle('eraser-cursor', tool === 'eraser');
+  if (tool !== 'eraser') updateEraserRing(0, 0, false);
 }
 renderToolbar();
 updateCursor();
+
+function updateEraserRing(clientX: number, clientY: number, show: boolean): void {
+  if (!eraserRingEl) {
+    eraserRingEl = document.createElement('div');
+    eraserRingEl.id = 'eraser-ring';
+    document.body.appendChild(eraserRingEl);
+  }
+  if (!show || tool !== 'eraser') {
+    eraserRingEl.style.display = 'none';
+    return;
+  }
+  const rect = canvas.getBoundingClientRect();
+  const scale = rect.width / stageSize().w;
+  const d = penWidth * 2 * scale;
+  eraserRingEl.style.display = 'block';
+  eraserRingEl.style.width = `${d}px`;
+  eraserRingEl.style.height = `${d}px`;
+  eraserRingEl.style.left = `${clientX - d / 2}px`;
+  eraserRingEl.style.top = `${clientY - d / 2}px`;
+}
+canvas.addEventListener('pointermove', (e) => {
+  updateEraserRing(e.clientX, e.clientY, true);
+});
+canvas.addEventListener('pointerleave', () => {
+  updateEraserRing(0, 0, false);
+});
 
 // ---------- geometry ----------
 function itemBBox(it: Item): { x: number; y: number; w: number; h: number } {
@@ -695,14 +833,74 @@ function distToSegment(p: Pt, a: Pt, b: Pt): number {
   const cx = a.x + t * dx, cy = a.y + t * dy;
   return Math.hypot(p.x - cx, p.y - cy);
 }
+function pointInPolygon(p: Pt, pts: Pt[]): boolean {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i].x, yi = pts[i].y, xj = pts[j].x, yj = pts[j].y;
+    if (((yi > p.y) !== (yj > p.y)) && (p.x < ((xj - xi) * (p.y - yi)) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+function isClosedStroke(it: StrokeItem): boolean {
+  if (it.points.length < 3) return false;
+  const a = it.points[0], b = it.points[it.points.length - 1];
+  return Math.hypot(a.x - b.x, a.y - b.y) <= 1.5;
+}
+// A shape's outline as a polyline, for erasing: the rectangle's four
+// corners (closed), the ellipse approximated with 48 segments (closed).
+function shapeOutline(it: ShapeItem): Pt[] {
+  if (it.kind === 'rect') {
+    const { x, y, w, h } = it;
+    return [{ x, y }, { x: x + w, y }, { x: x + w, y: y + h }, { x, y: y + h }, { x, y }];
+  }
+  const cx = it.x + it.w / 2, cy = it.y + it.h / 2;
+  const rx = Math.abs(it.w) / 2, ry = Math.abs(it.h) / 2;
+  const pts: Pt[] = [];
+  const N = 48;
+  for (let i = 0; i <= N; i++) {
+    const a = (i / N) * Math.PI * 2;
+    pts.push({ x: cx + rx * Math.cos(a), y: cy + ry * Math.sin(a) });
+  }
+  return pts;
+}
+// Subdivide every segment longer than `step` so a sparse polyline (a
+// two-point leg, a rectangle edge) can be erased in the middle, not
+// only at its stored points. Geometry is unchanged: new points lie on
+// the original segments.
+function densify(pts: Pt[], step: number): Pt[] {
+  if (pts.length < 2) return pts;
+  const out: Pt[] = [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    const d = Math.hypot(b.x - a.x, b.y - a.y);
+    const n = Math.max(1, Math.ceil(d / step));
+    for (let s = 1; s <= n; s++) out.push({ x: a.x + (b.x - a.x) * (s / n), y: a.y + (b.y - a.y) * (s / n) });
+  }
+  return out;
+}
 function hitTest(p: Pt): Item | null {
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i];
     if (it.type === 'stroke') {
+      const tol = Math.max(8, it.width + 4);
       for (let s = 0; s < it.points.length - 1; s++) {
-        if (distToSegment(p, it.points[s], it.points[s + 1]) <= Math.max(8, it.width + 4)) return it;
+        if (distToSegment(p, it.points[s], it.points[s + 1]) <= tol) return it;
       }
       if (it.points.length === 1 && Math.hypot(p.x - it.points[0].x, p.y - it.points[0].y) <= 10) return it;
+      // A closed stroke (the beak triangle) is a filled area: clicking
+      // inside it selects it, not only on its outline.
+      if (isClosedStroke(it) && pointInPolygon(p, it.points)) return it;
+    } else if (it.type === 'shape') {
+      // Inside the filled area, not just the bounding box: a click in a
+      // bbox corner outside the ellipse must not select it.
+      const pad = it.width / 2 + 2;
+      if (it.kind === 'rect') {
+        if (p.x >= it.x - pad && p.x <= it.x + it.w + pad && p.y >= it.y - pad && p.y <= it.y + it.h + pad) return it;
+      } else {
+        const cx = it.x + it.w / 2, cy = it.y + it.h / 2;
+        const rx = Math.abs(it.w) / 2 + pad, ry = Math.abs(it.h) / 2 + pad;
+        if (rx > 0 && ry > 0 && (((p.x - cx) ** 2) / (rx * rx) + ((p.y - cy) ** 2) / (ry * ry)) <= 1) return it;
+      }
     } else {
       const b = itemBBox(it);
       if (p.x >= b.x - 4 && p.x <= b.x + b.w + 4 && p.y >= b.y - 4 && p.y <= b.y + b.h + 4) return it;
@@ -850,7 +1048,26 @@ function drawItem(c: CanvasRenderingContext2D, it: Item, t01: number): void {
   c.lineJoin = 'round';
   if (it.type === 'stroke') {
     c.beginPath();
-    it.points.forEach((p, i) => { if (i === 0) c.moveTo(p.x, p.y); else c.lineTo(p.x, p.y); });
+    const pts = it.points;
+    if (pts.length === 1) {
+      c.moveTo(pts[0].x, pts[0].y);
+      c.lineTo(pts[0].x, pts[0].y);
+    } else if (pts.length < 5) {
+      // Short strokes stay exact polylines: the sample bird's beak
+      // (4 points), wing (3) and legs (2) keep their sharp corners,
+      // so the bird looks identical. A fast user stroke has 5+ samples.
+      pts.forEach((p, i) => { if (i === 0) c.moveTo(p.x, p.y); else c.lineTo(p.x, p.y); });
+    } else {
+      // Long strokes render as a smooth curve through the points:
+      // the standard midpoint-quadratic technique. Old strokes smooth
+      // too, since this is render time — no data migration.
+      c.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length - 1; i++) {
+        const mx = (pts[i].x + pts[i + 1].x) / 2, my = (pts[i].y + pts[i + 1].y) / 2;
+        c.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+      }
+      c.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+    }
     c.stroke();
   } else if (it.type === 'shape') {
     c.beginPath();
@@ -943,12 +1160,33 @@ function paramSlider(opts: {
   const val = document.createElement('span');
   val.className = 'pslider-value';
   val.textContent = opts.format(opts.value);
+  // One undo entry per drag, not one per input event: capture the
+  // pre-change snapshot when the interaction starts (pointerdown,
+  // focus, or — for synthetic events — the first input) and commit it
+  // on release, but only when the value actually moved.
+  let pendingBefore: string | null = null;
+  let startValue = opts.value;
+  const begin = (): void => {
+    if (pendingBefore === null) {
+      pendingBefore = snapshot();
+      startValue = parseFloat(input.value);
+    }
+  };
+  input.addEventListener('pointerdown', begin);
+  input.addEventListener('focus', begin);
   input.addEventListener('input', () => {
+    begin();
     const v = parseFloat(input.value);
     val.textContent = opts.format(v);
     opts.onInput(v);
   });
-  input.addEventListener('change', () => opts.onCommit());
+  input.addEventListener('change', () => {
+    if (pendingBefore !== null) {
+      if (parseFloat(input.value) !== startValue) gestureCommit(pendingBefore, true);
+      pendingBefore = null;
+    }
+    opts.onCommit();
+  });
   row.appendChild(lab);
   row.appendChild(input);
   row.appendChild(val);
@@ -1100,6 +1338,7 @@ function behaviourLayer(sel: Item, inst: BehaviourLayer, opts: { checkable: bool
     e.stopPropagation();
     const l = liveLayer();
     if (!l) return;
+    pushHistory();
     l.on = !l.on;
     save();
     renderPanel();
@@ -1204,6 +1443,7 @@ function behaviourLayer(sel: Item, inst: BehaviourLayer, opts: { checkable: bool
       revToggle.addEventListener('click', () => {
         const l = liveLayer();
         if (!l) return;
+        pushHistory();
         l.spinReverse = !l.spinReverse;
         revToggle.classList.toggle('on', l.spinReverse);
         revToggle.setAttribute('aria-pressed', String(l.spinReverse));
@@ -1271,7 +1511,7 @@ function groupLayer(sel: Item, group: BehaviourGroup): HTMLDivElement {
       done = true;
       if (commit) {
         const v = input.value.trim();
-        if (v && v !== group.name) { group.name = v; save(); }
+        if (v && v !== group.name) { pushHistory(); group.name = v; save(); }
       }
       renderPanel();
     };
@@ -1298,6 +1538,7 @@ function groupLayer(sel: Item, group: BehaviourGroup): HTMLDivElement {
     if (!s) return;
     const g = s.groups.find((gg) => gg.id === group.id);
     if (!g) return;
+    pushHistory();
     g.active = !g.active;
     save();
     renderPanel();
@@ -1561,6 +1802,8 @@ function renderCanvasPanel(): void {
     b.textContent = s.label;
     b.setAttribute('aria-label', `Stage ${s.label}`);
     b.addEventListener('click', () => {
+      if (stageId === s.id) return;
+      pushHistory();
       stageId = s.id;
       save();
       resizeCanvas();
@@ -1587,6 +1830,8 @@ function renderCanvasPanel(): void {
     b.title = bg.label;
     b.setAttribute('aria-label', `Background ${bg.label}`);
     b.addEventListener('click', () => {
+      if (stageBgId === bg.id && stageBgCustom === null) return;
+      pushHistory();
       stageBgId = bg.id;
       stageBgCustom = null;
       save();
@@ -1607,6 +1852,8 @@ function renderCanvasPanel(): void {
     b.className = gridMode === g.id ? 'active' : '';
     b.textContent = g.label;
     b.addEventListener('click', () => {
+      if (gridMode === g.id) return;
+      pushHistory();
       gridMode = g.id;
       save();
       renderPanel();
@@ -1824,6 +2071,8 @@ function stagePoint(e: { clientX: number; clientY: number }): Pt {
 let drag: {
   kind: 'brush' | 'shape' | 'select' | 'erase';
   start: Pt; last: Pt; item: Item | null; moved: boolean;
+  before: string | null; // pre-gesture snapshot, for lazy history (move / erase)
+  erased: boolean; // the eraser actually removed ink during this sweep
 } | null = null;
 let previewShape: ShapeItem | null = null;
 
@@ -1834,22 +2083,24 @@ canvas.addEventListener('pointerdown', (e) => {
     pushHistory();
     const stroke: StrokeItem = { ...baseItem(color, penWidth), type: 'stroke', points: [p] };
     items.push(stroke);
-    drag = { kind: 'brush', start: p, last: p, item: stroke, moved: false };
+    drag = { kind: 'brush', start: p, last: p, item: stroke, moved: false, before: null, erased: false };
   } else if (tool === 'paint') {
     paintAt(p);
     drag = null;
   } else if (tool === 'shape') {
-    drag = { kind: 'shape', start: p, last: p, item: null, moved: false };
+    drag = { kind: 'shape', start: p, last: p, item: null, moved: false, before: null, erased: false };
   } else if (tool === 'eraser') {
-    pushHistory();
-    eraseAt(p);
-    drag = { kind: 'erase', start: p, last: p, item: null, moved: false };
+    // Lazy history: capture the pre-state now, commit it on pointerup
+    // only if the sweep actually erased ink.
+    const before = gestureStart();
+    const erased = eraseAt(p);
+    drag = { kind: 'erase', start: p, last: p, item: null, moved: false, before, erased };
   } else if (tool === 'select') {
     const hit = hitTest(p);
     if (hit) {
       selectedId = hit.id;
       renderPanel();
-      drag = { kind: 'select', start: p, last: p, item: hit, moved: false };
+      drag = { kind: 'select', start: p, last: p, item: hit, moved: false, before: gestureStart(), erased: false };
     } else {
       selectedId = null;
       renderPanel();
@@ -1861,6 +2112,13 @@ canvas.addEventListener('pointermove', (e) => {
   if (!drag) return;
   const p = stagePoint(e);
   if (drag.kind === 'brush' && drag.item?.type === 'stroke') {
+    // The stored path keeps the raw pointer samples — deliberately NOT
+    // interpolated. The midpoint-quadratic render below rounds each
+    // joint by an amount that follows the segment length, so sparse
+    // fast samples smooth out; filling the gaps first makes the path
+    // dense and shrinks that rounding to ~2px, leaving the corners
+    // sharp (measured: a 5-sample arc stored as 129 interpolated
+    // points still rendered with visible corners at 3x).
     drag.item.points.push(p);
     drag.moved = true;
   } else if (drag.kind === 'shape') {
@@ -1871,7 +2129,16 @@ canvas.addEventListener('pointermove', (e) => {
     };
     drag.moved = true;
   } else if (drag.kind === 'erase') {
-    eraseAt(p);
+    // Erase continuously along the sweep, not only at sampled points:
+    // a fast sweep jumps 20px+ between pointermove events, and without
+    // interpolation it would leave stripes of unerased ink behind.
+    const step = Math.max(2, penWidth / 2);
+    const d = Math.hypot(p.x - drag.last.x, p.y - drag.last.y);
+    const n = Math.max(1, Math.ceil(d / step));
+    for (let s = 1; s <= n; s++) {
+      if (eraseAt({ x: drag.last.x + (p.x - drag.last.x) * (s / n), y: drag.last.y + (p.y - drag.last.y) * (s / n) })) drag.erased = true;
+    }
+    drag.last = p;
   } else if (drag.kind === 'select' && drag.item) {
     const dx = p.x - drag.last.x, dy = p.y - drag.last.y;
     if (dx !== 0 || dy !== 0) drag.moved = true;
@@ -1886,7 +2153,15 @@ canvas.addEventListener('pointerup', (e) => {
     pushHistory();
     items.push(previewShape);
   }
-  if (drag.kind === 'select' && drag.moved) save();
+  // A move is one undo entry, committed on release — a click without
+  // moving adds nothing. Same for an erase sweep over empty space.
+  if (drag.kind === 'select' && drag.moved) {
+    if (drag.before) gestureCommit(drag.before, true);
+    save();
+  }
+  if (drag.kind === 'erase') {
+    if (drag.before) gestureCommit(drag.before, drag.erased);
+  }
   if (drag.kind === 'brush' || drag.kind === 'erase' || drag.kind === 'shape') save(); // shapes were lost on reload until the next save — they never saved on creation
   previewShape = null;
   drag = null;
@@ -1911,14 +2186,72 @@ function paintAt(p: Pt): void {
   save();
   renderPanel();
 }
-function eraseAt(p: Pt): void {
-  const hit = hitTest(p);
-  if (hit) {
-    items = items.filter((i) => i.id !== hit.id);
-    if (selectedId === hit.id) selectedId = null;
-    for (const l of hit.layers) smoothed.delete(l.id);
-    renderPanel();
+// The eraser acts like the pen: it removes only the ink under it, not
+// the whole item it touches. Eraser radius is the brush size (penWidth).
+// A stroke loses the points within the radius and splits into
+// contiguous runs, each run of 2+ points becoming its own stroke item
+// inheriting the original's colour, width, layers and groups (with
+// fresh ids, so pieces never share layer state). A run of 1 point is
+// dropped, unless the original was a single-point stroke. A shape
+// becomes its outline polyline on first contact, then splits the same
+// way, so a grazing touch never deletes a whole shape. Text has no
+// partial erasure: touching it deletes the whole item. Returns true
+// when anything was actually erased.
+function eraseAt(p: Pt): boolean {
+  const radius = penWidth;
+  let changed = false;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.type === 'text') {
+      const b = itemBBox(it);
+      if (p.x >= b.x - radius && p.x <= b.x + b.w + radius && p.y >= b.y - radius && p.y <= b.y + b.h + radius) {
+        items.splice(i, 1);
+        if (selectedId === it.id) selectedId = null;
+        for (const l of it.layers) smoothed.delete(l.id);
+        changed = true;
+      }
+      continue;
+    }
+    const rawPts: Pt[] = it.type === 'stroke' ? it.points : shapeOutline(it);
+    // Densify first, so a sparse polyline (a two-point leg, a rectangle
+    // edge) can be erased in the middle, not only at stored points.
+    const pts = densify(rawPts, Math.max(3, radius / 2));
+    const runs: Pt[][] = [];
+    let cur: Pt[] = [];
+    let removed = 0;
+    for (const pt of pts) {
+      if (Math.hypot(pt.x - p.x, pt.y - p.y) > radius) cur.push(pt);
+      else {
+        removed++;
+        if (cur.length) { runs.push(cur); cur = []; }
+      }
+    }
+    if (cur.length) runs.push(cur);
+    if (removed === 0) continue;
+    changed = true;
+    const survivors = runs.filter((r) => r.length >= 2 || (it.type === 'stroke' && it.points.length === 1));
+    const replacements: StrokeItem[] = survivors.map((run) => {
+      const base = baseItem(it.color, it.width);
+      const layerIdMap = new Map<string, string>();
+      base.layers = it.layers.map((l) => {
+        const id = nid();
+        layerIdMap.set(l.id, id);
+        return { ...l, id };
+      });
+      base.groups = it.groups.map((g) => ({
+        ...g,
+        id: nid(),
+        members: g.members.map((m) => layerIdMap.get(m)).filter((m): m is string => typeof m === 'string'),
+      })).filter((g) => g.members.length > 0);
+      base.stash = JSON.parse(JSON.stringify(it.stash)) as ItemBase['stash'];
+      return { ...base, type: 'stroke', points: run };
+    });
+    for (const l of it.layers) smoothed.delete(l.id);
+    items.splice(i, 1, ...replacements);
+    if (selectedId === it.id) selectedId = replacements.length ? replacements[0].id : null;
   }
+  if (changed) renderPanel();
+  return changed;
 }
 function moveItem(it: Item, dx: number, dy: number): void {
   if (it.type === 'stroke') it.points.forEach((pt) => { pt.x += dx; pt.y += dy; });
@@ -1943,8 +2276,33 @@ function renderWithPreview(t01: number): void {
 }
 
 // ---------- text ----------
+// One editor session at a time, tracked at module level. Opening a new
+// one finishes the open one first: without this, a second open while
+// one is pending leaves two finish closures, and the next blur/Enter
+// creates the text twice.
+let textSession: { it: TextItem | null; p: Pt } | null = null;
+function closeTextEditor(commit: boolean): void {
+  const s = textSession;
+  if (!s) return;
+  textSession = null; // first, so a re-entrant close cannot run twice
+  textEditor.style.display = 'none';
+  const value = textEditor.value.trim();
+  if (commit && value) {
+    if (s.it) {
+      if (value !== s.it.text) { pushHistory(); s.it.text = value; }
+    } else {
+      pushHistory();
+      const item: TextItem = { ...baseItem(color, penWidth), type: 'text', x: s.p.x, y: s.p.y, text: value, size: 20 };
+      items.push(item);
+      selectedId = item.id;
+    }
+    save();
+    renderPanel();
+  }
+}
 function openTextEditor(it: TextItem | null, p: Pt): void {
-  const { w, h } = stageSize();
+  if (textSession) closeTextEditor(true);
+  const { w } = stageSize();
   const rect = canvas.getBoundingClientRect();
   const scaleX = rect.width / w;
   textEditor.style.display = 'block';
@@ -1952,31 +2310,23 @@ function openTextEditor(it: TextItem | null, p: Pt): void {
   textEditor.style.top = `${(it ? it.y - it.size : p.y - 20) * scaleX}px`;
   textEditor.style.width = '220px';
   textEditor.value = it ? it.text : '';
+  textSession = { it, p };
   textEditor.focus();
-  const finish = (commit: boolean) => {
-    textEditor.style.display = 'none';
-    const value = textEditor.value.trim();
-    if (commit && value) {
-      if (it) { it.text = value; }
-      else {
-        pushHistory();
-        const item: TextItem = { ...baseItem(color, penWidth), type: 'text', x: p.x, y: p.y, text: value, size: 20 };
-        items.push(item);
-        selectedId = item.id;
-      }
-      save();
-      renderPanel();
-    }
-    textEditor.removeEventListener('blur', onBlur);
-  };
-  const onBlur = () => finish(true);
-  textEditor.addEventListener('blur', onBlur, { once: true });
   textEditor.onkeydown = (ev) => {
-    if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); finish(true); }
-    if (ev.key === 'Escape') finish(false);
+    if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); closeTextEditor(true); }
+    if (ev.key === 'Escape') closeTextEditor(false);
     ev.stopPropagation();
   };
 }
+// Clicking away commits the text.
+textEditor.addEventListener('blur', () => closeTextEditor(true));
+// The browser's mousedown default moves focus to the clicked element:
+// on the canvas (not focusable) that blurs the text editor the
+// pointerdown handler just opened and focused, closing it at once.
+// Prevent it while the text tool is active.
+canvas.addEventListener('mousedown', (e) => {
+  if (tool === 'text') e.preventDefault();
+});
 canvas.addEventListener('dblclick', (e) => {
   const p = stagePoint(e);
   const hit = hitTest(p);
