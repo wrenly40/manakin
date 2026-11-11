@@ -499,7 +499,7 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
   flex: none; background: #fff;
   border-top: 1px solid var(--separator);
   display: flex; flex-direction: column; justify-content: center; gap: 8px;
-  padding: 10px 16px 12px;
+  padding: 10px 16px 12px; position: relative;
 }
 #player-row { display: flex; align-items: center; justify-content: center; gap: 8px; }
 .pctl {
@@ -530,6 +530,38 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 }
 #progress-fill { height: 100%; width: 0%; background: var(--ink); border-radius: 2px; }
 #time-state { font-size: 13px; color: var(--grey); white-space: nowrap; }
+/* Zoom control: minus, percentage, plus — absolute at the right of
+   the player, level with the transport buttons. The percentage is a
+   button: clicking it resets to 100%. */
+#zoom-control {
+  position: absolute; right: 16px; top: 10px; height: 40px;
+  display: flex; align-items: center; gap: 2px;
+}
+.zbtn {
+  border: 1px solid var(--hairline); background: #fff; border-radius: 7px;
+  width: 28px; height: 28px; padding: 0; flex: none;
+  display: flex; align-items: center; justify-content: center; color: var(--ink);
+}
+.zbtn:hover { background: var(--bg-system); }
+.zbtn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.zoom-label {
+  border: none; background: transparent; color: var(--grey);
+  font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums;
+  min-width: 44px; height: 28px; padding: 0 2px; text-align: center;
+}
+.zoom-label:hover { color: var(--ink); }
+/* Arrange / Align icon rows in the panel: small quiet icon buttons,
+   same 1.8-stroke ink language as the toolbar icons. */
+.icon-row { display: flex; align-items: center; gap: 6px; }
+.icon-btn {
+  flex: none; width: 28px; height: 28px; border: none; border-radius: 7px;
+  background: transparent; color: var(--ink); padding: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.icon-btn:hover { background: rgba(0, 0, 0, 0.05); }
+.icon-btn:disabled { opacity: 0.3; cursor: default; }
+.icon-btn:disabled:hover { background: transparent; }
+.icon-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
 /* Colour panel: saturation/value square + horizontal hue bar, hex,
    recent colours, saved palette. */

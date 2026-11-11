@@ -57,6 +57,26 @@ const LAYER_ICONS: string[] = [
   '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 3v4h-4"/></svg>', // Spin: circular arrow
   '<svg viewBox="0 0 24 24"><path d="M3 16c2.5-5 5 2 7.5-3s5 2 7.5-3" stroke-dasharray="0.5 3.5"/></svg>', // Wander: dotted squiggle
 ];
+// Z-order icons: stacked squares, same 1.8-stroke ink language —
+// the filled square is the one on top (front) or at the back (back);
+// forward/backward add a small arrow for the one-step move.
+const ARRANGE_ICONS: string[] = [
+  '<svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="11" height="11" rx="1.5"/><rect x="9.5" y="9.5" width="11" height="11" rx="1.5" fill="currentColor" stroke="none"/></svg>', // Bring to Front
+  '<svg viewBox="0 0 24 24"><rect x="4" y="7" width="10" height="10" rx="1.5"/><rect x="10" y="11" width="10" height="10" rx="1.5"/><path d="M12 2v3"/><path d="M10 3.5 12 1.5l2 2"/></svg>', // Bring Forward
+  '<svg viewBox="0 0 24 24"><rect x="4" y="3" width="10" height="10" rx="1.5"/><rect x="10" y="7" width="10" height="10" rx="1.5"/><path d="M12 22v-3"/><path d="M10 20.5l2 2 2-2"/></svg>', // Send Backward
+  '<svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="11" height="11" rx="1.5" fill="currentColor" stroke="none"/><rect x="9.5" y="9.5" width="11" height="11" rx="1.5"/></svg>', // Send to Back
+];
+// Align icons: a guide line plus a rectangle — the line is the edge
+// the items align to, the rectangle is the item.
+const ALIGN_ICONS: string[] = [
+  '<svg viewBox="0 0 24 24"><path d="M5 3v18"/><rect x="9" y="8" width="9" height="8" rx="1"/></svg>', // Left
+  '<svg viewBox="0 0 24 24"><path d="M12 3v18"/><rect x="8" y="8" width="8" height="8" rx="1"/></svg>', // Centre
+  '<svg viewBox="0 0 24 24"><path d="M19 3v18"/><rect x="6" y="8" width="9" height="8" rx="1"/></svg>', // Right
+  '<svg viewBox="0 0 24 24"><path d="M3 5h18"/><rect x="8" y="9" width="8" height="9" rx="1"/></svg>', // Top
+  '<svg viewBox="0 0 24 24"><path d="M3 12h18"/><rect x="8" y="8" width="8" height="8" rx="1"/></svg>', // Middle
+  '<svg viewBox="0 0 24 24"><path d="M3 19h18"/><rect x="8" y="6" width="8" height="9" rx="1"/></svg>', // Bottom
+];
+
 
 type BehaviourGroup = {
   id: string;
@@ -241,6 +261,25 @@ let colourHue360 = false;
 let playing = false;
 let playTime = 0; // ms within the loop, frozen when paused
 let lastTs = 0;
+// Zoom is view state only: not in the undo snapshot, not saved, resets
+// to 100% on reload. It scales the workspace view (stage + pasteboard
+// around the workspace centre) — never the stage size, never exports:
+// offscreen export targets render at s=1 regardless.
+const ZOOM_STOPS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
+let zoom = 1;
+function updateZoomLabel(): void {
+  const el = document.getElementById('zoom-label');
+  if (el) el.textContent = `${Math.round(zoom * 100)}%`;
+}
+function setZoom(z: number): void {
+  zoom = z;
+  updateZoomLabel();
+}
+function zoomStep(dir: 1 | -1): void {
+  const i = ZOOM_STOPS.indexOf(zoom);
+  if (i === -1) { setZoom(dir === 1 ? (ZOOM_STOPS.find((s) => s > zoom) ?? 4) : ([...ZOOM_STOPS].reverse().find((s) => s < zoom) ?? 0.25)); return; }
+  setZoom(ZOOM_STOPS[Math.max(0, Math.min(ZOOM_STOPS.length - 1, i + dir))]);
+}
 let history: string[] = [];
 let redoStack: string[] = [];
 const smoothed = new Map<string, number>(); // layer id -> smoothed amplitude 0..1
@@ -710,6 +749,11 @@ app.innerHTML = `
       <div id="timeline-row">
         <div id="progress-track" aria-hidden="true"><div id="progress-fill"></div></div>
         <span id="time-state">0.0 / 4.0s</span>
+      </div>
+      <div id="zoom-control" aria-label="Zoom">
+        <button id="zoom-out" class="zbtn" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+        <button id="zoom-label" class="zoom-label" title="Reset zoom to 100%" aria-label="Zoom level, activate to reset to 100%">100%</button>
+        <button id="zoom-in" class="zbtn" title="Zoom in" aria-label="Zoom in"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
       </div>
     </footer>
   </div>
@@ -1386,7 +1430,13 @@ type WorkspaceLayout = { s: number; ox: number; oy: number; cw: number; ch: numb
 function workspaceLayout(): WorkspaceLayout {
   const cw = stageWrap.clientWidth, ch = stageWrap.clientHeight;
   const { w, h } = stageSize();
-  const s = Math.min(1, cw / w, ch / h) || 1; // 0-size wrap (pre-layout) falls back to 1
+  const fit = Math.min(1, cw / w, ch / h) || 1; // 0-size wrap (pre-layout) falls back to 1
+  // Zoom scales the fit around the workspace centre, so the stage
+  // grows/shrinks in place; at zoom > 1 the origin goes negative and
+  // the stage extends past the visible workspace (clipped by the
+  // canvas, no pan). Every stage-space conversion reads this, so
+  // hit-testing, drawing, dragging and the marquee all follow zoom.
+  const s = fit * zoom;
   return { s, ox: (cw - w * s) / 2, oy: (ch - h * s) / 2, cw, ch };
 }
 function roundRectPath(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
@@ -2210,6 +2260,7 @@ function reanchorAddPicker(): void {
 
 function renderBehavioursPanel(sel: Item): void {
   panelTitle.textContent = 'Behaviours';
+  panelBody.appendChild(renderArrangeSection());
   if (checkedItemId !== sel.id) { checkedLayers.clear(); checkedItemId = sel.id; addPickerOpen = false; }
   const grouped = new Set(sel.groups.flatMap((g) => g.members));
   // Drop checks for layers that left the stack or joined a group.
@@ -2316,14 +2367,255 @@ function ungroupItemGroup(group: ItemGroup): void {
   renderPanel();
 }
 
+// ---------- duplicate / copy / paste / z-order / align ----------
+// A full copy of an item, offset by (dx, dy): same geometry, colour
+// and width, with its own behaviour layers (fresh ids, so the copy
+// never shares layer state with the source) and its own behaviour
+// groups (members remapped to the copied layers). Same pattern as the
+// eraser's split pieces.
+function cloneItemWithOffset(it: Item, dx: number, dy: number): Item {
+  const copy = JSON.parse(JSON.stringify(it)) as Item;
+  copy.id = nid();
+  const layerMap = new Map<string, string>();
+  copy.layers = copy.layers.map((l) => {
+    const id = nid();
+    layerMap.set(l.id, id);
+    return { ...l, id };
+  });
+  copy.groups = copy.groups.map((g) => ({
+    ...g,
+    id: nid(),
+    members: g.members.map((m) => layerMap.get(m)).filter((m): m is string => typeof m === 'string'),
+  })).filter((g) => g.members.length > 0);
+  copy.stash = JSON.parse(JSON.stringify(copy.stash)) as ItemBase['stash'];
+  if (copy.type === 'stroke') copy.points = copy.points.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+  else { copy.x += dx; copy.y += dy; }
+  return copy;
+}
+// Duplicate the current selection: every item is copied at +16/+16
+// and the copies are selected. When the selection is exactly one
+// item group, the group is duplicated too — new group, copied
+// members, copied group layers. Duplicating a picked-out member
+// (shift-clicked out of its group) copies just that member.
+function duplicateSelection(): void {
+  const sel = selectedItems();
+  if (sel.length === 0) return;
+  pushHistory();
+  const copies = new Map<string, Item>();
+  for (const it of sel) {
+    const c = cloneItemWithOffset(it, 16, 16);
+    copies.set(it.id, c);
+    items.push(c);
+  }
+  const grp = selectedItemGroup();
+  if (grp) {
+    itemGroups.push({
+      id: nid(),
+      memberIds: grp.memberIds.map((m) => copies.get(m)?.id).filter((m): m is string => typeof m === 'string'),
+      layers: grp.layers.map((l) => ({ ...l, id: nid() })),
+    });
+  }
+  selectedIds = [...copies.values()].map((c) => c.id);
+  save();
+  renderPanel();
+}
+// In-app clipboard only — never the system clipboard, so pasting
+// into another app (or from it) is untouched. Copy stores deep
+// copies of the selection; a group is stored only when all its
+// members are selected, otherwise just the picked members.
+type Clipboard = { items: Item[]; groups: ItemGroup[] };
+let clipboard: Clipboard | null = null;
+let pasteCount = 0; // pastes since the last copy; each paste offsets a further +16
+function copySelection(): void {
+  const sel = selectedItems();
+  if (sel.length === 0) return;
+  const ids = new Set(sel.map((i) => i.id));
+  clipboard = {
+    items: JSON.parse(JSON.stringify(sel)) as Item[],
+    groups: JSON.parse(JSON.stringify(itemGroups.filter((g) => g.memberIds.every((m) => ids.has(m))))) as ItemGroup[],
+  };
+  pasteCount = 0;
+}
+function pasteClipboard(): void {
+  if (!clipboard || clipboard.items.length === 0) return;
+  pushHistory();
+  pasteCount += 1;
+  const dx = 16 * pasteCount, dy = 16 * pasteCount;
+  const copies = new Map<string, Item>();
+  for (const it of clipboard.items) {
+    const c = cloneItemWithOffset(it, dx, dy);
+    copies.set(it.id, c);
+    items.push(c);
+  }
+  for (const g of clipboard.groups) {
+    itemGroups.push({
+      id: nid(),
+      memberIds: g.memberIds.map((m) => copies.get(m)?.id).filter((m): m is string => typeof m === 'string'),
+      layers: g.layers.map((l) => ({ ...l, id: nid() })),
+    });
+  }
+  selectedIds = [...copies.values()].map((c) => c.id);
+  save();
+  renderPanel();
+}
+// Selection expanded to z-order units: a grouped item drags its
+// whole group along (members keep their relative order), so a member
+// can never be reordered out of its group by this.
+type ZUnit = { items: Item[] };
+function selectionUnits(): ZUnit[] {
+  const units: ZUnit[] = [];
+  const seenGroups = new Set<string>();
+  for (const it of selectedItems()) {
+    const g = itemGroupOf(it.id);
+    if (g) {
+      if (seenGroups.has(g.id)) continue;
+      seenGroups.add(g.id);
+      units.push({ items: g.memberIds.map((id) => items.find((i) => i.id === id)).filter((i): i is Item => !!i) });
+    } else units.push({ items: [it] });
+  }
+  return units;
+}
+// Reorder the selection in the stack (items order = draw order, last
+// draws on top). A unit moves as a block: its members keep their
+// relative order and the block swaps past one neighbour for a
+// one-step move. Returns false (and pushes no history) when the move
+// would change nothing.
+function reorderSelection(mode: 'front' | 'forward' | 'backward' | 'back'): boolean {
+  const units = selectionUnits();
+  if (units.length === 0) return false;
+  const unitIds = new Set(units.flatMap((u) => u.items.map((i) => i.id)));
+  const block = items.filter((i) => unitIds.has(i.id)); // unit items, in current stack order
+  const rest = items.filter((i) => !unitIds.has(i.id));
+  let next: Item[];
+  if (mode === 'front') next = [...rest, ...block];
+  else if (mode === 'back') next = [...block, ...rest];
+  else if (mode === 'forward') {
+    const topIdx = Math.max(...block.map((i) => items.indexOf(i)));
+    if (topIdx >= items.length - 1) return false;
+    const above = items[topIdx + 1];
+    const at = rest.indexOf(above);
+    next = [...rest.slice(0, at + 1), ...block, ...rest.slice(at + 1)];
+  } else {
+    const botIdx = Math.min(...block.map((i) => items.indexOf(i)));
+    if (botIdx <= 0) return false;
+    const below = items[botIdx - 1];
+    const at = rest.indexOf(below);
+    next = [...rest.slice(0, at), ...block, ...rest.slice(at)];
+  }
+  if (next.every((it, i) => it === items[i])) return false;
+  pushHistory();
+  items = next;
+  save();
+  renderPanel();
+  return true;
+}
+// Align the selection's units to an edge/centre of the selection's
+// bounding box (stored geometry — the document truth, same as drags).
+// A group aligns as a whole: its members move together by one delta.
+function alignSelection(mode: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom'): boolean {
+  const units = selectionUnits();
+  if (units.length < 2) return false;
+  const boxes = units.map((u) => {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const it of u.items) {
+      const b = itemBBox(it);
+      x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y);
+      x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h);
+    }
+    return { x0, y0, x1, y1 };
+  });
+  const sx0 = Math.min(...boxes.map((b) => b.x0)), sy0 = Math.min(...boxes.map((b) => b.y0));
+  const sx1 = Math.max(...boxes.map((b) => b.x1)), sy1 = Math.max(...boxes.map((b) => b.y1));
+  const deltas = boxes.map((b) => {
+    switch (mode) {
+      case 'left': return { dx: sx0 - b.x0, dy: 0 };
+      case 'center': return { dx: (sx0 + sx1) / 2 - (b.x0 + b.x1) / 2, dy: 0 };
+      case 'right': return { dx: sx1 - b.x1, dy: 0 };
+      case 'top': return { dx: 0, dy: sy0 - b.y0 };
+      case 'middle': return { dx: 0, dy: (sy0 + sy1) / 2 - (b.y0 + b.y1) / 2 };
+      case 'bottom': return { dx: 0, dy: sy1 - b.y1 };
+    }
+  });
+  if (deltas.every((d) => d.dx === 0 && d.dy === 0)) return false;
+  pushHistory();
+  units.forEach((u, i) => { for (const it of u.items) moveItem(it, deltas[i].dx, deltas[i].dy); });
+  save();
+  renderPanel();
+  return true;
+}
+
 // Two or more items selected (and not one group): the count and a
 // Group button, in the quiet pill style of "Add behavior".
+function renderArrangeSection(): HTMLDivElement {
+  const sec = document.createElement('div');
+  sec.className = 'psection';
+  const h = document.createElement('h3');
+  h.textContent = 'Arrange';
+  sec.appendChild(h);
+  const row = document.createElement('div');
+  row.className = 'icon-row';
+  const units = selectionUnits();
+  const unitIds = new Set(units.flatMap((u) => u.items.map((i) => i.id)));
+  const idxs = items.map((it, i) => (unitIds.has(it.id) ? i : -1)).filter((i) => i >= 0);
+  const atTop = idxs.length > 0 && Math.max(...idxs) === items.length - 1;
+  const atBottom = idxs.length > 0 && Math.min(...idxs) === 0;
+  const defs: { mode: 'front' | 'forward' | 'backward' | 'back'; label: string; disabled: boolean }[] = [
+    { mode: 'front', label: 'Bring to Front', disabled: atTop },
+    { mode: 'forward', label: 'Bring Forward', disabled: atTop },
+    { mode: 'backward', label: 'Send Backward', disabled: atBottom },
+    { mode: 'back', label: 'Send to Back', disabled: atBottom },
+  ];
+  defs.forEach((d, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'icon-btn';
+    b.innerHTML = ARRANGE_ICONS[i];
+    b.title = d.label;
+    b.setAttribute('aria-label', d.label);
+    b.disabled = d.disabled;
+    b.addEventListener('click', () => { reorderSelection(d.mode); });
+    row.appendChild(b);
+  });
+  sec.appendChild(row);
+  return sec;
+}
+function renderAlignSection(): HTMLDivElement {
+  const sec = document.createElement('div');
+  sec.className = 'psection';
+  const h = document.createElement('h3');
+  h.textContent = 'Align';
+  sec.appendChild(h);
+  const row = document.createElement('div');
+  row.className = 'icon-row';
+  const defs: { mode: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom'; label: string }[] = [
+    { mode: 'left', label: 'Align Left' },
+    { mode: 'center', label: 'Align Centre' },
+    { mode: 'right', label: 'Align Right' },
+    { mode: 'top', label: 'Align Top' },
+    { mode: 'middle', label: 'Align Middle' },
+    { mode: 'bottom', label: 'Align Bottom' },
+  ];
+  defs.forEach((d, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'icon-btn';
+    b.innerHTML = ALIGN_ICONS[i];
+    b.title = d.label;
+    b.setAttribute('aria-label', d.label);
+    b.addEventListener('click', () => { alignSelection(d.mode); });
+    row.appendChild(b);
+  });
+  sec.appendChild(row);
+  return sec;
+}
 function renderMultiSelectPanel(sel: Item[]): void {
   panelTitle.textContent = 'Selection';
   const count = document.createElement('div');
   count.className = 'sel-count';
   count.textContent = `${sel.length} selected`;
   panelBody.appendChild(count);
+  panelBody.appendChild(renderArrangeSection());
+  panelBody.appendChild(renderAlignSection());
   const action = document.createElement('div');
   action.className = 'group-action';
   const btn = document.createElement('button');
@@ -2342,6 +2634,7 @@ function renderMultiSelectPanel(sel: Item[]): void {
 // the two kinds of group stay visually distinct.
 function renderItemGroupPanel(group: ItemGroup): void {
   panelTitle.textContent = 'Behaviours';
+  panelBody.appendChild(renderArrangeSection());
   const host: LayerHost = { kind: 'group', group };
   for (const layer of group.layers) {
     panelBody.appendChild(behaviourLayer(host, layer, { checkable: false }).layer);
@@ -3210,6 +3503,9 @@ canvas.addEventListener('pointerdown', (e) => {
 // ---------- header / panel actions ----------
 (document.getElementById('undo-btn') as HTMLButtonElement).addEventListener('click', undo);
 (document.getElementById('redo-btn') as HTMLButtonElement).addEventListener('click', redo);
+(document.getElementById('zoom-in') as HTMLButtonElement).addEventListener('click', () => zoomStep(1));
+(document.getElementById('zoom-out') as HTMLButtonElement).addEventListener('click', () => zoomStep(-1));
+(document.getElementById('zoom-label') as HTMLButtonElement).addEventListener('click', () => setZoom(1));
 function clearStage(): void {
   if (items.length === 0) return;
   pushHistory();
@@ -3419,6 +3715,14 @@ window.addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   if ((e.ctrlKey || e.metaKey) && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
   if ((e.ctrlKey || e.metaKey) && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === 'd') { e.preventDefault(); duplicateSelection(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === 'c') { e.preventDefault(); copySelection(); return; }
+  if ((e.ctrlKey || e.metaKey) && k === 'v') { e.preventDefault(); pasteClipboard(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.code === 'BracketRight') { e.preventDefault(); reorderSelection(e.shiftKey ? 'front' : 'forward'); return; }
+  if ((e.ctrlKey || e.metaKey) && e.code === 'BracketLeft') { e.preventDefault(); reorderSelection(e.shiftKey ? 'back' : 'backward'); return; }
+  if ((e.ctrlKey || e.metaKey) && e.code === 'Equal') { e.preventDefault(); zoomStep(1); return; }
+  if ((e.ctrlKey || e.metaKey) && e.code === 'Minus') { e.preventDefault(); zoomStep(-1); return; }
+  if ((e.ctrlKey || e.metaKey) && e.code === 'Digit0') { e.preventDefault(); setZoom(1); return; }
   if (k === 'escape') {
     if (addPickerOpen) { addPickerOpen = false; closeAddPickerEl(); renderPanel(); return; }
     if (exportDropdownOpen) { exportDropdownOpen = false; closeExportDropdownEl(); renderPanel(); return; }
