@@ -326,7 +326,15 @@ function restore(json: string): void {
   items.forEach(migrateItem); // undo snapshots from older saves may lack the newer parameter fields
   pruneItemGroups();
   selectedIds = selectedIds.filter((id) => items.some((i) => i.id === id));
-  smoothed.clear();
+  // Keep the eased amplitudes of layers that still exist: clearing them
+  // restarts every behaviour from 0, so after an undo the pose visibly
+  // snaps and re-eases over ~1s even while paused. Only entries whose
+  // layer is gone are dropped — a layer id is never reused, so a
+  // dropped entry is never read again.
+  const liveLayerIds = new Set<string>();
+  for (const it of items) for (const l of it.layers) liveLayerIds.add(l.id);
+  for (const g of itemGroups) for (const l of g.layers) liveLayerIds.add(l.id);
+  for (const id of [...smoothed.keys()]) if (!liveLayerIds.has(id)) smoothed.delete(id);
   save();
   resizeCanvas();
   renderPanel();
@@ -1056,35 +1064,86 @@ function densify(pts: Pt[], step: number): Pt[] {
   }
   return out;
 }
+// A click selects what the user SEES: items render at their animated
+// pose (motion offset, scale and rotation about their own centre), so
+// the click is tested against the motion-adjusted geometry, not the
+// stored one — at rest the bird sits ~19px from its stored position,
+// which is why thin parts (legs, eye) were unclickable where drawn.
+// Tolerance is generous (10px around strokes, a padded area around
+// small shapes) and when several items are within tolerance the
+// nearest wins; ties fall to the topmost item.
+function motionAdjustedPoint(it: Item, p: Pt, t01: number): Pt {
+  const m = motionForItem(it, t01);
+  const b = itemBBox(it);
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  // Inverse of drawItem's translate/rotate/scale about the centre
+  // (uniform scale commutes with rotation, so the order here is free).
+  const x = (p.x - m.dx - cx) / m.scale;
+  const y = (p.y - m.dy - cy) / m.scale;
+  const cos = Math.cos(-m.rot), sin = Math.sin(-m.rot);
+  return { x: x * cos - y * sin + cx, y: x * sin + y * cos + cy };
+}
+// The bbox of an item as drawn: the stored bbox carried through the
+// item's motion (offset, scale and rotation about its centre). The
+// marquee selects what the user sees, so it tests this box.
+function renderedBBox(it: Item, t01: number): { x: number; y: number; w: number; h: number } {
+  const b = itemBBox(it);
+  const m = motionForItem(it, t01);
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  const cos = Math.cos(m.rot), sin = Math.sin(m.rot);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [px, py] of [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]] as const) {
+    const dx = (px - cx) * m.scale, dy = (py - cy) * m.scale;
+    const rx = cx + m.dx + dx * cos - dy * sin;
+    const ry = cy + m.dy + dx * sin + dy * cos;
+    x0 = Math.min(x0, rx); y0 = Math.min(y0, ry); x1 = Math.max(x1, rx); y1 = Math.max(y1, ry);
+  }
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+// Distance from q to an item's (stored) geometry, plus the tolerance
+// inside which it counts as a hit. 0 means inside the filled area.
+function hitDistance(it: Item, q: Pt): { d: number; tol: number } {
+  if (it.type === 'stroke') {
+    const tol = Math.max(10, it.width + 6);
+    let d = Infinity;
+    for (let s = 0; s < it.points.length - 1; s++) d = Math.min(d, distToSegment(q, it.points[s], it.points[s + 1]));
+    if (it.points.length === 1) d = Math.hypot(q.x - it.points[0].x, q.y - it.points[0].y);
+    // A closed stroke (the beak triangle) is a filled area: clicking
+    // inside it selects it, not only on its outline.
+    if (isClosedStroke(it) && pointInPolygon(q, it.points)) d = 0;
+    return { d, tol };
+  }
+  if (it.type === 'shape') {
+    const pad = it.width / 2 + 8;
+    if (it.kind === 'rect') {
+      const dx = Math.max(it.x - q.x, 0, q.x - (it.x + it.w));
+      const dy = Math.max(it.y - q.y, 0, q.y - (it.y + it.h));
+      return { d: Math.hypot(dx, dy), tol: pad };
+    }
+    const cx = it.x + it.w / 2, cy = it.y + it.h / 2;
+    const rx = Math.abs(it.w) / 2, ry = Math.abs(it.h) / 2;
+    const v = rx > 0 && ry > 0 ? ((q.x - cx) ** 2) / (rx * rx) + ((q.y - cy) ** 2) / (ry * ry) : Infinity;
+    const d = v <= 1 ? 0 : (Math.sqrt(v) - 1) * Math.min(rx, ry);
+    return { d, tol: pad };
+  }
+  const b = itemBBox(it);
+  const dx = Math.max(b.x - q.x, 0, q.x - (b.x + b.w));
+  const dy = Math.max(b.y - q.y, 0, q.y - (b.y + b.h));
+  return { d: Math.hypot(dx, dy), tol: 10 };
+}
 function hitTest(p: Pt): Item | null {
+  const t01 = playTime / loopMs();
+  let best: Item | null = null;
+  let bestD = Infinity;
+  // Topmost first; only a strictly smaller distance replaces the best,
+  // so ties (a click inside two overlapping shapes) fall to the topmost.
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i];
-    if (it.type === 'stroke') {
-      const tol = Math.max(8, it.width + 4);
-      for (let s = 0; s < it.points.length - 1; s++) {
-        if (distToSegment(p, it.points[s], it.points[s + 1]) <= tol) return it;
-      }
-      if (it.points.length === 1 && Math.hypot(p.x - it.points[0].x, p.y - it.points[0].y) <= 10) return it;
-      // A closed stroke (the beak triangle) is a filled area: clicking
-      // inside it selects it, not only on its outline.
-      if (isClosedStroke(it) && pointInPolygon(p, it.points)) return it;
-    } else if (it.type === 'shape') {
-      // Inside the filled area, not just the bounding box: a click in a
-      // bbox corner outside the ellipse must not select it.
-      const pad = it.width / 2 + 2;
-      if (it.kind === 'rect') {
-        if (p.x >= it.x - pad && p.x <= it.x + it.w + pad && p.y >= it.y - pad && p.y <= it.y + it.h + pad) return it;
-      } else {
-        const cx = it.x + it.w / 2, cy = it.y + it.h / 2;
-        const rx = Math.abs(it.w) / 2 + pad, ry = Math.abs(it.h) / 2 + pad;
-        if (rx > 0 && ry > 0 && (((p.x - cx) ** 2) / (rx * rx) + ((p.y - cy) ** 2) / (ry * ry)) <= 1) return it;
-      }
-    } else {
-      const b = itemBBox(it);
-      if (p.x >= b.x - 4 && p.x <= b.x + b.w + 4 && p.y >= b.y - 4 && p.y <= b.y + b.h + 4) return it;
-    }
+    const q = motionAdjustedPoint(it, p, t01);
+    const { d, tol } = hitDistance(it, q);
+    if (d <= tol && d < bestD - 1e-9) { best = it; bestD = d; }
   }
-  return null;
+  return best;
 }
 function hexToRgba(hex: string, alpha: number): string {
   const r = parseInt(hex.slice(1, 3), 16);
@@ -1574,7 +1633,32 @@ function drawGraph(cv: HTMLCanvasElement, layer: BehaviourLayer, ctx: LayerCtx):
   g.stroke();
 }
 
+// The panel rebuilds its DOM on every render, which drops the scroll
+// position: rebuilding while scrolled clamps scrollTop to 0 (and the
+// clamp's scroll event closes the Add picker). Keep the scroll where it
+// was when the same stack is still showing; a different stack (another
+// part, a group, the Canvas panel) starts at the top. After adding a
+// behaviour, scroll the new layer into view.
+let lastPanelKey = '';
+let scrollToLayerId: string | null = null;
 function renderPanel(): void {
+  const grp = selectedItemGroup();
+  const sel = selected();
+  const key = panelView + '|' + (grp ? 'g:' + grp.id : sel ? 'i:' + sel.id : selectedIds.length >= 2 ? 'm:' + selectedIds.join(',') : 'canvas');
+  const st = panelBody.scrollTop;
+  renderPanelInner();
+  panelBody.scrollTop = key === lastPanelKey ? st : 0;
+  lastPanelKey = key;
+  if (scrollToLayerId) {
+    const el = panelBody.querySelector(`[data-layer-id="${scrollToLayerId}"]`);
+    if (el) (el as HTMLElement).scrollIntoView({ block: 'nearest' });
+    scrollToLayerId = null;
+  }
+  // The picker is anchored to the Add button's rect, which moves when
+  // the scroll is restored — re-anchor it after the scroll settles.
+  if (addPickerOpen) reanchorAddPicker();
+}
+function renderPanelInner(): void {
   syncUndoButtons();
   closeAddPickerEl();
   closeExportDropdownEl();
@@ -2017,16 +2101,19 @@ function removeBehaviourLayer(host: LayerHost, layerId: string): void {
 // has no stash: it always starts at the defaults.
 function addBehaviour(host: LayerHost, b: number): void {
   pushHistory();
+  let layer: BehaviourLayer;
   if (host.kind === 'group') {
-    host.group.layers.push(newLayer(b));
+    layer = newLayer(b);
+    host.group.layers.push(layer);
   } else {
     const stashed = host.item.stash[b];
-    const layer = stashed
+    layer = stashed
       ? { id: nid(), behaviour: b, ...stashed }
       : newLayer(b);
     if (stashed) delete host.item.stash[b];
     host.item.layers.push(layer);
   }
+  scrollToLayerId = layer.id;
   addPickerOpen = false;
   save();
   renderPanel();
@@ -2060,6 +2147,16 @@ function renderAddPicker(anchorBtn: HTMLElement, host: LayerHost): void {
     pop.appendChild(row);
   }
   document.body.appendChild(pop);
+  reanchorAddPicker();
+}
+
+// The picker is positioned from the Add button's rect; the panel's
+// scroll moves that rect, so the position is re-applied after any
+// scroll restore (see renderPanel).
+function reanchorAddPicker(): void {
+  const pop = document.querySelector('.add-picker') as HTMLElement | null;
+  const anchorBtn = document.querySelector('.add-btn') as HTMLElement | null;
+  if (!pop || !anchorBtn) return;
   const r = anchorBtn.getBoundingClientRect();
   const w = pop.offsetWidth;
   const h = pop.offsetHeight;
@@ -2795,11 +2892,14 @@ canvas.addEventListener('pointerup', (e) => {
   if (drag.kind === 'marquee') {
     if (drag.moved && marquee) {
       // Select every item the rectangle touches, individually —
-      // regardless of groups.
+      // regardless of groups. The rectangle is drawn over what the
+      // user sees, so items are tested by their rendered (animated)
+      // bbox, not their stored one.
+      const t01 = playTime / loopMs();
       const x0 = Math.min(marquee.x0, marquee.x1), x1 = Math.max(marquee.x0, marquee.x1);
       const y0 = Math.min(marquee.y0, marquee.y1), y1 = Math.max(marquee.y0, marquee.y1);
       selectedIds = items.filter((it) => {
-        const b = itemBBox(it);
+        const b = renderedBBox(it, t01);
         return b.x < x1 && b.x + b.w > x0 && b.y < y1 && b.y + b.h > y0;
       }).map((it) => it.id);
     } else {
@@ -2863,7 +2963,9 @@ function eraseAt(p: Pt): boolean {
       if (p.x >= b.x - radius && p.x <= b.x + b.w + radius && p.y >= b.y - radius && p.y <= b.y + b.h + radius) {
         items.splice(i, 1);
         if (selectedIds.includes(it.id)) selectedIds = selectedIds.filter((id) => id !== it.id);
-        for (const l of it.layers) smoothed.delete(l.id);
+        // The erased layers' eased amplitudes stay in `smoothed`: undo
+        // restores this item, and its pose must come back exactly
+        // instead of re-easing from 0.
         changed = true;
       }
       continue;
@@ -2902,7 +3004,9 @@ function eraseAt(p: Pt): boolean {
       base.stash = JSON.parse(JSON.stringify(it.stash)) as ItemBase['stash'];
       return { ...base, type: 'stroke', points: run };
     });
-    for (const l of it.layers) smoothed.delete(l.id);
+    // The old layers' eased amplitudes stay (see above): split pieces
+    // get fresh layer ids, and undo of the erase restores the original
+    // item at its exact pose.
     items.splice(i, 1, ...replacements);
     if (selectedIds.includes(it.id)) {
       selectedIds = selectedIds.filter((id) => id !== it.id).concat(replacements.map((r) => r.id));
