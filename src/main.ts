@@ -900,8 +900,7 @@ function updateEraserRing(clientX: number, clientY: number, show: boolean): void
     eraserRingEl.style.display = 'none';
     return;
   }
-  const rect = canvas.getBoundingClientRect();
-  const scale = rect.width / stageSize().w;
+  const scale = workspaceLayout().s;
   const d = penWidth * 2 * scale;
   eraserRingEl.style.display = 'block';
   eraserRingEl.style.width = `${d}px`;
@@ -1144,23 +1143,40 @@ function behaviourValue(it: Item, layer: BehaviourLayer, t01: number): number {
 }
 
 // ---------- render ----------
-function resizeCanvas(): void {
-  canvas.style.background = stageBgValue();
+// Workspace layout: the canvas covers the whole centre area; the stage
+// is a card inside it, scaled to fit (s <= 1) and centred. Items live
+// in stage coordinates (origin at the stage's top-left), so a point in
+// the workspace maps to stage coords by subtracting the stage origin
+// and dividing by the scale; outside the stage that gives negative or
+// over-size coordinates, which is exactly where pasteboard items sit.
+type WorkspaceLayout = { s: number; ox: number; oy: number; cw: number; ch: number };
+function workspaceLayout(): WorkspaceLayout {
+  const cw = stageWrap.clientWidth, ch = stageWrap.clientHeight;
   const { w, h } = stageSize();
+  const s = Math.min(1, cw / w, ch / h) || 1; // 0-size wrap (pre-layout) falls back to 1
+  return { s, ox: (cw - w * s) / 2, oy: (ch - h * s) / 2, cw, ch };
+}
+function roundRectPath(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
+  const rr = Math.min(r, w / 2, h / 2);
+  c.beginPath();
+  c.moveTo(x + rr, y);
+  c.lineTo(x + w - rr, y);
+  c.arcTo(x + w, y, x + w, y + rr, rr);
+  c.lineTo(x + w, y + h - rr);
+  c.arcTo(x + w, y + h, x + w - rr, y + h, rr);
+  c.lineTo(x + rr, y + h);
+  c.arcTo(x, y + h, x, y + h - rr, rr);
+  c.lineTo(x, y + rr);
+  c.arcTo(x, y, x + rr, y, rr);
+  c.closePath();
+}
+function resizeCanvas(): void {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-  canvas.width = Math.round(w * dpr);
-  canvas.height = Math.round(h * dpr);
-  canvas.style.width = `${w}px`;
-  canvas.style.height = `${h}px`;
-  canvas.style.maxWidth = '100%';
-  canvas.style.maxHeight = '100%';
-  const area = document.getElementById('stage-area')!;
-  const aw = area.clientWidth - 48, ah = area.clientHeight - 48;
-  const s = Math.min(1, aw / w, ah / h);
-  if (s < 1) {
-    canvas.style.width = `${Math.floor(w * s)}px`;
-    canvas.style.height = `${Math.floor(h * s)}px`;
-  }
+  const { cw, ch } = workspaceLayout();
+  canvas.width = Math.max(1, Math.round(cw * dpr));
+  canvas.height = Math.max(1, Math.round(ch * dpr));
+  canvas.style.width = `${cw}px`;
+  canvas.style.height = `${ch}px`;
 }
 // Focus alpha: the focused part renders full, everything else at 0.1
 // (faintly visible, not hidden). A dangling id (item deleted/undone away)
@@ -1231,14 +1247,49 @@ function drawItem(c: CanvasRenderingContext2D, it: Item, t01: number, applyFocus
 function renderFrame(t01: number, target: CanvasRenderingContext2D = ctx, dprOverride?: number): void {
   const { w, h } = stageSize();
   const dpr = dprOverride ?? Math.min(2, window.devicePixelRatio || 1);
+  const onScreen = target === ctx;
+  // On screen the stage is a card inside the workspace (origin ox/oy,
+  // scale s); offscreen targets are exactly stage-sized, so the stage
+  // sits at the origin at full scale — that is the export crop:
+  // anything outside the stage rect simply falls off the canvas.
+  const L = onScreen ? workspaceLayout() : { s: 1, ox: 0, oy: 0, cw: w, ch: h };
   target.save();
-  target.scale(dpr, dpr);
-  target.clearRect(0, 0, w, h);
-  target.fillStyle = stageBgValue();
-  target.fillRect(0, 0, w, h);
+  target.setTransform(dpr, 0, 0, dpr, 0, 0);
+  target.clearRect(0, 0, L.cw, L.ch);
+  if (onScreen) {
+    // The workspace itself is painted on the canvas (not left to the
+    // CSS behind it), so the bitmap is self-contained: the grey
+    // workspace, the stage card on it, and items anywhere in it.
+    target.fillStyle = '#f5f5f7';
+    target.fillRect(0, 0, L.cw, L.ch);
+    // The stage card: stage background, soft shadow, hairline border,
+    // 14px radius (var(--radius)). Drawn in workspace pixels, before
+    // the items — a part straddling the edge paints over the border
+    // where it crosses, like paper overlapping a sheet's edge.
+    target.save();
+    target.shadowColor = 'rgba(0,0,0,0.08)';
+    target.shadowBlur = 16;
+    target.shadowOffsetY = 4;
+    target.fillStyle = stageBgValue();
+    roundRectPath(target, L.ox, L.oy, w * L.s, h * L.s, 14);
+    target.fill();
+    target.restore();
+    target.strokeStyle = 'rgba(0,0,0,0.08)';
+    target.lineWidth = 1;
+    roundRectPath(target, L.ox, L.oy, w * L.s, h * L.s, 14);
+    target.stroke();
+  } else {
+    target.fillStyle = stageBgValue();
+    target.fillRect(0, 0, w, h);
+  }
+  // From here on, stage coordinates: items, grid and selection all
+  // live in stage space, on screen and off.
+  target.translate(L.ox, L.oy);
+  target.scale(L.s, L.s);
   // The grid is a drawing/composition overlay: it renders on the
-  // on-screen canvas only, never in exports (offscreen targets).
-  if (target === ctx && gridMode !== 'empty') {
+  // on-screen canvas only, never in exports (offscreen targets), and
+  // only inside the stage rect — its lines are stage coordinates.
+  if (onScreen && gridMode !== 'empty') {
     const gridCol = stageBgId === 'ink' ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.08)';
     if (gridMode === 'grid') {
       const step = 24;
@@ -2258,10 +2309,21 @@ function renderColourPanel(): void {
 }
 
 // ---------- pointer ----------
+// Pointer to stage coordinates: the canvas covers the whole workspace,
+// so subtract the stage origin and divide by the stage scale. Points
+// outside the stage map to negative or over-size stage coordinates —
+// that is where pasteboard items live. Clamped to the workspace rect,
+// so a drag (which keeps firing under pointer capture) cannot carry an
+// item out of the visible centre area, under the toolbar, panel or
+// player.
 function stagePoint(e: { clientX: number; clientY: number }): Pt {
   const rect = canvas.getBoundingClientRect();
-  const { w, h } = stageSize();
-  return { x: ((e.clientX - rect.left) / rect.width) * w, y: ((e.clientY - rect.top) / rect.height) * h };
+  const { s, ox, oy, cw, ch } = workspaceLayout();
+  const x = (e.clientX - rect.left - ox) / s;
+  const y = (e.clientY - rect.top - oy) / s;
+  const minX = -ox / s, maxX = (cw - ox) / s;
+  const minY = -oy / s, maxY = (ch - oy) / s;
+  return { x: Math.max(minX, Math.min(maxX, x)), y: Math.max(minY, Math.min(maxY, y)) };
 }
 let drag: {
   kind: 'brush' | 'shape' | 'select' | 'erase';
@@ -2345,7 +2407,8 @@ canvas.addEventListener('pointermove', (e) => {
   } else if (drag.kind === 'select' && drag.item) {
     const dx = p.x - drag.last.x, dy = p.y - drag.last.y;
     if (dx !== 0 || dy !== 0) drag.moved = true;
-    moveItem(drag.item, dx, dy);
+    const c = clampMove(drag.item, dx, dy);
+    moveItem(drag.item, c.dx, c.dy);
     drag.last = p;
   }
 });
@@ -2372,9 +2435,15 @@ canvas.addEventListener('pointerup', (e) => {
 });
 // Paint bucket: a shape fills solid with the foreground colour;
 // a stroke or text is recoloured; empty stage fills the stage
-// background with the foreground colour. Undo restores it.
+// background with the foreground colour. Clicking empty workspace
+// outside the stage does nothing — the bucket fills the stage, not
+// the pasteboard. Undo restores it.
 function paintAt(p: Pt): void {
   const hit = hitTest(p);
+  if (!hit) {
+    const { w, h } = stageSize();
+    if (p.x < 0 || p.x > w || p.y < 0 || p.y > h) return;
+  }
   pushHistory();
   if (!hit) {
     stageBgCustom = color;
@@ -2461,14 +2530,34 @@ function moveItem(it: Item, dx: number, dy: number): void {
   else if (it.type === 'shape') { it.x += dx; it.y += dy; }
   else { it.x += dx; it.y += dy; }
 }
+// A dragged part stays inside the visible workspace: clamp the move so
+// its bounding box never crosses the workspace edge (under the toolbar,
+// panel or player). The stage itself is inside the workspace, so parts
+// can still straddle the stage edge freely.
+function clampMove(it: Item, dx: number, dy: number): { dx: number; dy: number } {
+  const { s, ox, oy, cw, ch } = workspaceLayout();
+  const minX = -ox / s, maxX = (cw - ox) / s;
+  const minY = -oy / s, maxY = (ch - oy) / s;
+  const b = itemBBox(it);
+  let cx = dx, cy = dy;
+  if (b.x + cx < minX) cx = minX - b.x;
+  if (b.x + b.w + cx > maxX) cx = maxX - (b.x + b.w);
+  if (b.y + cy < minY) cy = minY - b.y;
+  if (b.y + b.h + cy > maxY) cy = maxY - (b.y + b.h);
+  return { dx: cx, dy: cy };
+}
 
-// Draw the in-progress shape preview on top of the normal frame.
+// Draw the in-progress shape preview on top of the normal frame,
+// in stage coordinates like everything else.
 function renderWithPreview(t01: number): void {
   renderFrame(t01);
   if (previewShape) {
     const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const L = workspaceLayout();
     ctx.save();
-    ctx.scale(dpr, dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.translate(L.ox, L.oy);
+    ctx.scale(L.s, L.s);
     ctx.strokeStyle = previewShape.color;
     ctx.lineWidth = previewShape.width;
     ctx.setLineDash([5, 4]);
@@ -2505,12 +2594,13 @@ function closeTextEditor(commit: boolean): void {
 }
 function openTextEditor(it: TextItem | null, p: Pt): void {
   if (textSession) closeTextEditor(true);
-  const { w } = stageSize();
-  const rect = canvas.getBoundingClientRect();
-  const scaleX = rect.width / w;
+  // The editor sits in the stage-wrap (the workspace), so position it
+  // by the stage origin and scale — like the text it edits.
+  const L = workspaceLayout();
   textEditor.style.display = 'block';
-  textEditor.style.left = `${(it ? it.x : p.x) * scaleX}px`;
-  textEditor.style.top = `${(it ? it.y - it.size : p.y - 20) * scaleX}px`;
+  textEditor.style.left = `${L.ox + (it ? it.x : p.x) * L.s}px`;
+  textEditor.style.top = `${L.oy + (it ? it.y - it.size : p.y - 20) * L.s}px`;
+  textEditor.style.fontSize = `${20 * L.s}px`;
   textEditor.style.width = '220px';
   textEditor.value = it ? it.text : '';
   textSession = { it, p };

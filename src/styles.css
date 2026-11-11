@@ -248,16 +248,19 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 /* No palette under the double swatches: to change a colour, click a
    swatch and the panel becomes the Colour panel. */
 
-/* Stage: a white card floating on the system background,
-   with air around it. Same pixel sizes as before. */
+/* Workspace (pasteboard): the whole centre area. The stage is a fixed
+   card drawn on the canvas inside it; items live in stage coordinates
+   and may sit anywhere in the workspace, including outside the stage.
+   The canvas fills the area (transparent, no border — the stage card
+   is drawn in renderFrame); the stage-wrap is the positioning context
+   for the canvas and the text editor. */
 #stage-area {
-  flex: 1; min-width: 0; background: var(--bg-system);
-  display: flex; align-items: center; justify-content: center; padding: 24px;
+  flex: 1; min-width: 0; min-height: 0; background: var(--bg-system);
+  display: flex; padding: 24px;
 }
-#stage-wrap { position: relative; line-height: 0; }
+#stage-wrap { flex: 1; min-width: 0; min-height: 0; position: relative; line-height: 0; }
 #stage {
-  background: #fff; border: 1px solid var(--hairline); border-radius: var(--radius);
-  box-shadow: var(--shadow-md);
+  background: transparent; border: none; border-radius: 0; box-shadow: none;
   display: block; touch-action: none; cursor: crosshair;
 }
 #stage.select-cursor { cursor: default; }
