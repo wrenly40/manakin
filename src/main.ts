@@ -1753,6 +1753,7 @@ function renderPanelInner(): void {
   syncUndoButtons();
   closeAddPickerEl();
   closeExportDropdownEl();
+  closeTooltipEl();
   const grp = selectedItemGroup();
   const sel = selected();
   if (panelView !== 'auto' || (!grp && !sel)) addPickerOpen = false;
@@ -2287,6 +2288,7 @@ function renderBehavioursPanel(sel: Item): void {
     panelBody.appendChild(empty);
   }
   if (checkedLayers.size >= 2) {
+    panelBody.appendChild(panelDivider());
     const action = document.createElement('div');
     action.className = 'group-action';
     const btn = document.createElement('button');
@@ -2545,6 +2547,53 @@ function alignSelection(mode: 'left' | 'center' | 'right' | 'top' | 'middle' | '
   return true;
 }
 
+// One shared tooltip for the Arrange/Align hints: a small frosted pill
+// above the hovered button. Custom, not the native `title` (which would
+// double up). Shown after a short hover delay; hidden on mouseleave,
+// click, panel re-render, panel scroll and window resize. A click also
+// suppresses any re-show while the mouse stays put: the action
+// re-renders the panel, which recreates the button under a stationary
+// cursor and would otherwise re-trigger the hover immediately.
+let tooltipTimer: number | null = null;
+let lastTooltipClick = 0;
+function closeTooltipEl(): void {
+  if (tooltipTimer !== null) { window.clearTimeout(tooltipTimer); tooltipTimer = null; }
+  document.querySelector('.tip')?.remove();
+}
+function attachTooltip(btn: HTMLButtonElement, text: string): void {
+  btn.addEventListener('mouseenter', () => {
+    if (btn.disabled) return;
+    closeTooltipEl();
+    tooltipTimer = window.setTimeout(() => {
+      tooltipTimer = null;
+      if (Date.now() - lastTooltipClick < 1000) return;
+      const r = btn.getBoundingClientRect();
+      const tip = document.createElement('div');
+      tip.className = 'tip';
+      tip.textContent = text;
+      document.body.appendChild(tip);
+      const w = tip.offsetWidth;
+      const h = tip.offsetHeight;
+      const left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 8));
+      const above = r.top - 6 - h;
+      tip.style.left = `${left}px`;
+      tip.style.top = `${above >= 8 ? above : r.bottom + 6}px`;
+    }, 400);
+  });
+  btn.addEventListener('mouseleave', () => { closeTooltipEl(); });
+  btn.addEventListener('click', () => { closeTooltipEl(); lastTooltipClick = Date.now(); });
+}
+
+// Hairline divider separating the Arrange/Align block from the
+// Group/Behaviours controls below it — the same hairline as under
+// the section headers.
+function panelDivider(): HTMLDivElement {
+  const d = document.createElement('div');
+  d.className = 'pdiv';
+  d.setAttribute('aria-hidden', 'true');
+  return d;
+}
+
 // Two or more items selected (and not one group): the count and a
 // Group button, in the quiet pill style of "Add behavior".
 function renderArrangeSection(): HTMLDivElement {
@@ -2571,8 +2620,8 @@ function renderArrangeSection(): HTMLDivElement {
     b.type = 'button';
     b.className = 'icon-btn';
     b.innerHTML = ARRANGE_ICONS[i];
-    b.title = d.label;
     b.setAttribute('aria-label', d.label);
+    attachTooltip(b, d.label);
     b.disabled = d.disabled;
     b.addEventListener('click', () => { reorderSelection(d.mode); });
     row.appendChild(b);
@@ -2601,8 +2650,8 @@ function renderAlignSection(): HTMLDivElement {
     b.type = 'button';
     b.className = 'icon-btn';
     b.innerHTML = ALIGN_ICONS[i];
-    b.title = d.label;
     b.setAttribute('aria-label', d.label);
+    attachTooltip(b, d.label);
     b.addEventListener('click', () => { alignSelection(d.mode); });
     row.appendChild(b);
   });
@@ -2617,6 +2666,7 @@ function renderMultiSelectPanel(sel: Item[]): void {
   panelBody.appendChild(count);
   panelBody.appendChild(renderArrangeSection());
   panelBody.appendChild(renderAlignSection());
+  panelBody.appendChild(panelDivider());
   const action = document.createElement('div');
   action.className = 'group-action';
   const btn = document.createElement('button');
@@ -2646,6 +2696,7 @@ function renderItemGroupPanel(group: ItemGroup): void {
     empty.textContent = 'No behaviours';
     panelBody.appendChild(empty);
   }
+  panelBody.appendChild(panelDivider());
   const action = document.createElement('div');
   action.className = 'group-action';
   const btn = document.createElement('button');
@@ -3788,6 +3839,10 @@ panelBody.addEventListener('scroll', () => {
   closeExportDropdownEl();
   renderPanel();
 }, { passive: true });
+// A tooltip is anchored to a button rect that moves with the panel,
+// so it hides on scroll or resize rather than going stale.
+panelBody.addEventListener('scroll', () => { closeTooltipEl(); }, { passive: true });
+window.addEventListener('resize', () => { closeTooltipEl(); });
 window.addEventListener('resize', () => {
   if (!addPickerOpen) return;
   addPickerOpen = false;
