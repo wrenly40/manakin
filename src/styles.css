@@ -382,6 +382,7 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 .group-members { border-left: 1px solid var(--hairline); margin: 4px 0 0 2px; padding-left: 6px; }
 .group-members .blayer:last-child { margin-bottom: 0; }
 .group-action { display: flex; justify-content: center; padding: 14px 0 4px; }
+.sel-count { font-size: 14px; color: var(--ink); margin: 2px 0 10px; }
 /* Empty stack: one live-state line above the Add button. */
 .no-behaviours { font-size: 13px; color: var(--grey); padding: 8px 2px 12px; }
 /* Add behavior: a quiet full-width pill at the bottom of the stack. */

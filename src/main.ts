@@ -157,7 +157,42 @@ function baseItem(color: string, width: number): ItemBase {
 
 // ---------- state ----------
 let items: Item[] = [];
-let selectedId: string | null = null;
+// Item groups: containers of canvas items with their own behaviour
+// layers — distinct from BehaviourGroup (v9, per-item collections of
+// behaviour layers). Flat only, no nesting, no groups in groups.
+type ItemGroup = {
+  id: string;
+  memberIds: string[]; // item ids; a group has at least 2 members
+  layers: BehaviourLayer[]; // the group's own behaviour stack, applied to every member
+};
+let itemGroups: ItemGroup[] = [];
+// Ordered selection; empty = nothing selected. A click on a group
+// member selects the whole group; shift-click toggles one item.
+let selectedIds: string[] = [];
+function selectedItems(): Item[] {
+  return selectedIds.map((id) => items.find((i) => i.id === id)).filter((i): i is Item => !!i);
+}
+// The single selected item, or null for a multi-selection / none.
+// Single-item call sites (delete, text edit, behaviour panel) use this.
+function selected(): Item | null {
+  const s = selectedItems();
+  return s.length === 1 ? s[0] : null;
+}
+// The item group whose members are exactly the selection, if any.
+function selectedItemGroup(): ItemGroup | null {
+  if (selectedIds.length < 2) return null;
+  const set = new Set(selectedIds);
+  return itemGroups.find((g) => g.memberIds.length === set.size && g.memberIds.every((m) => set.has(m))) ?? null;
+}
+function itemGroupOf(itemId: string): ItemGroup | undefined {
+  return itemGroups.find((g) => g.memberIds.includes(itemId));
+}
+// An item leaving the document leaves its item groups too; a group
+// left with fewer than 2 members dissolves and its layers are deleted.
+function pruneItemGroups(): void {
+  for (const g of itemGroups) g.memberIds = [...new Set(g.memberIds.filter((m) => items.some((i) => i.id === m)))];
+  itemGroups = itemGroups.filter((g) => g.memberIds.length >= 2);
+}
 // Double-click focus (view state only — never saved, never an undo entry):
 // the focused part renders full, every other part at 0.1.
 let focusedId: string | null = null;
@@ -208,9 +243,6 @@ function stageSize(): { w: number; h: number } {
   const s = STAGES.find((s) => s.id === stageId) ?? STAGES[0];
   return { w: s.w, h: s.h };
 }
-function selected(): Item | null {
-  return items.find((i) => i.id === selectedId) ?? null;
-}
 function stageBgValue(): string {
   if (stageBgId === 'custom' && stageBgCustom) return stageBgCustom;
   return STAGE_BGS.find((b) => b.id === stageBgId)?.value ?? '#ffffff';
@@ -226,17 +258,17 @@ function pushRecent(hex: string): void {
 function save(): void {
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
-      items, stageId, projectName, stageBgId, stageBgCustom, gridMode, panelOpen,
+      items, itemGroups, stageId, projectName, stageBgId, stageBgCustom, gridMode, panelOpen,
       fg: color, bg: bgColour, penWidth, recent: recentColours, saved: savedColours,
       videoFormat,
     }));
   } catch { /* storage full or unavailable */ }
 }
 function snapshot(): string {
-  // The whole document state: items, stage size, background and grid.
-  // Tool settings (pen width, colours, project name) are not document
-  // state and stay out of undo.
-  return JSON.stringify({ items, stageId, stageBgId, stageBgCustom, gridMode });
+  // The whole document state: items, item groups, stage size,
+  // background and grid. Tool settings (pen width, colours, project
+  // name) are not document state and stay out of undo.
+  return JSON.stringify({ items, itemGroups, stageId, stageBgId, stageBgCustom, gridMode });
 }
 function pushHistory(): void {
   history.push(snapshot());
@@ -274,12 +306,14 @@ function restore(json: string): void {
     const data = JSON.parse(json) as unknown;
     if (Array.isArray(data)) {
       items = data as Item[];
+      itemGroups = [];
     } else if (data && typeof data === 'object') {
       const d = data as {
-        items?: Item[]; stageId?: typeof stageId; stageBgId?: StageBgId;
+        items?: Item[]; itemGroups?: unknown; stageId?: typeof stageId; stageBgId?: StageBgId;
         stageBgCustom?: string | null; gridMode?: unknown;
       };
       if (Array.isArray(d.items)) items = d.items;
+      itemGroups = migrateItemGroups(d.itemGroups);
       if (d.stageId === 'wide' || d.stageId === 'square' || d.stageId === 'portrait') stageId = d.stageId;
       if (d.stageBgId) stageBgId = d.stageBgId;
       stageBgCustom = typeof d.stageBgCustom === 'string' ? d.stageBgCustom : null;
@@ -288,7 +322,8 @@ function restore(json: string): void {
     }
   } catch { /* corrupted history entry: keep current items */ }
   items.forEach(migrateItem); // undo snapshots from older saves may lack the newer parameter fields
-  if (selectedId && !items.some((i) => i.id === selectedId)) selectedId = null;
+  pruneItemGroups();
+  selectedIds = selectedIds.filter((id) => items.some((i) => i.id === id));
   smoothed.clear();
   save();
   resizeCanvas();
@@ -379,49 +414,85 @@ function dropLegacy(anyIt: Record<string, unknown>): void {
   delete anyIt.wanderSmooth;
 }
 
+function clampNum(v: unknown, min: number, max: number, dflt: number): number {
+  return (typeof v === 'number' && Number.isFinite(v)) ? Math.min(max, Math.max(min, v)) : dflt;
+}
+// Merge saved params with the current defaults, clamping them. Migration
+// is keyed on FIELD PRESENCE: an old save stores percents under `amount`
+// (66 = 66%) and `phase` (50 = half a loop) and a continuous `speed`,
+// while a new save stores fractions under `amplitude`/`offset` and a
+// stepped `tempo` — so an old amount of 1 (1%) and a new amplitude of 1
+// (full) are told apart by the field name, never by the value.
+function cleanParams(p: Partial<LayerParams>): LayerParams {
+  const legacy = p as Partial<LayerParams> & { amount?: unknown; phase?: unknown; speed?: unknown };
+  return {
+    on: typeof p.on === 'boolean' ? p.on : true,
+    tempo: typeof p.tempo === 'number' ? snapTempo(p.tempo) : (typeof legacy.speed === 'number' ? snapTempo(legacy.speed) : 1),
+    amplitude: typeof p.amplitude === 'number'
+      ? clampNum(p.amplitude, 0, 1, 0.66)
+      : clampNum(legacy.amount, 0, 100, 66) / 100,
+    offset: typeof p.offset === 'number'
+      ? clampNum(p.offset, 0, 1, 0)
+      : clampNum(legacy.phase, 0, 100, 0) / 100,
+    blinkDuration: clampNum(p.blinkDuration, 10, 60, 26),
+    spinReverse: p.spinReverse === true,
+    wanderSmooth: clampNum(p.wanderSmooth, 0, 100, 50),
+  };
+}
+// Validate a saved layer stack in place: drop layers with a bad
+// behaviour index, give missing/duplicate ids fresh ones, clean params.
+function cleanLayerArray(raw: unknown): BehaviourLayer[] {
+  if (!Array.isArray(raw)) return [];
+  const seenIds = new Set<string>();
+  const clean: BehaviourLayer[] = [];
+  for (const r of raw as unknown[]) {
+    const l = (r ?? {}) as Partial<BehaviourLayer>;
+    if (typeof l.behaviour !== 'number' || !Number.isInteger(l.behaviour) || l.behaviour < 0 || l.behaviour >= BEHAVIOURS.length) continue;
+    let id = typeof l.id === 'string' && l.id ? l.id : nid();
+    if (seenIds.has(id)) id = nid();
+    seenIds.add(id);
+    clean.push({ id, behaviour: l.behaviour, ...cleanParams(l) });
+  }
+  return clean;
+}
+// An item group survives a load only when at least 2 of its members
+// still exist; its layers are cleaned like an item's stack.
+function migrateItemGroup(raw: unknown): ItemGroup | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const g = raw as Partial<ItemGroup>;
+  const memberIds = (Array.isArray(g.memberIds) ? g.memberIds : [])
+    .filter((m): m is string => typeof m === 'string' && items.some((i) => i.id === m));
+  const unique = [...new Set(memberIds)];
+  if (unique.length < 2) return null;
+  return {
+    id: typeof g.id === 'string' && g.id ? g.id : nid(),
+    memberIds: unique,
+    layers: cleanLayerArray(g.layers),
+  };
+}
+function migrateItemGroups(raw: unknown): ItemGroup[] {
+  if (!Array.isArray(raw)) return [];
+  const seenIds = new Set<string>();
+  const out: ItemGroup[] = [];
+  for (const r of raw as unknown[]) {
+    const g = migrateItemGroup(r);
+    if (!g) continue;
+    if (seenIds.has(g.id)) g.id = nid();
+    seenIds.add(g.id);
+    out.push(g);
+  }
+  return out;
+}
+
 function migrateItem(it: Item): void {
   const anyIt = it as unknown as Record<string, unknown>;
-  const clampNum = (v: unknown, min: number, max: number, dflt: number): number =>
-    (typeof v === 'number' && Number.isFinite(v)) ? Math.min(max, Math.max(min, v)) : dflt;
-  // Merge saved params with the current defaults, clamping them. Migration
-  // is keyed on FIELD PRESENCE: an old save stores percents under `amount`
-  // (66 = 66%) and `phase` (50 = half a loop) and a continuous `speed`,
-  // while a new save stores fractions under `amplitude`/`offset` and a
-  // stepped `tempo` — so an old amount of 1 (1%) and a new amplitude of 1
-  // (full) are told apart by the field name, never by the value.
-  const cleanParams = (p: Partial<LayerParams>): LayerParams => {
-    const legacy = p as Partial<LayerParams> & { amount?: unknown; phase?: unknown; speed?: unknown };
-    return {
-      on: typeof p.on === 'boolean' ? p.on : true,
-      tempo: typeof p.tempo === 'number' ? snapTempo(p.tempo) : (typeof legacy.speed === 'number' ? snapTempo(legacy.speed) : 1),
-      amplitude: typeof p.amplitude === 'number'
-        ? clampNum(p.amplitude, 0, 1, 0.66)
-        : clampNum(legacy.amount, 0, 100, 66) / 100,
-      offset: typeof p.offset === 'number'
-        ? clampNum(p.offset, 0, 1, 0)
-        : clampNum(legacy.phase, 0, 100, 0) / 100,
-      blinkDuration: clampNum(p.blinkDuration, 10, 60, 26),
-      spinReverse: p.spinReverse === true,
-      wanderSmooth: clampNum(p.wanderSmooth, 0, 100, 50),
-    };
-  };
   // New format: layers are instances with ids (an empty array is a valid
   // empty stack). Just validate, in place.
   const layersAreInstances = Array.isArray(it.layers) &&
     (it.layers.length === 0 || (typeof it.layers[0] === 'object' && it.layers[0] !== null));
   if (layersAreInstances) {
-    const seenIds = new Set<string>();
-    const clean: BehaviourLayer[] = [];
-    for (const raw of it.layers as unknown[]) {
-      const l = (raw ?? {}) as Partial<BehaviourLayer>;
-      if (typeof l.behaviour !== 'number' || !Number.isInteger(l.behaviour) || l.behaviour < 0 || l.behaviour >= BEHAVIOURS.length) continue;
-      let id = typeof l.id === 'string' && l.id ? l.id : nid();
-      if (seenIds.has(id)) id = nid();
-      seenIds.add(id);
-      clean.push({ id, behaviour: l.behaviour, ...cleanParams(l) });
-    }
-    it.layers = clean;
-    const ids = new Set(clean.map((l) => l.id));
+    it.layers = cleanLayerArray(it.layers);
+    const ids = new Set(it.layers.map((l) => l.id));
     const seenMember = new Set<string>();
     it.groups = (Array.isArray(it.groups) ? it.groups : []).map((raw) => {
       const g = (raw ?? {}) as Partial<BehaviourGroup>;
@@ -546,7 +617,7 @@ function load(): void {
     const raw = localStorage.getItem(SAVE_KEY);
     if (raw) {
       const data = JSON.parse(raw) as {
-        items: Item[]; stageId: typeof stageId; projectName?: string;
+        items: Item[]; itemGroups?: unknown; stageId: typeof stageId; projectName?: string;
         stageBgId?: StageBgId; stageBgCustom?: string | null; gridMode?: unknown; panelOpen?: boolean;
         fg?: string; bg?: string; penWidth?: number; recent?: string[]; saved?: string[];
         videoFormat?: unknown;
@@ -554,6 +625,7 @@ function load(): void {
       if (Array.isArray(data.items) && data.items.length > 0) {
         items = data.items;
         items.forEach(migrateItem);
+        itemGroups = migrateItemGroups(data.itemGroups);
         if (data.stageId) stageId = data.stageId;
         if (typeof data.projectName === 'string' && data.projectName.trim()) projectName = data.projectName;
         if (data.stageBgId && (STAGE_BGS.some((b) => b.id === data.stageBgId) || data.stageBgId === 'custom')) stageBgId = data.stageBgId;
@@ -1055,10 +1127,18 @@ function amplitudeScale(a: number): number {
 // — all effective tempos are powers of two, so every ratio is an integer.
 function minContributingTempo(): number | null {
   let min: number | null = null;
+  const consider = (tempo: number): void => {
+    if (min === null || tempo < min) min = tempo;
+  };
   for (const it of items) for (const layer of it.layers) {
     if (!effActive(it, layer) || layer.amplitude <= 0) continue;
-    const t = effTempo(it, layer);
-    if (min === null || t < min) min = t;
+    consider(effTempo(it, layer));
+  }
+  // An item group's layers count like any other contributing behaviour:
+  // they stand alone (no behaviour group to fold in).
+  for (const g of itemGroups) for (const layer of g.layers) {
+    if (!layer.on || layer.amplitude <= 0) continue;
+    consider(layer.tempo);
   }
   return min;
 }
@@ -1066,11 +1146,12 @@ function loopMs(): number {
   const min = minContributingTempo();
   return min === null ? BASE_CYCLE_MS : BASE_CYCLE_MS / min;
 }
-// Whole number of cycles an instance completes in one loop. The cycle
-// math uses this, so the pose at the wrap equals the pose at the start.
-function loopCycles(it: Item, layer: BehaviourLayer): number {
+// Whole number of cycles an instance at this tempo completes in one
+// loop. The cycle math uses this, so the pose at the wrap equals the
+// pose at the start.
+function loopCyclesTempo(tempo: number): number {
   const min = minContributingTempo();
-  return min === null ? 1 : effTempo(it, layer) / min;
+  return min === null ? 1 : tempo / min;
 }
 function smoothedAmp(layer: BehaviourLayer, target: number): number {
   const cur = smoothed.get(layer.id) ?? 0;
@@ -1111,30 +1192,80 @@ function wanderTerms(layer: BehaviourLayer, cycles: number, t01: number): { x: n
     y: Math.sin(twoPi * cycles * t01 + 1.3 + ph) + j * Math.sin(twoPi * 3 * cycles * t01 + 2.1 + ph),
   };
 }
-function motionFor(it: Item, t01: number): Motion {
+// A layer's effective parameters, resolved through a context: an
+// item's layers fold in their behaviour group (v9); an item group's
+// layers stand alone. Motion and graphs read through the same context,
+// so the two agree.
+type LayerCtx = {
+  tempo: (l: BehaviourLayer) => number;
+  amplitude: (l: BehaviourLayer) => number;
+  active: (l: BehaviourLayer) => boolean;
+};
+function itemCtx(it: Item): LayerCtx {
+  return { tempo: (l) => effTempo(it, l), amplitude: (l) => effAmplitude(it, l), active: (l) => effActive(it, l) };
+}
+function groupCtx(): LayerCtx {
+  return { tempo: (l) => l.tempo, amplitude: (l) => l.amplitude, active: (l) => l.on };
+}
+// A behaviour stack lives on an item or on an item group. The panel's
+// layer cards work on either; behaviour groups (v9) only exist on items.
+type LayerHost = { kind: 'item'; item: Item } | { kind: 'group'; group: ItemGroup };
+function hostLayers(h: LayerHost): BehaviourLayer[] {
+  return h.kind === 'item' ? h.item.layers : h.group.layers;
+}
+function hostCtx(h: LayerHost): LayerCtx {
+  return h.kind === 'item' ? itemCtx(h.item) : groupCtx();
+}
+function hostFindLayer(h: LayerHost, id: string): BehaviourLayer | undefined {
+  return hostLayers(h).find((l) => l.id === id);
+}
+function motionForLayers(layers: BehaviourLayer[], ctx: LayerCtx, t01: number): Motion {
   const twoPi = Math.PI * 2;
   let dx = 0, dy = 0, scale = 1, rot = 0, opacity = 1;
-  for (const layer of it.layers) {
-    const a = smoothedAmp(layer, effActive(it, layer) ? 1 : 0);
+  for (const layer of layers) {
+    const a = smoothedAmp(layer, ctx.active(layer) ? 1 : 0);
     if (a < 0.01) continue;
-    const cycles = loopCycles(it, layer);
-    const am = amplitudeScale(effAmplitude(it, layer));
+    const cycles = loopCyclesTempo(ctx.tempo(layer));
+    const am = amplitudeScale(ctx.amplitude(layer));
     const ph = twoPi * cycles * t01 + twoPi * layer.offset; // Offset shifts the motion within its own cycle
     if (layer.behaviour === 0) dy += a * am * 16 * Math.sin(ph); // Bob
     if (layer.behaviour === 1) dx += a * am * 16 * Math.sin(ph + Math.PI / 2); // Sway
     if (layer.behaviour === 2) scale += a * am * 0.08 * Math.sin(ph); // Breathe
-    if (layer.behaviour === 3) opacity -= a * effAmplitude(it, layer) * blinkPulse(ph, layer.blinkDuration); // Blink: depth is the amplitude (0 = never closes, 1 = fully shut)
+    if (layer.behaviour === 3) opacity -= a * ctx.amplitude(layer) * blinkPulse(ph, layer.blinkDuration); // Blink: depth is the amplitude (0 = never closes, 1 = fully shut)
     if (layer.behaviour === 4) rot += (layer.spinReverse ? -1 : 1) * a * am * 0.35 * Math.sin(ph); // Spin
     if (layer.behaviour === 5) { const w = wanderTerms(layer, cycles, t01); dx += a * am * 18 * w.x; dy += a * am * 14 * w.y; } // Wander
   }
   return { dx, dy, scale, rot, opacity: Math.max(0.05, Math.min(1, opacity)) };
 }
+function motionFor(it: Item, t01: number): Motion {
+  return motionForLayers(it.layers, itemCtx(it), t01);
+}
+// An item group's own stack, applied to every member.
+function groupMotion(g: ItemGroup, t01: number): Motion {
+  return motionForLayers(g.layers, groupCtx(), t01);
+}
+// An item's full motion: its own stack superposed with its item
+// group's stack (if any). Offsets and rotation add, scale multiplies,
+// opacity multiplies (both blink).
+function motionForItem(it: Item, t01: number): Motion {
+  const m = motionFor(it, t01);
+  const g = itemGroupOf(it.id);
+  if (!g) return m;
+  const mg = groupMotion(g, t01);
+  return {
+    dx: m.dx + mg.dx,
+    dy: m.dy + mg.dy,
+    scale: m.scale * mg.scale,
+    rot: m.rot + mg.rot,
+    opacity: Math.max(0.05, Math.min(1, m.opacity * mg.opacity)),
+  };
+}
 // Motion value of one layer over the loop, for the layer graph.
 // Reads the same parameters as motionFor, so the graph and the motion agree.
-function behaviourValue(it: Item, layer: BehaviourLayer, t01: number): number {
+function behaviourValue(layer: BehaviourLayer, ctx: LayerCtx, t01: number): number {
   const twoPi = Math.PI * 2;
-  const am = amplitudeScale(effAmplitude(it, layer));
-  const cycles = loopCycles(it, layer);
+  const am = amplitudeScale(ctx.amplitude(layer));
+  const cycles = loopCyclesTempo(ctx.tempo(layer));
   const ph = twoPi * cycles * t01 + twoPi * layer.offset;
   if (layer.behaviour === 3) return am * blinkPulse(ph, layer.blinkDuration); // Blink: the widened pulse itself, not a square wave
   if (layer.behaviour === 4) return (layer.spinReverse ? -1 : 1) * am * Math.sin(ph); // Spin: mirrors when reversed
@@ -1193,7 +1324,7 @@ function focusAlpha(it: Item): number {
 function drawItem(c: CanvasRenderingContext2D, it: Item, t01: number, applyFocus: boolean): void {
   const b = itemBBox(it);
   const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
-  const m = motionFor(it, t01);
+  const m = motionForItem(it, t01);
   c.save();
   c.translate(cx + m.dx, cy + m.dy);
   c.rotate(m.rot);
@@ -1318,15 +1449,21 @@ function renderFrame(t01: number, target: CanvasRenderingContext2D = ctx, dprOve
   }
   for (const it of items) drawItem(target, it, t01, target === ctx);
   const f = validFocus();
-  if (target === ctx && selected() && (f === null || selected()!.id === f)) {
-    const b = itemBBox(selected()!);
-    const m = motionFor(selected()!, t01);
-    target.save();
-    target.setLineDash([5, 4]);
-    target.strokeStyle = '#007aff';
-    target.lineWidth = 1.5;
-    target.strokeRect(b.x + m.dx - 5, b.y + m.dy - 5, b.w + 10, b.h + 10);
-    target.restore();
+  // Every selected item gets its outline (all of them when nothing is
+  // focused; only the focused one while focus is on). The outline
+  // follows the item's full motion, group layers included.
+  if (target === ctx) {
+    for (const it of selectedItems()) {
+      if (f !== null && it.id !== f) continue;
+      const b = itemBBox(it);
+      const m = motionForItem(it, t01);
+      target.save();
+      target.setLineDash([5, 4]);
+      target.strokeStyle = '#007aff';
+      target.lineWidth = 1.5;
+      target.strokeRect(b.x + m.dx - 5, b.y + m.dy - 5, b.w + 10, b.h + 10);
+      target.restore();
+    }
   }
   target.restore();
 }
@@ -1402,7 +1539,7 @@ function paramSlider(opts: {
   return row;
 }
 
-function drawGraph(cv: HTMLCanvasElement, it: Item, layer: BehaviourLayer): void {
+function drawGraph(cv: HTMLCanvasElement, layer: BehaviourLayer, ctx: LayerCtx): void {
   const W = 232, H = 48;
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   cv.width = Math.round(W * dpr);
@@ -1426,7 +1563,7 @@ function drawGraph(cv: HTMLCanvasElement, it: Item, layer: BehaviourLayer): void
   g.beginPath();
   for (let i = 0; i <= N; i++) {
     const t = i / N;
-    const v = behaviourValue(it, layer, t) / maxAmp;
+    const v = behaviourValue(layer, ctx, t) / maxAmp;
     const x = (t * (W - 4)) + 2;
     const y = H / 2 - v * (H / 2 - 5);
     if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
@@ -1437,11 +1574,14 @@ function drawGraph(cv: HTMLCanvasElement, it: Item, layer: BehaviourLayer): void
 function renderPanel(): void {
   syncUndoButtons();
   closeAddPickerEl();
-  if (panelView !== 'auto' || !selected()) addPickerOpen = false;
+  const grp = selectedItemGroup();
+  const sel = selected();
+  if (panelView !== 'auto' || (!grp && !sel)) addPickerOpen = false;
   panelBody.innerHTML = '';
   if (panelView === 'colour') { renderColourPanel(); return; }
-  const sel = selected();
+  if (grp) { renderItemGroupPanel(grp); return; }
   if (sel) { renderBehavioursPanel(sel); return; }
+  if (selectedIds.length >= 2) { renderMultiSelectPanel(selectedItems()); return; }
   renderCanvasPanel();
 }
 
@@ -1476,7 +1616,7 @@ function drawGroupGraph(cv: HTMLCanvasElement, it: Item, group: BehaviourGroup):
   for (let i = 0; i <= N; i++) {
     const t = i / N;
     let v = 0;
-    for (const layer of members) if (effActive(it, layer)) v += behaviourValue(it, layer, t);
+    for (const layer of members) if (effActive(it, layer)) v += behaviourValue(layer, itemCtx(it), t);
     vals.push(v);
   }
   g.strokeStyle = '#1d1d1f';
@@ -1495,8 +1635,8 @@ function drawGroupGraph(cv: HTMLCanvasElement, it: Item, group: BehaviourGroup):
 // instance of a behaviour, each shows its ordinal among instances of that
 // behaviour in stack order — first "Bob", second "Bob 2", third "Bob 3".
 // A lone instance shows just "Bob".
-function layerDisplayName(it: Item, layer: BehaviourLayer): string {
-  const same = it.layers.filter((l) => l.behaviour === layer.behaviour);
+function layerDisplayName(h: LayerHost, layer: BehaviourLayer): string {
+  const same = hostLayers(h).filter((l) => l.behaviour === layer.behaviour);
   if (same.length <= 1) return BEHAVIOURS[layer.behaviour];
   const idx = same.indexOf(layer);
   return idx === 0 ? BEHAVIOURS[layer.behaviour] : `${BEHAVIOURS[layer.behaviour]} ${idx + 1}`;
@@ -1504,12 +1644,13 @@ function layerDisplayName(it: Item, layer: BehaviourLayer): string {
 
 // One behaviour layer row: on/off toggle, name, expand chevron, and — when
 // expanded — its graph plus Tempo/Amplitude/Offset and its own extra controls.
-// Returns the row and its graph canvas (null while collapsed) so a group
-// can redraw member graphs when a group slider moves.
-function behaviourLayer(sel: Item, inst: BehaviourLayer, opts: { checkable: boolean; onParamChange?: () => void }): { layer: HTMLDivElement; graph: HTMLCanvasElement | null } {
+// Works on an item's stack or an item group's stack; the host is what
+// owns the layer. Returns the row and its graph canvas (null while
+// collapsed) so a group can redraw member graphs when a group slider moves.
+function behaviourLayer(host: LayerHost, inst: BehaviourLayer, opts: { checkable: boolean; onParamChange?: () => void }): { layer: HTMLDivElement; graph: HTMLCanvasElement | null } {
   const b = inst.behaviour;
-  const displayName = layerDisplayName(sel, inst);
-  const liveLayer = (): BehaviourLayer | undefined => selected()?.layers.find((l) => l.id === inst.id);
+  const displayName = layerDisplayName(host, inst);
+  const liveLayer = (): BehaviourLayer | undefined => hostFindLayer(host, inst.id);
   const layer = document.createElement('div');
   layer.className = 'blayer' + (expandedLayerId === inst.id ? ' expanded' : '');
   layer.dataset.behaviour = String(b);
@@ -1560,9 +1701,7 @@ function behaviourLayer(sel: Item, inst: BehaviourLayer, opts: { checkable: bool
   remove.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
   remove.addEventListener('click', (e) => {
     e.stopPropagation();
-    const s = selected();
-    if (!s) return;
-    removeBehaviourLayer(s, inst.id);
+    removeBehaviourLayer(host, inst.id);
   });
   const chev = document.createElement('button');
   chev.type = 'button';
@@ -1596,9 +1735,8 @@ function behaviourLayer(sel: Item, inst: BehaviourLayer, opts: { checkable: bool
     graph.setAttribute('aria-label', `${displayName} motion graph`);
     body.appendChild(graph);
     const redraw = (): void => {
-      const s = selected();
-      const l = s?.layers.find((x) => x.id === inst.id);
-      if (s && graph && l) drawGraph(graph, s, l);
+      const l = hostFindLayer(host, inst.id);
+      if (graph && l) drawGraph(graph, l, hostCtx(host));
       opts.onParamChange?.();
     };
     body.appendChild(paramSlider({
@@ -1672,7 +1810,7 @@ function behaviourLayer(sel: Item, inst: BehaviourLayer, opts: { checkable: bool
       }));
     }
     layer.appendChild(body);
-    drawGraph(graph, sel, inst);
+    drawGraph(graph, inst, hostCtx(host));
   }
   return { layer, graph };
 }
@@ -1794,7 +1932,7 @@ function groupLayer(sel: Item, group: BehaviourGroup): HTMLDivElement {
       if (!s) return;
       for (const [id, cv] of memberGraphs) {
         const l = s.layers.find((x) => x.id === id);
-        if (l) drawGraph(cv, s, l);
+        if (l) drawGraph(cv, l, itemCtx(s));
       }
     };
     body.appendChild(paramSlider({
@@ -1816,7 +1954,7 @@ function groupLayer(sel: Item, group: BehaviourGroup): HTMLDivElement {
     for (const memberId of group.members) {
       const member = sel.layers.find((l) => l.id === memberId);
       if (!member) continue;
-      const { layer: mLayer, graph: mGraph } = behaviourLayer(sel, member, {
+      const { layer: mLayer, graph: mGraph } = behaviourLayer({ kind: 'item', item: sel }, member, {
         checkable: false,
         onParamChange: () => redrawGroupGraph(),
       });
@@ -1831,12 +1969,23 @@ function groupLayer(sel: Item, group: BehaviourGroup): HTMLDivElement {
   return layer;
 }
 
-// Remove a layer from the stack. Its parameters are stashed by behaviour,
-// so adding that behaviour again restores them exactly; a later removal of
-// the same behaviour overwrites the stash with the most recently removed
-// instance. Other instances of the same behaviour are untouched.
-// A grouped member leaves its group; an emptied group is removed.
-function removeBehaviourLayer(sel: Item, layerId: string): void {
+// Remove a layer from a stack. On an item its parameters are stashed
+// by behaviour, so adding that behaviour again restores them exactly;
+// a later removal of the same behaviour overwrites the stash with the
+// most recently removed instance. Other instances of the same behaviour
+// are untouched. A grouped member leaves its behaviour group; an
+// emptied behaviour group is removed. An item group's stack has no
+// stash and no behaviour groups: the layer is just gone.
+function removeBehaviourLayer(host: LayerHost, layerId: string): void {
+  if (host.kind === 'group') {
+    pushHistory();
+    host.group.layers = host.group.layers.filter((l) => l.id !== layerId);
+    if (expandedLayerId === layerId) expandedLayerId = null;
+    save();
+    renderPanel();
+    return;
+  }
+  const sel = host.item;
   const layer = sel.layers.find((l) => l.id === layerId);
   if (!layer) return;
   pushHistory();
@@ -1854,18 +2003,23 @@ function removeBehaviourLayer(sel: Item, layerId: string): void {
   renderPanel();
 }
 
-// Add a behaviour to the stack. Always a NEW instance, even when one of
-// that behaviour is already there. A stashed instance (the most recently
-// removed one of this behaviour) restores its parameters; a never-added
-// behaviour starts at the defaults.
-function addBehaviour(sel: Item, b: number): void {
+// Add a behaviour to a stack. Always a NEW instance, even when one of
+// that behaviour is already there. On an item, a stashed instance (the
+// most recently removed one of this behaviour) restores its parameters;
+// a never-added behaviour starts at the defaults. An item group's stack
+// has no stash: it always starts at the defaults.
+function addBehaviour(host: LayerHost, b: number): void {
   pushHistory();
-  const stashed = sel.stash[b];
-  const layer = stashed
-    ? { id: nid(), behaviour: b, ...stashed }
-    : newLayer(b);
-  if (stashed) delete sel.stash[b];
-  sel.layers.push(layer);
+  if (host.kind === 'group') {
+    host.group.layers.push(newLayer(b));
+  } else {
+    const stashed = host.item.stash[b];
+    const layer = stashed
+      ? { id: nid(), behaviour: b, ...stashed }
+      : newLayer(b);
+    if (stashed) delete host.item.stash[b];
+    host.item.layers.push(layer);
+  }
   addPickerOpen = false;
   save();
   renderPanel();
@@ -1880,7 +2034,7 @@ function closeAddPickerEl(): void {
 // enabled: the same behaviour can be added several times, each add
 // creating a new instance. Fixed-position so the panel's scroll cannot
 // clip it; flips above the button when there is no room below.
-function renderAddPicker(anchorBtn: HTMLElement): void {
+function renderAddPicker(anchorBtn: HTMLElement, host: LayerHost): void {
   closeAddPickerEl();
   const pop = document.createElement('div');
   pop.className = 'add-picker';
@@ -1894,9 +2048,7 @@ function renderAddPicker(anchorBtn: HTMLElement): void {
     row.innerHTML = `<span class="layer-icon">${LAYER_ICONS[b]}</span><span class="layer-name">${BEHAVIOURS[b]}</span>`;
     row.addEventListener('click', (e) => {
       e.stopPropagation();
-      const s = selected();
-      if (!s) return;
-      addBehaviour(s, b);
+      addBehaviour(host, b);
     });
     pop.appendChild(row);
   }
@@ -1922,7 +2074,7 @@ function renderBehavioursPanel(sel: Item): void {
   type Entry = { pos: number; render: () => HTMLElement };
   const entries: Entry[] = [];
   for (const layer of sel.layers) {
-    if (!grouped.has(layer.id)) entries.push({ pos: sel.layers.indexOf(layer), render: () => behaviourLayer(sel, layer, { checkable: true }).layer });
+    if (!grouped.has(layer.id)) entries.push({ pos: sel.layers.indexOf(layer), render: () => behaviourLayer({ kind: 'item', item: sel }, layer, { checkable: true }).layer });
   }
   for (const g of sel.groups) {
     const idxs = g.members.map((id) => sel.layers.findIndex((l) => l.id === id)).filter((i) => i >= 0);
@@ -1967,6 +2119,12 @@ function renderBehavioursPanel(sel: Item): void {
   }
   // Add behavior: a quiet pill at the bottom of the stack. Always
   // enabled — adding the same behaviour again creates another instance.
+  panelBody.appendChild(renderAddBehaviourButton({ kind: 'item', item: sel }));
+}
+
+// The Add behavior pill, shared by the item stack and the item-group
+// stack: it opens the picker anchored to the button, for that host.
+function renderAddBehaviourButton(host: LayerHost): HTMLDivElement {
   const wrap = document.createElement('div');
   wrap.className = 'add-wrap';
   const addBtn = document.createElement('button');
@@ -1981,8 +2139,84 @@ function renderBehavioursPanel(sel: Item): void {
     renderPanel();
   });
   wrap.appendChild(addBtn);
-  panelBody.appendChild(wrap);
-  if (addPickerOpen) renderAddPicker(addBtn);
+  if (addPickerOpen) renderAddPicker(addBtn, host);
+  return wrap;
+}
+
+// ---------- item groups (panel) ----------
+// Group the current multi-selection: members leave any existing item
+// groups first; an old group left with fewer than 2 members dissolves
+// and its behaviour layers are deleted with it.
+function groupSelection(): void {
+  if (selectedIds.length < 2) return;
+  pushHistory();
+  const memberIds = [...selectedIds];
+  for (const g of itemGroups) g.memberIds = g.memberIds.filter((m) => !memberIds.includes(m));
+  itemGroups = itemGroups.filter((g) => g.memberIds.length >= 2);
+  itemGroups.push({ id: nid(), memberIds, layers: [] });
+  selectedIds = memberIds;
+  save();
+  renderPanel();
+}
+// Ungroup deletes the group and its behaviour layers only — members
+// keep their own layers, positions and behaviours, and stay selected
+// as a multi-selection afterwards.
+function ungroupItemGroup(group: ItemGroup): void {
+  pushHistory();
+  const members = [...group.memberIds];
+  itemGroups = itemGroups.filter((g) => g.id !== group.id);
+  selectedIds = members.filter((id) => items.some((i) => i.id === id));
+  save();
+  renderPanel();
+}
+
+// Two or more items selected (and not one group): the count and a
+// Group button, in the quiet pill style of "Add behavior".
+function renderMultiSelectPanel(sel: Item[]): void {
+  panelTitle.textContent = 'Selection';
+  const count = document.createElement('div');
+  count.className = 'sel-count';
+  count.textContent = `${sel.length} selected`;
+  panelBody.appendChild(count);
+  const action = document.createElement('div');
+  action.className = 'group-action';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'pbtn-quiet';
+  btn.textContent = 'Group';
+  btn.setAttribute('aria-label', `Group ${sel.length} items`);
+  btn.addEventListener('click', () => { groupSelection(); });
+  action.appendChild(btn);
+  panelBody.appendChild(action);
+}
+
+// A selected item group: its own behaviour layer stack — the same
+// layer cards, Add behavior picker, sliders and toggles as an item's
+// stack — plus an Ungroup button. No behaviour-group checkboxes here:
+// the two kinds of group stay visually distinct.
+function renderItemGroupPanel(group: ItemGroup): void {
+  panelTitle.textContent = 'Behaviours';
+  const host: LayerHost = { kind: 'group', group };
+  for (const layer of group.layers) {
+    panelBody.appendChild(behaviourLayer(host, layer, { checkable: false }).layer);
+  }
+  if (group.layers.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'no-behaviours';
+    empty.textContent = 'No behaviours';
+    panelBody.appendChild(empty);
+  }
+  const action = document.createElement('div');
+  action.className = 'group-action';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'pbtn-quiet';
+  btn.textContent = 'Ungroup';
+  btn.setAttribute('aria-label', 'Ungroup');
+  btn.addEventListener('click', () => { ungroupItemGroup(group); });
+  action.appendChild(btn);
+  panelBody.appendChild(action);
+  panelBody.appendChild(renderAddBehaviourButton(host));
 }
 
 function renderCanvasPanel(): void {
@@ -2326,12 +2560,13 @@ function stagePoint(e: { clientX: number; clientY: number }): Pt {
   return { x: Math.max(minX, Math.min(maxX, x)), y: Math.max(minY, Math.min(maxY, y)) };
 }
 let drag: {
-  kind: 'brush' | 'shape' | 'select' | 'erase';
+  kind: 'brush' | 'shape' | 'select' | 'erase' | 'marquee';
   start: Pt; last: Pt; item: Item | null; moved: boolean;
   before: string | null; // pre-gesture snapshot, for lazy history (move / erase)
   erased: boolean; // the eraser actually removed ink during this sweep
 } | null = null;
 let previewShape: ShapeItem | null = null;
+let marquee: { x0: number; y0: number; x1: number; y1: number } | null = null;
 
 canvas.addEventListener('pointerdown', (e) => {
   try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
@@ -2361,15 +2596,41 @@ canvas.addEventListener('pointerdown', (e) => {
   } else if (tool === 'select') {
     const hit = hitTest(p);
     if (hit) {
-      selectedId = hit.id;
-      renderPanel();
-      drag = { kind: 'select', start: p, last: p, item: hit, moved: false, before: gestureStart(), erased: false };
+      if (e.shiftKey) {
+        // Shift-click toggles that single item in/out of the
+        // selection, even when it belongs to a group — this is how a
+        // single member is picked out of a group to edit its own
+        // behaviours.
+        selectedIds = selectedIds.includes(hit.id)
+          ? selectedIds.filter((id) => id !== hit.id)
+          : [...selectedIds, hit.id];
+        if (focusedId === hit.id && !selectedIds.includes(hit.id)) focusedId = null;
+        renderPanel();
+        drag = null;
+      } else {
+        // Plain click: a group member selects its whole group — even
+        // when the member was picked out alone before (shift-click or
+        // double-click). Only when the group itself is already the
+        // selection, or the item is already selected alone, does the
+        // click keep the selection, so the drag below can move it.
+        const g = itemGroupOf(hit.id);
+        const groupSelected = !!g && g.memberIds.length === selectedIds.length &&
+          g.memberIds.every((m) => selectedIds.includes(m));
+        if (g && !groupSelected) {
+          selectedIds = [...g.memberIds];
+          renderPanel();
+        } else if (!selectedIds.includes(hit.id)) {
+          selectedIds = [hit.id];
+          renderPanel();
+        }
+        drag = { kind: 'select', start: p, last: p, item: hit, moved: false, before: gestureStart(), erased: false };
+      }
     } else {
-      selectedId = null;
-      // Single-clicking empty stage exits focus (and deselects).
-      if (focusedId !== null) focusedId = null;
-      renderPanel();
-      drag = null;
+      // Empty workspace: start a marquee. A click without moving
+      // deselects on release; a drag selects what the rectangle
+      // touches (see pointerup).
+      drag = { kind: 'marquee', start: p, last: p, item: null, moved: false, before: null, erased: false };
+      marquee = { x0: p.x, y0: p.y, x1: p.x, y1: p.y };
     }
   }
 });
@@ -2407,9 +2668,16 @@ canvas.addEventListener('pointermove', (e) => {
   } else if (drag.kind === 'select' && drag.item) {
     const dx = p.x - drag.last.x, dy = p.y - drag.last.y;
     if (dx !== 0 || dy !== 0) drag.moved = true;
-    const c = clampMove(drag.item, dx, dy);
-    moveItem(drag.item, c.dx, c.dy);
+    // Move the whole selection together: one clamp for the union box,
+    // so the items keep their relative positions. One undo entry per
+    // drag (committed on release).
+    const sel = selectedItems();
+    const c = clampMoveUnion(sel, dx, dy);
+    for (const it of sel) moveItem(it, c.dx, c.dy);
     drag.last = p;
+  } else if (drag.kind === 'marquee') {
+    marquee = { x0: drag.start.x, y0: drag.start.y, x1: p.x, y1: p.y };
+    if (Math.abs(p.x - drag.start.x) > 4 || Math.abs(p.y - drag.start.y) > 4) drag.moved = true;
   }
 });
 canvas.addEventListener('pointerup', (e) => {
@@ -2424,6 +2692,23 @@ canvas.addEventListener('pointerup', (e) => {
   if (drag.kind === 'select' && drag.moved) {
     if (drag.before) gestureCommit(drag.before, true);
     save();
+  }
+  if (drag.kind === 'marquee') {
+    if (drag.moved && marquee) {
+      // Select every item the rectangle touches, individually —
+      // regardless of groups.
+      const x0 = Math.min(marquee.x0, marquee.x1), x1 = Math.max(marquee.x0, marquee.x1);
+      const y0 = Math.min(marquee.y0, marquee.y1), y1 = Math.max(marquee.y0, marquee.y1);
+      selectedIds = items.filter((it) => {
+        const b = itemBBox(it);
+        return b.x < x1 && b.x + b.w > x0 && b.y < y1 && b.y + b.h > y0;
+      }).map((it) => it.id);
+    } else {
+      // A click on empty workspace deselects and exits focus, as before.
+      selectedIds = [];
+      if (focusedId !== null) focusedId = null;
+    }
+    marquee = null;
   }
   if (drag.kind === 'erase') {
     if (drag.before) gestureCommit(drag.before, drag.erased);
@@ -2478,7 +2763,7 @@ function eraseAt(p: Pt): boolean {
       const b = itemBBox(it);
       if (p.x >= b.x - radius && p.x <= b.x + b.w + radius && p.y >= b.y - radius && p.y <= b.y + b.h + radius) {
         items.splice(i, 1);
-        if (selectedId === it.id) selectedId = null;
+        if (selectedIds.includes(it.id)) selectedIds = selectedIds.filter((id) => id !== it.id);
         for (const l of it.layers) smoothed.delete(l.id);
         changed = true;
       }
@@ -2520,8 +2805,11 @@ function eraseAt(p: Pt): boolean {
     });
     for (const l of it.layers) smoothed.delete(l.id);
     items.splice(i, 1, ...replacements);
-    if (selectedId === it.id) selectedId = replacements.length ? replacements[0].id : null;
+    if (selectedIds.includes(it.id)) {
+      selectedIds = selectedIds.filter((id) => id !== it.id).concat(replacements.map((r) => r.id));
+    }
   }
+  pruneItemGroups();
   if (changed) renderPanel();
   return changed;
 }
@@ -2530,20 +2818,29 @@ function moveItem(it: Item, dx: number, dy: number): void {
   else if (it.type === 'shape') { it.x += dx; it.y += dy; }
   else { it.x += dx; it.y += dy; }
 }
-// A dragged part stays inside the visible workspace: clamp the move so
-// its bounding box never crosses the workspace edge (under the toolbar,
-// panel or player). The stage itself is inside the workspace, so parts
-// can still straddle the stage edge freely.
-function clampMove(it: Item, dx: number, dy: number): { dx: number; dy: number } {
+// A dragged selection stays inside the visible workspace: clamp the
+// move so the UNION bounding box of all selected items never crosses
+// the workspace edge (under the toolbar, panel or player). The stage
+// itself is inside the workspace, so parts can still straddle the
+// stage edge freely. One clamp for the union keeps the items' relative
+// positions; clamping each item separately would squash them together
+// at the edge.
+function clampMoveUnion(sel: Item[], dx: number, dy: number): { dx: number; dy: number } {
   const { s, ox, oy, cw, ch } = workspaceLayout();
   const minX = -ox / s, maxX = (cw - ox) / s;
   const minY = -oy / s, maxY = (ch - oy) / s;
-  const b = itemBBox(it);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const it of sel) {
+    const b = itemBBox(it);
+    x0 = Math.min(x0, b.x); y0 = Math.min(y0, b.y);
+    x1 = Math.max(x1, b.x + b.w); y1 = Math.max(y1, b.y + b.h);
+  }
+  if (!sel.length) return { dx: 0, dy: 0 };
   let cx = dx, cy = dy;
-  if (b.x + cx < minX) cx = minX - b.x;
-  if (b.x + b.w + cx > maxX) cx = maxX - (b.x + b.w);
-  if (b.y + cy < minY) cy = minY - b.y;
-  if (b.y + b.h + cy > maxY) cy = maxY - (b.y + b.h);
+  if (x0 + cx < minX) cx = minX - x0;
+  if (x1 + cx > maxX) cx = maxX - x1;
+  if (y0 + cy < minY) cy = minY - y0;
+  if (y1 + cy > maxY) cy = maxY - y1;
   return { dx: cx, dy: cy };
 }
 
@@ -2563,6 +2860,22 @@ function renderWithPreview(t01: number): void {
     ctx.setLineDash([5, 4]);
     if (previewShape.kind === 'rect') ctx.strokeRect(previewShape.x, previewShape.y, previewShape.w, previewShape.h);
     else ctx.beginPath(), ctx.ellipse(previewShape.x + previewShape.w / 2, previewShape.y + previewShape.h / 2, previewShape.w / 2, previewShape.h / 2, 0, 0, Math.PI * 2), ctx.stroke();
+    ctx.restore();
+  }
+  if (marquee) {
+    const L = workspaceLayout();
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const x = Math.min(marquee.x0, marquee.x1), y = Math.min(marquee.y0, marquee.y1);
+    const w = Math.abs(marquee.x1 - marquee.x0), h = Math.abs(marquee.y1 - marquee.y0);
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.translate(L.ox, L.oy);
+    ctx.scale(L.s, L.s);
+    ctx.fillStyle = 'rgba(0, 122, 255, 0.06)';
+    ctx.strokeStyle = '#007aff';
+    ctx.lineWidth = 1 / L.s;
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeRect(x, y, w, h);
     ctx.restore();
   }
 }
@@ -2586,7 +2899,7 @@ function closeTextEditor(commit: boolean): void {
       pushHistory();
       const item: TextItem = { ...baseItem(color, penWidth), type: 'text', x: s.p.x, y: s.p.y, text: value, size: 20 };
       items.push(item);
-      selectedId = item.id;
+      selectedIds = [item.id];
     }
     save();
     renderPanel();
@@ -2633,13 +2946,13 @@ canvas.addEventListener('dblclick', (e) => {
   if (hit) {
     if (focusedId === hit.id) focusedId = null;
     else focusedId = hit.id;
-    selectedId = hit.id;
+    selectedIds = [hit.id];
     renderPanel();
     return;
   }
   if (focusedId !== null) {
     focusedId = null;
-    selectedId = null;
+    selectedIds = [];
     renderPanel();
   }
 });
@@ -2648,7 +2961,7 @@ canvas.addEventListener('pointerdown', (e) => {
     if (lastPressRepeat) return; // second press of a double-click pair
     const p = stagePoint(e);
     const hit = hitTest(p);
-    if (hit?.type === 'text') { selectedId = hit.id; openTextEditor(hit, p); }
+    if (hit?.type === 'text') { selectedIds = [hit.id]; openTextEditor(hit, p); }
     else openTextEditor(null, p);
   }
 });
@@ -2660,7 +2973,8 @@ function clearStage(): void {
   if (items.length === 0) return;
   pushHistory();
   items = [];
-  selectedId = null;
+  itemGroups = [];
+  selectedIds = [];
   smoothed.clear();
   save();
   renderPanel();
@@ -2863,12 +3177,21 @@ window.addEventListener('keydown', (e) => {
   if (k === 'escape') {
     if (addPickerOpen) { addPickerOpen = false; closeAddPickerEl(); renderPanel(); return; }
     if (focusedId !== null) { focusedId = null; renderPanel(); return; }
+    if (selectedIds.length > 0) { selectedIds = []; renderPanel(); return; }
     if (panelView === 'colour') { panelView = 'auto'; renderPanel(); }
     return;
   }
   if (k === 'delete' || k === 'backspace') {
-    const sel = selected();
-    if (sel) { pushHistory(); items = items.filter((i) => i.id !== sel.id); selectedId = null; save(); renderPanel(); }
+    const sel = selectedItems();
+    if (sel.length > 0) {
+      pushHistory();
+      const ids = new Set(sel.map((i) => i.id));
+      items = items.filter((i) => !ids.has(i.id));
+      selectedIds = [];
+      if (focusedId !== null && ids.has(focusedId)) focusedId = null;
+      pruneItemGroups();
+      save(); renderPanel();
+    }
     return;
   }
   if (k === 'v') tool = 'select';
