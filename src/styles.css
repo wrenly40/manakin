@@ -305,6 +305,14 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 .pbtn:hover { background: var(--bg-system); }
 .pbtn:disabled { opacity: 0.35; cursor: default; }
 .pbtn.busy { color: var(--accent); }
+/* Export: one button; the PNG / Video options sit in a section
+   directly below it, expanded in place. The chevron turns with it,
+   like the behaviour-layer chevrons. */
+#export-btn { display: flex; align-items: center; justify-content: space-between; padding: 0 12px; }
+#export-btn .exp-chev { display: flex; }
+#export-btn .exp-chev svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.15s ease; }
+#export-btn.open .exp-chev svg { transform: rotate(180deg); }
+#export-options { margin-bottom: 8px; }
 .bg-dots { display: flex; gap: 8px; }
 .bg-dot {
   width: 24px; height: 24px; border-radius: 50%;

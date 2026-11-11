@@ -214,11 +214,12 @@ let gridMode: GridMode = 'empty';
 let projectName = 'Untitled';
 let panelOpen = true;
 let exporting = false; // an export (PNG sequence or video) is running right now
+let exportOpen = true; // the Export options (PNG / Video) are showing below the Export button
 let exportProgress: { text: string; target: 'png' | 'video' } | null = null;
 // "Exporting 45/120" while an offline export runs, on the button doing it.
 function setExportProgress(text: string, target: 'png' | 'video'): void {
   exportProgress = { text, target };
-  const b = document.getElementById(target === 'png' ? 'export-png-btn' : 'export-video-btn');
+  const b = document.getElementById(target === 'png' ? 'export-png-option' : 'export-video-option');
   if (b) b.textContent = text;
 }
 type VideoFormat = 'gif' | 'webm' | 'mp4';
@@ -2321,38 +2322,65 @@ function renderCanvasPanel(): void {
     if (saveTimer !== null) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => { saveBtn.textContent = 'Save'; }, 1500);
   });
-  const pngBtn = mkAction('Export PNG', 'export-png-btn', () => { void exportPNGSequence(); });
-  // Video format: a small segmented control directly above the Export
-  // Video button. No other parameters — no scale, no frame choice.
-  const fmtSeg = document.createElement('div');
-  fmtSeg.className = 'seg';
-  fmtSeg.id = 'video-format-seg';
-  fmtSeg.setAttribute('role', 'group');
-  fmtSeg.setAttribute('aria-label', 'Video format');
-  for (const f of [{ id: 'gif', label: 'GIF' }, { id: 'webm', label: 'WebM' }, { id: 'mp4', label: 'MP4' }] as const) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = videoFormat === f.id ? 'active' : '';
-    b.textContent = f.label;
-    b.setAttribute('aria-label', `Video format ${f.label}`);
-    b.addEventListener('click', () => {
-      if (videoFormat === f.id) return;
-      videoFormat = f.id;
-      save();
-      renderPanel();
-    });
-    fmtSeg.appendChild(b);
+  // One Export button; the PNG and Video options expand in place
+  // below it. No Scale, no Frame, no popover — just PNG / Video.
+  const exportBtn = document.createElement('button');
+  exportBtn.type = 'button';
+  exportBtn.className = 'pbtn' + (exportOpen ? ' open' : '');
+  exportBtn.id = 'export-btn';
+  exportBtn.setAttribute('aria-expanded', exportOpen ? 'true' : 'false');
+  exportBtn.innerHTML = 'Export<span class="exp-chev"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span>';
+  exportBtn.addEventListener('click', () => { exportOpen = !exportOpen; renderPanel(); });
+  actionsSec.appendChild(exportBtn);
+  let pngOpt: HTMLButtonElement | null = null;
+  let videoOpt: HTMLButtonElement | null = null;
+  if (exportOpen) {
+    const opts = document.createElement('div');
+    opts.id = 'export-options';
+    const mkOpt = (label: string, id: string, fn: () => void): HTMLButtonElement => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'pbtn';
+      b.id = id;
+      b.textContent = label;
+      b.addEventListener('click', fn);
+      opts.appendChild(b);
+      return b;
+    };
+    pngOpt = mkOpt('PNG', 'export-png-option', () => { void exportPNGSequence(); });
+    videoOpt = mkOpt('Video', 'export-video-option', () => { void exportVideo(); });
+    // Video format: a small segmented control directly below the Video
+    // option. The choice persists (videoFormat) like before.
+    const fmtSeg = document.createElement('div');
+    fmtSeg.className = 'seg';
+    fmtSeg.id = 'video-format-seg';
+    fmtSeg.setAttribute('role', 'group');
+    fmtSeg.setAttribute('aria-label', 'Video format');
+    for (const f of [{ id: 'gif', label: 'GIF' }, { id: 'webm', label: 'WebM' }, { id: 'mp4', label: 'MP4' }] as const) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = videoFormat === f.id ? 'active' : '';
+      b.textContent = f.label;
+      b.setAttribute('aria-label', `Video format ${f.label}`);
+      b.addEventListener('click', () => {
+        if (videoFormat === f.id) return;
+        videoFormat = f.id;
+        save();
+        renderPanel();
+      });
+      fmtSeg.appendChild(b);
+    }
+    opts.appendChild(fmtSeg);
+    actionsSec.appendChild(opts);
   }
-  actionsSec.appendChild(fmtSeg);
-  const videoBtn = mkAction(videoFormat === 'gif' ? 'Export GIF' : videoFormat === 'mp4' ? 'Export MP4' : 'Export WebM', 'export-video-btn', () => { void exportVideo(); });
   if (exporting) {
-    pngBtn.disabled = true;
-    videoBtn.disabled = true;
+    if (pngOpt) pngOpt.disabled = true;
+    if (videoOpt) videoOpt.disabled = true;
     // An offline export (PNG sequence, GIF, MP4) shows its progress on
-    // the button doing it; a WebM recording has no progress to show.
-    if (exportProgress?.target === 'png') pngBtn.textContent = exportProgress.text;
-    else if (exportProgress?.target === 'video') videoBtn.textContent = exportProgress.text;
-    else videoBtn.textContent = 'Recording…';
+    // the option doing it; a WebM recording has no progress to show.
+    if (exportProgress?.target === 'png' && pngOpt) pngOpt.textContent = exportProgress.text;
+    else if (exportProgress?.target === 'video' && videoOpt) videoOpt.textContent = exportProgress.text;
+    else if (videoOpt) videoOpt.textContent = 'Recording…';
   }
   mkAction('Clear', 'clear-btn', clearStage);
 }
