@@ -21,14 +21,19 @@ declare global {
 type Pt = { x: number; y: number };
 type BehaviourName = 'Bob' | 'Sway' | 'Breathe' | 'Blink' | 'Spin' | 'Wander' | 'Bounce' | 'Stretch' | 'Orbit' | 'Fade' | 'Tremble';
 const BEHAVIOURS: BehaviourName[] = ['Bob', 'Sway', 'Breathe', 'Blink', 'Spin', 'Wander', 'Bounce', 'Stretch', 'Orbit', 'Fade', 'Tremble'];
-// Cycle N = the behaviour completes N cycles per loop. The loop is
-// always 4s (BASE_CYCLE_MS): Cycle 1 is one cycle per loop, Cycle 10
-// is ten. A layer's effective cycle count is its own Cycle times its
-// behaviour group's Cycle multiplier (both whole numbers), so every
-// behaviour completes a whole number of cycles in the loop and the
-// pose at the wrap equals the pose at the start (see loopMs /
-// loopCycles below).
-const BASE_CYCLE_MS = 4000;
+// Cycle N = the behaviour completes N cycles per loop. The loop
+// length is the Loop setting (4/6/8/10s, default 4s): Cycle 1 is one
+// cycle per loop, Cycle 10 is ten. A layer's effective cycle count is
+// its own Cycle times its behaviour group's Cycle multiplier (both
+// whole numbers), so every behaviour completes a whole number of
+// cycles in the loop and the pose at the wrap equals the pose at the
+// start (see loopMs / loopCycles below).
+type LoopLength = 4 | 6 | 8 | 10;
+const LOOP_LENGTHS: LoopLength[] = [4, 6, 8, 10];
+const DEFAULT_LOOP_LENGTH: LoopLength = 4;
+function isLoopLength(v: unknown): v is LoopLength {
+  return v === 4 || v === 6 || v === 8 || v === 10;
+}
 const CYCLE_MIN = 1;
 const CYCLE_MAX = 10;
 function clampCycle(v: unknown): number {
@@ -265,6 +270,7 @@ let activeSlot: 'fg' | 'bg' = 'fg';
 let penWidth = 4;
 let shapeKind: 'rect' | 'ellipse' = 'rect';
 let stageId: 'wide' | 'square' | 'portrait' = 'wide';
+let loopLength: LoopLength = DEFAULT_LOOP_LENGTH; // seconds per loop; 4s default
 let stageBgId: StageBgId = 'white';
 let stageBgCustom: string | null = null;
 let gridMode: GridMode = 'empty';
@@ -340,7 +346,7 @@ function pushRecent(hex: string): void {
 function save(): void {
   try {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
-      items, itemGroups, stageId, projectName, stageBgId, stageBgCustom, gridMode, panelOpen,
+      items, itemGroups, stageId, loopLength, projectName, stageBgId, stageBgCustom, gridMode, panelOpen,
       fg: color, bg: bgColour, penWidth, recent: recentColours, saved: savedColours,
       videoFormat, exportTab,
     }));
@@ -348,9 +354,9 @@ function save(): void {
 }
 function snapshot(): string {
   // The whole document state: items, item groups, stage size,
-  // background and grid. Tool settings (pen width, colours, project
-  // name) are not document state and stay out of undo.
-  return JSON.stringify({ items, itemGroups, stageId, stageBgId, stageBgCustom, gridMode });
+  // loop length, background and grid. Tool settings (pen width,
+  // colours, project name) are not document state and stay out of undo.
+  return JSON.stringify({ items, itemGroups, stageId, loopLength, stageBgId, stageBgCustom, gridMode });
 }
 function pushHistory(): void {
   history.push(snapshot());
@@ -392,11 +398,12 @@ function restore(json: string): void {
     } else if (data && typeof data === 'object') {
       const d = data as {
         items?: Item[]; itemGroups?: unknown; stageId?: typeof stageId; stageBgId?: StageBgId;
-        stageBgCustom?: string | null; gridMode?: unknown;
+        stageBgCustom?: string | null; gridMode?: unknown; loopLength?: unknown;
       };
       if (Array.isArray(d.items)) items = d.items;
       itemGroups = migrateItemGroups(d.itemGroups);
       if (d.stageId === 'wide' || d.stageId === 'square' || d.stageId === 'portrait') stageId = d.stageId;
+      if (isLoopLength(d.loopLength)) loopLength = d.loopLength;
       if (d.stageBgId) stageBgId = d.stageBgId;
       stageBgCustom = typeof d.stageBgCustom === 'string' ? d.stageBgCustom : null;
       const gm = migrateGridMode(d.gridMode);
@@ -415,6 +422,10 @@ function restore(json: string): void {
   for (const it of items) for (const l of it.layers) liveLayerIds.add(l.id);
   for (const g of itemGroups) for (const l of g.layers) liveLayerIds.add(l.id);
   for (const id of [...smoothed.keys()]) if (!liveLayerIds.has(id)) smoothed.delete(id);
+  // A restored snapshot may carry a shorter loop than the current
+  // playhead (e.g. undoing a 10s → 4s change while paused at 9s);
+  // keep the playhead inside the loop.
+  playTime = playTime % loopMs();
   save();
   resizeCanvas();
   renderPanel();
@@ -756,13 +767,15 @@ function load(): void {
         items: Item[]; itemGroups?: unknown; stageId: typeof stageId; projectName?: string;
         stageBgId?: StageBgId; stageBgCustom?: string | null; gridMode?: unknown; panelOpen?: boolean;
         fg?: string; bg?: string; penWidth?: number; recent?: string[]; saved?: string[];
-        videoFormat?: unknown; exportTab?: unknown;
+        videoFormat?: unknown; exportTab?: unknown; loopLength?: unknown;
       };
       if (Array.isArray(data.items) && data.items.length > 0) {
         items = data.items;
         items.forEach(migrateItem);
         itemGroups = migrateItemGroups(data.itemGroups);
         if (data.stageId) stageId = data.stageId;
+        // Old saves carry no loopLength: they load at the 4s default.
+        if (isLoopLength(data.loopLength)) loopLength = data.loopLength;
         if (typeof data.projectName === 'string' && data.projectName.trim()) projectName = data.projectName;
         if (data.stageBgId && (STAGE_BGS.some((b) => b.id === data.stageBgId) || data.stageBgId === 'custom')) stageBgId = data.stageBgId;
         if (typeof data.stageBgCustom === 'string') stageBgCustom = data.stageBgCustom;
@@ -1360,13 +1373,14 @@ function amplitudeScale(a: number): number {
   // factors) ~11% max scale and ~0.63 rad max rotation in the motion.
   return a * 1.8;
 }
-// The loop is always 4s (BASE_CYCLE_MS): Cycle N completes N cycles in
-// it, so every contributing instance completes a whole number of cycles
-// and the pose at the wrap equals the pose at the start. A layer's
-// effective cycle count is its own Cycle times its behaviour group's
-// Cycle multiplier — both whole numbers, so the product is whole too.
+// The loop length is the Loop setting: Cycle N completes N cycles
+// in it, so every contributing instance completes a whole number of
+// cycles and the pose at the wrap equals the pose at the start. A
+// layer's effective cycle count is its own Cycle times its behaviour
+// group's Cycle multiplier — both whole numbers, so the product is
+// whole too.
 function loopMs(): number {
-  return BASE_CYCLE_MS;
+  return loopLength * 1000;
 }
 // Whole number of cycles an instance at this effective cycle count
 // completes in one loop. The cycle math uses this, so the pose at the
@@ -3104,6 +3118,28 @@ function renderCanvasPanel(): void {
     stageSeg.appendChild(b);
   }
   stageSec.appendChild(stageSeg);
+  const loopSec = mkSection('Loop');
+  const loopSeg = document.createElement('div');
+  loopSeg.className = 'seg';
+  loopSeg.setAttribute('role', 'group');
+  loopSeg.setAttribute('aria-label', 'Loop length');
+  for (const len of LOOP_LENGTHS) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = loopLength === len ? 'active' : '';
+    b.textContent = `${len}s`;
+    b.setAttribute('aria-label', `Loop ${len} seconds`);
+    b.addEventListener('click', () => {
+      if (loopLength === len) return;
+      pushHistory();
+      loopLength = len;
+      playTime = playTime % loopMs();
+      save();
+      renderPanel();
+    });
+    loopSeg.appendChild(b);
+  }
+  loopSec.appendChild(loopSeg);
   const bgSec = mkSection('Background');
   const bgDots = document.createElement('div');
   bgDots.className = 'bg-dots';
