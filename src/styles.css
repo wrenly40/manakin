@@ -573,21 +573,37 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 }
 #progress-fill { height: 100%; width: 0%; background: var(--ink); border-radius: 2px; }
 #time-state { font-size: 13px; color: var(--grey); white-space: nowrap; }
-/* Zoom control: one segmented pill beside the player — minus,
-   percentage, plus in the same grey bar as the Stage and Loop segs,
-   32px high so it sits centred on the 40px transport row. The
-   percentage is a fixed-width button: clicking it resets to 100%.
-   The −/+ cells are 28px squares with 20px icons, the same as the
-   Arrange/Align cells; the label cell is wide enough for the longest
-   reading ("400% · 359°", measured 96px) so the pill never changes
-   width. */
+/* Zoom control: bare like the player — minus, percentage, plus as
+   plain ink glyphs with no bar, no background, no border. The −/+
+   buttons are the same 40px as the transport buttons, so the hit
+   area stays generous; the label is 13px ink text, clicking it
+   resets the view. The angle is a separate readout at the far left
+   of the bar, plain ink text, and exists only while rotated. */
 #zoom-control {
-  position: absolute; right: 16px; top: 14px;
+  position: absolute; right: 16px; top: 10px;
+  display: flex; align-items: center;
 }
-#zoom-control .icon-btn { flex: none; width: 28px; }
+#zoom-control .zctl {
+  border: none; background: transparent; border-radius: 9px;
+  width: 40px; height: 40px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--ink); flex: none;
+}
+#zoom-control .zctl:hover { background: rgba(0, 0, 0, 0.05); }
+#zoom-control .zctl:active { background: rgba(0, 0, 0, 0.09); }
+#zoom-control .zctl svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .zoom-label {
-  flex: none; min-width: 100px; padding: 0 8px;
+  flex: none; min-width: 48px; padding: 0 4px; text-align: center;
+  border: none; background: transparent; border-radius: 9px;
+  font-size: 13px; color: var(--ink);
   font-variant-numeric: tabular-nums;
+}
+.zoom-label:hover { background: rgba(0, 0, 0, 0.05); }
+#angle-readout {
+  position: absolute; left: 16px; top: 10px; height: 40px;
+  display: flex; align-items: center;
+  font-size: 13px; color: var(--ink);
+  font-variant-numeric: tabular-nums; pointer-events: none;
 }
 /* Arrange / Align rows in the panel: the same segmented pill bar as
    the stage picker and the export tabs — one grey bar holding the

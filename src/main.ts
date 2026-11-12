@@ -348,10 +348,24 @@ function clampPan(): void {
 function updateZoomLabel(): void {
   const el = document.getElementById('zoom-label');
   if (!el) return;
-  // While rotated, the angle shows next to the zoom; at 0° nothing
-  // extra. The rounded angle wraps (359.6° reads as 0°, not 360°).
+  // Zoom and angle are separate readouts now: the label shows only
+  // the zoom; the angle lives alone at the far left of the bar as
+  // plain text, and exists in the DOM only while rotated. The
+  // rounded angle wraps (359.6° reads as 0°, not 360°).
   const d = Math.round(rotateDeg) % 360;
-  el.textContent = d === 0 ? `${Math.round(zoom * 100)}%` : `${Math.round(zoom * 100)}% · ${d}°`;
+  el.textContent = `${Math.round(zoom * 100)}%`;
+  const player = document.getElementById('player')!;
+  let angle = document.getElementById('angle-readout');
+  if (d === 0) {
+    angle?.remove();
+    return;
+  }
+  if (!angle) {
+    angle = document.createElement('span');
+    angle.id = 'angle-readout';
+    player.prepend(angle);
+  }
+  angle.textContent = `${d}°`;
 }
 function setZoom(z: number): void {
   zoom = z;
@@ -894,10 +908,10 @@ app.innerHTML = `
         <div id="progress-track" aria-hidden="true"><div id="progress-fill"></div></div>
         <span id="time-state">0.0 / 4.0s</span>
       </div>
-      <div id="zoom-control" class="seg" aria-label="Zoom">
-        <button id="zoom-out" class="icon-btn" aria-label="Zoom out"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+      <div id="zoom-control" aria-label="Zoom">
+        <button id="zoom-out" class="zctl" aria-label="Zoom out"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
         <button id="zoom-label" class="zoom-label" aria-label="Zoom level, activate to reset the view to 100%">100%</button>
-        <button id="zoom-in" class="icon-btn" aria-label="Zoom in"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+        <button id="zoom-in" class="zctl" aria-label="Zoom in"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
       </div>
     </footer>
   </div>
