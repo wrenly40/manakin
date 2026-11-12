@@ -22,7 +22,7 @@ export const manifest = {
   version: "1.0.0",
   apiVersion: "1",
   description: "The bottom bar: transport, timeline, clock, zoom.",
-  permissions: ["view", "transport", "canvas", "shell", "events", "ui"],
+  permissions: ["doc", "view", "transport", "canvas", "shell", "events", "ui"],
 };
 
 let api!: PluginContext;
@@ -80,7 +80,11 @@ function frame(ts: number): void {
     const t01 = api.transport.tick(ts);
     api.canvas.requestRender(t01);
     progressFill.style.width = `${(t01 * 100).toFixed(1)}%`;
-    timeState.textContent = `${(api.transport.getPlayTime() / 1000).toFixed(1)} / ${(api.app.getLoopMs() / 1000).toFixed(1)}s`;
+    // The clock reads the frame as well as seconds on a multi-frame
+    // timeline; a single frame keeps the old seconds-only reading.
+    const frames = api.doc.getTimeline().frames.length;
+    const sec = `${(api.transport.getPlayTime() / 1000).toFixed(1)} / ${(api.app.getLoopMs() / 1000).toFixed(1)}s`;
+    timeState.textContent = frames > 1 ? `${api.doc.getCurrentFrame() + 1}/${frames} · ${sec}` : sec;
   } catch (e) {
     console.error("[manakin] player frame failed:", e);
   }

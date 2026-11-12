@@ -1,8 +1,9 @@
 import './styles.css';
-import { initPlugins, listActions, isOverlayOpenFor, closeOverlays, clickInsideOverlay, anyOverlayOpen, refreshOverlays, domId, registerShellElements, emitPluginEvent, requestCanvasResize, renderFrameTo, type PluginHost } from './plugins';
+import { initPlugins, listActions, isOverlayOpenFor, closeOverlays, clickInsideOverlay, anyOverlayOpen, refreshOverlays, domId, registerShellElements, emitPluginEvent, requestCanvasResize, renderFrameTo, renderFrameAtTo, type PluginHost } from './plugins';
 import { plugin as canvasPlugin } from './core-plugins/canvas';
 import { plugin as toolbarPlugin } from './core-plugins/toolbar';
 import { plugin as playerPlugin } from './core-plugins/player';
+import { plugin as framesPlugin } from './core-plugins/frames';
 import { plugin as exportsPlugin } from './core-plugins/exports';
 import { plugin as helloPlugin } from './core-plugins/hello';
 import {
@@ -663,6 +664,7 @@ app.innerHTML = `
         <div id="stage-wrap"></div>
       </div>
     </div>
+    <div id="filmstrip"></div>
     <footer id="player"></footer>
   </div>
   <aside id="panel" aria-label="Panel">
@@ -2455,12 +2457,14 @@ registerShellElements({
   toolbar: document.getElementById('toolbar')!,
   stageWrap,
   player: document.getElementById('player')!,
+  filmstrip: document.getElementById('filmstrip')!,
 });
 const pluginHost: PluginHost = {
   getLoopMs: () => loopMs(),
   getLoopLength: () => loopLength,
   getStageSize: () => stageSize(),
   renderFrame: (t01, target, dprOverride) => renderFrameTo(t01, target, dprOverride),
+  renderFrameAt: (frameIndex, t01, target, dprOverride) => renderFrameAtTo(frameIndex, t01, target, dprOverride),
   renderPanel: () => renderPanel(),
   getActionButton: (pluginId, id) => actionButtons.get(`${pluginId}:${id}`) ?? null,
   legacy: { exports: legacyExportPrefs },
@@ -2529,10 +2533,20 @@ const pluginHost: PluginHost = {
     }
     return playTime / loopMs();
   },
+  getTimeline: () => timeline,
+  getCurrentFrame: () => timeline.current,
+  setCurrentFrame: (i) => setCurrentFrame(i),
+  addFrame: () => addFrame(),
+  duplicateFrame: (i) => duplicateFrame(i),
+  deleteFrame: (i) => deleteFrame(i),
+  moveFrame: (from, to) => moveFrame(from, to),
+  setFrameHold: (i, d) => setFrameHold(i, d),
+  getOnionSkin: () => onionSkin,
+  setOnionSkin: (on) => { onionSkin = on; save(); emitPluginEvent('timeline'); },
   openColour: (slot) => openColour(slot),
   attachTooltip: (btn, text) => attachTooltip(btn, text),
 };
-initPlugins(pluginHost, [canvasPlugin, toolbarPlugin, playerPlugin, exportsPlugin, helloPlugin]);
+initPlugins(pluginHost, [canvasPlugin, toolbarPlugin, playerPlugin, framesPlugin, exportsPlugin, helloPlugin]);
 renderPanel();
 applyPanelOpen();
 

@@ -678,3 +678,79 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
   font-size: 13px; font-weight: 500; color: var(--ink);
 }
 .pbtn-quiet:hover { background: var(--bg-system); }
+
+/* Filmstrip: the traditional animation layer's timeline — a horizontal
+   strip of frame thumbnails above the player, with the onion-skin
+   toggle and the + button. Tiles are 96x54 (the stage at 1/10), the
+   current frame has an ink outline, the hold badge reads xN when a
+   frame holds longer than one. Same white / hairline / shadow
+   language as the rest of the app. */
+#filmstrip {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  height: 92px; padding: 0 12px; background: #fff;
+  border-top: 1px solid var(--separator);
+  overflow-x: auto; overflow-y: hidden;
+}
+.filmstrip-btn {
+  border: none; background: transparent; border-radius: 9px;
+  width: 40px; height: 40px; padding: 0; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--ink);
+}
+.filmstrip-btn:hover { background: rgba(0, 0, 0, 0.05); }
+.filmstrip-btn:active { background: rgba(0, 0, 0, 0.09); }
+.filmstrip-btn.active {
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+}
+.filmstrip-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.filmstrip-btn:disabled { opacity: 0.35; }
+.filmstrip-btn:disabled:hover { background: transparent; }
+.frame-tile {
+  flex: none; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 0; border: none; background: transparent; cursor: pointer;
+}
+.frame-tile canvas {
+  display: block; width: 96px; height: 54px;
+  border: 1px solid var(--hairline); border-radius: 6px; background: #fff;
+}
+.frame-tile.current canvas {
+  box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px rgba(29, 29, 31, 0.85);
+}
+.frame-tile.dragging { opacity: 0.4; }
+.frame-tile.drop-before { box-shadow: -2px 0 0 var(--accent); border-radius: 6px; }
+.frame-tile.drop-after { box-shadow: 2px 0 0 var(--accent); border-radius: 6px; }
+.frame-num { font-size: 11px; color: var(--grey); line-height: 1; }
+.frame-tile.current .frame-num { color: var(--ink); font-weight: 600; }
+.frame-hold {
+  position: absolute; top: 2px; right: 2px;
+  font-size: 10px; font-weight: 600; color: var(--ink);
+  background: rgba(255, 255, 255, 0.85); border-radius: 6px; padding: 1px 5px;
+  pointer-events: none;
+}
+.frame-thumb-wrap { position: relative; }
+/* Frame menu: the same frosted popover treatment as the Export
+   dropdown — fixed, blurred white, hairline border, 16px radius. */
+.frame-menu {
+  position: fixed; z-index: 50; width: 200px; padding: 6px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 16px;
+  box-shadow: var(--shadow-md);
+}
+.frame-menu button {
+  display: flex; align-items: center; width: 100%; height: 32px; padding: 0 10px;
+  border: none; border-radius: 9px; background: transparent;
+  font-size: 13px; font-weight: 500; color: var(--ink); text-align: left;
+}
+.frame-menu button:hover { background: rgba(0, 0, 0, 0.05); }
+.frame-menu button:disabled { opacity: 0.35; }
+.frame-menu button:disabled:hover { background: transparent; }
+.frame-menu .frame-menu-sep { height: 1px; background: var(--hairline); margin: 4px 6px; }
+.frame-menu .seg { margin: 2px 0; }
+.frame-menu-label { font-size: 11px; color: var(--grey); padding: 6px 10px 2px; }
+/* Loop readout: the multi-frame Loop section reads the timeline
+   length live instead of the 4/6/8/10s seg (the Loop setting only
+   drives the single-frame behaviour loop). */
+.loop-readout { font-size: 13px; color: var(--ink); padding: 8px 0; }

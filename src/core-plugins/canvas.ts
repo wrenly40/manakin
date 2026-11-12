@@ -149,20 +149,26 @@ function focusAlpha(it: Item): number {
   if (f === null) return 1;
   return it.id === f ? 1 : 0.1;
 }
-function drawItem(c: CanvasRenderingContext2D, it: Item, t01: number, applyFocus: boolean): void {
+function drawItem(c: CanvasRenderingContext2D, it: Item, t01: number, applyFocus: boolean, opts?: { noMotion?: boolean; colour?: string; alpha?: number }): void {
   const b = itemBBox(it);
   const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
-  const m = motionForItem(it, t01, api.doc.getItemGroups());
+  // Onion skin draws a neighbouring frame's items at rest, in a flat
+  // ghost colour: no motion (the ghost is the drawing, not the pose)
+  // and no focus dimming.
+  const m = opts?.noMotion
+    ? { dx: 0, dy: 0, scale: 1, rot: 0, opacity: 1, sx: 1, sy: 1 }
+    : motionForItem(it, t01, api.doc.getItemGroups());
   c.save();
   c.translate(cx + m.dx, cy + m.dy);
   c.rotate(m.rot);
   c.scale(m.scale * m.sx, m.scale * m.sy);
   c.translate(-cx, -cy);
   // Focus dims the part; it multiplies the animated opacity (e.g. Blink)
-  // rather than replacing it.
-  c.globalAlpha = m.opacity * (applyFocus ? focusAlpha(it) : 1);
-  c.strokeStyle = it.color;
-  c.fillStyle = it.color;
+  // rather than replacing it. The onion alpha multiplies on top.
+  c.globalAlpha = m.opacity * (applyFocus ? focusAlpha(it) : 1) * (opts?.alpha ?? 1);
+  const colour = opts?.colour ?? it.color;
+  c.strokeStyle = colour;
+  c.fillStyle = colour;
   c.lineWidth = it.width;
   c.lineCap = "round";
   c.lineJoin = "round";
@@ -200,7 +206,7 @@ function drawItem(c: CanvasRenderingContext2D, it: Item, t01: number, applyFocus
       // front really covers the head and wing. An isolated shape looks
       // exactly as before: the tint over the stage colour.
       c.fillStyle = stageBg(); c.fill();
-      c.fillStyle = hexToRgba(it.color, 0.12); c.fill();
+      c.fillStyle = hexToRgba(colour, 0.12); c.fill();
     }
     c.stroke();
   } else {
@@ -210,7 +216,7 @@ function drawItem(c: CanvasRenderingContext2D, it: Item, t01: number, applyFocus
   }
   c.restore();
 }
-function renderFrame(t01: number, target: CanvasRenderingContext2D = ctx, dprOverride?: number): void {
+function renderFrame(t01: number, target: CanvasRenderingContext2D = ctx, dprOverride?: number, itemsOverride?: Item[]): void {
   const { w, h } = api.app.getStageSize();
   const dpr = dprOverride ?? Math.min(2, window.devicePixelRatio || 1);
   const onScreen = target === ctx;
@@ -287,7 +293,19 @@ function renderFrame(t01: number, target: CanvasRenderingContext2D = ctx, dprOve
       target.stroke();
     }
   }
-  for (const it of api.doc.getItems()) drawItem(target, it, t01, target === ctx);
+  // Onion skin: the neighbouring frames ghosted behind the current
+  // one, so the next pose can be traced from the last. Previous at
+  // ~30% in ink, next at ~15% in accent. On screen only, current
+  // frame only — never in exports, never hit-tested, never selectable.
+  if (onScreen && !itemsOverride && api.doc.getOnionSkin()) {
+    const tl = api.doc.getTimeline();
+    const cur = api.doc.getCurrentFrame();
+    const next = cur < tl.frames.length - 1 ? tl.frames[cur + 1] : null;
+    const prev = cur > 0 ? tl.frames[cur - 1] : null;
+    if (next) for (const it of next.items) drawItem(target, it, t01, false, { noMotion: true, colour: "#007aff", alpha: 0.15 });
+    if (prev) for (const it of prev.items) drawItem(target, it, t01, false, { noMotion: true, colour: "#1d1d1f", alpha: 0.30 });
+  }
+  for (const it of itemsOverride ?? api.doc.getItems()) drawItem(target, it, t01, target === ctx);
   const f = validFocus();
   // Every selected item gets its outline (all of them when nothing is
   // focused; only the focused one while focus is on). The outline
@@ -922,6 +940,11 @@ const renderer: CanvasRenderer = {
   },
   renderFrame: (t01, target, dprOverride) => {
     renderFrame(t01, target, dprOverride);
+  },
+  renderFrameAt: (frameIndex, t01, target, dprOverride) => {
+    const frame = api.doc.getTimeline().frames[frameIndex];
+    if (!frame) return;
+    renderFrame(t01, target, dprOverride, frame.items);
   },
   resize: () => {
     resizeCanvas();

@@ -19,7 +19,7 @@
 // privileged calls (folder picking, file writes) go through the core's
 // bridge, and downloads go through files.download here.
 
-import type { GridMode, Item, ItemGroup, StageBgId, ToolId, ViewState, WorkspaceLayout } from "./model";
+import type { GridMode, Item, ItemGroup, StageBgId, Timeline, ToolId, ViewState, WorkspaceLayout } from "./model";
 
 // ---------------------------------------------------------------------------
 // API version
@@ -95,14 +95,16 @@ export interface PluginOverlayDef {
 
 // The canvas renderer: the canvas plugin registers it, the core calls
 // it. Render one frame on screen (render) or offline into a given
-// context (renderFrame, for exports); resize re-fits the canvas to its
-// wrap. When the canvas plugin is disabled the registry is empty and
-// every call here is a no-op — exports degrade to a blank frame rather
-// than a crash.
+// context (renderFrame, for exports); renderFrameAt renders one
+// timeline frame offline (for timeline exports); resize re-fits the
+// canvas to its wrap. When the canvas plugin is disabled the registry
+// is empty and every call here is a no-op — exports degrade to a blank
+// frame rather than a crash.
 export interface CanvasRenderer {
   getElement: () => HTMLCanvasElement | null;
   render: (t01: number) => void;
   renderFrame: (t01: number, target: CanvasRenderingContext2D, dprOverride?: number) => void;
+  renderFrameAt: (frameIndex: number, t01: number, target: CanvasRenderingContext2D, dprOverride?: number) => void;
   resize: () => void;
 }
 
@@ -168,6 +170,11 @@ export interface PluginContext {
     // into the given canvas context. The on-screen canvas is never
     // the target for an export.
     renderFrame: (t01: number, target: CanvasRenderingContext2D, dprOverride?: number) => void;
+    // Render one timeline frame offline, at the loop position t01 in
+    // [0, 1), into the given canvas context. The frame's own items,
+    // with behaviours superposed at t01 when the Behaviours plugin
+    // is on, pure at rest when it is off.
+    renderFrameAt: (frameIndex: number, t01: number, target: CanvasRenderingContext2D, dprOverride?: number) => void;
     renderPanel: () => void;
   };
   // The document: items, groups, selection, tools, colours, stage,
@@ -200,6 +207,19 @@ export interface PluginContext {
     pruneItemGroups: () => void;
     getGridMode: () => GridMode;
     getStageId: () => "wide" | "square" | "portrait";
+    // The timeline: the traditional animation layer's frames, the
+    // frame being edited, and the frame operations. Frame switches
+    // are view state, not undo entries; the operations push history.
+    getTimeline: () => Timeline;
+    getCurrentFrame: () => number;
+    setCurrentFrame: (index: number) => void;
+    addFrame: () => void;
+    duplicateFrame: (index: number) => void;
+    deleteFrame: (index: number) => void;
+    moveFrame: (from: number, to: number) => void;
+    setFrameHold: (index: number, duration: number) => void;
+    getOnionSkin: () => boolean;
+    setOnionSkin: (on: boolean) => void;
     // A gesture is one undoable unit: snapshot before, commit after.
     // gestureStart returns the snapshot; gestureCommit pushes it onto
     // the undo stack when changed.
@@ -248,11 +268,13 @@ export interface PluginContext {
   };
   // The shell elements this plugin may own: the floating toolbar, the
   // stage wrap (the canvas plugin builds the canvas and the text
-  // editor inside it), the bottom bar. The core registers them once
-  // at boot; a plugin builds its UI inside the element it owns.
+  // editor inside it), the filmstrip (the traditional layer builds
+  // the frame strip inside it), the bottom bar. The core registers
+  // them once at boot; a plugin builds its UI inside the element it owns.
   shell: {
     toolbar: HTMLElement;
     stageWrap: HTMLElement;
+    filmstrip: HTMLElement;
     player: HTMLElement;
   };
   // The events bus: subscribe to core state changes, announce your own.
@@ -301,6 +323,7 @@ export interface PluginHost {
   getLoopLength: () => number;
   getStageSize: () => { w: number; h: number };
   renderFrame: (t01: number, target: CanvasRenderingContext2D, dprOverride?: number) => void;
+  renderFrameAt: (frameIndex: number, t01: number, target: CanvasRenderingContext2D, dprOverride?: number) => void;
   renderPanel: () => void;
   // Look an action button up by plugin and short id. The core keys
   // its buttons by the namespaced key, so two plugins may register
@@ -344,6 +367,16 @@ export interface PluginHost {
   pruneItemGroups: () => void;
   getGridMode: () => GridMode;
   getStageId: () => "wide" | "square" | "portrait";
+  getTimeline: () => Timeline;
+  getCurrentFrame: () => number;
+  setCurrentFrame: (index: number) => void;
+  addFrame: () => void;
+  duplicateFrame: (index: number) => void;
+  deleteFrame: (index: number) => void;
+  moveFrame: (from: number, to: number) => void;
+  setFrameHold: (index: number, duration: number) => void;
+  getOnionSkin: () => boolean;
+  setOnionSkin: (on: boolean) => void;
   gestureStart: () => string;
   gestureCommit: (before: string, changed: boolean) => void;
   pushHistory: () => void;
@@ -443,6 +476,7 @@ let canvasRenderer: { pluginId: string; renderer: CanvasRenderer } | null = null
 export interface ShellElements {
   toolbar: HTMLElement;
   stageWrap: HTMLElement;
+  filmstrip: HTMLElement;
   player: HTMLElement;
 }
 
@@ -557,6 +591,15 @@ export function renderFrameTo(t01: number, target: CanvasRenderingContext2D, dpr
   }
 }
 
+// Render one timeline frame offline, for exports. A no-op with no renderer.
+export function renderFrameAtTo(frameIndex: number, t01: number, target: CanvasRenderingContext2D, dprOverride?: number): void {
+  try {
+    canvasRenderer?.renderer.renderFrameAt(frameIndex, t01, target, dprOverride);
+  } catch {
+    // A failing export render must not break the caller.
+  }
+}
+
 export function requestCanvasResize(): void {
   try {
     canvasRenderer?.renderer.resize();
@@ -597,6 +640,7 @@ function createContext(manifest: PluginManifest): PluginContext {
       getStageSize: () => host!.getStageSize(),
       frameCount: () => Math.max(1, Math.round((host!.getLoopMs() / 1000) * 30)),
       renderFrame: (t01, target, dprOverride) => host!.renderFrame(t01, target, dprOverride),
+      renderFrameAt: (frameIndex, t01, target, dprOverride) => host!.renderFrameAt(frameIndex, t01, target, dprOverride),
       renderPanel: () => host!.renderPanel(),
     },
     doc: {
@@ -626,6 +670,16 @@ function createContext(manifest: PluginManifest): PluginContext {
       pruneItemGroups: () => { require("doc"); host!.pruneItemGroups(); },
       getGridMode: () => host!.getGridMode(),
       getStageId: () => host!.getStageId(),
+      getTimeline: () => host!.getTimeline(),
+      getCurrentFrame: () => host!.getCurrentFrame(),
+      setCurrentFrame: (index) => { require("doc"); host!.setCurrentFrame(index); },
+      addFrame: () => { require("doc"); host!.addFrame(); },
+      duplicateFrame: (index) => { require("doc"); host!.duplicateFrame(index); },
+      deleteFrame: (index) => { require("doc"); host!.deleteFrame(index); },
+      moveFrame: (from, to) => { require("doc"); host!.moveFrame(from, to); },
+      setFrameHold: (index, duration) => { require("doc"); host!.setFrameHold(index, duration); },
+      getOnionSkin: () => host!.getOnionSkin(),
+      setOnionSkin: (on) => { require("doc"); host!.setOnionSkin(on); },
       gestureStart: () => { require("doc"); return host!.gestureStart(); },
       gestureCommit: (before, changed) => { require("doc"); host!.gestureCommit(before, changed); },
       pushHistory: () => { require("doc"); host!.pushHistory(); },
@@ -676,6 +730,11 @@ function createContext(manifest: PluginManifest): PluginContext {
         require("shell");
         if (!shellElements) throw new Error("Shell elements not registered yet");
         return shellElements.stageWrap;
+      },
+      get filmstrip(): HTMLElement {
+        require("shell");
+        if (!shellElements) throw new Error("Shell elements not registered yet");
+        return shellElements.filmstrip;
       },
       get player(): HTMLElement {
         require("shell");
