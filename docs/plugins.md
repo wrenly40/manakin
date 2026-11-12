@@ -71,42 +71,73 @@ it, copied from the same source):
   `pluginStorageGet/Set/Delete`). Explicitly a later phase.
 - Trial plugins (`try` / `endTrial`, blob-URL loading).
 - Secure storage — no plugin holds a secret yet.
-- The events bus (`events.on/off`, `selection` / `board` / `view` /
-  `pen` / `tool`). No plugin consumes an event in v1 and nothing emits
-  one; a bus with no emitters would be dead code. It lands with the
-  first plugin that needs to react to core state, copied from
-  Bowerbird's `emitPluginEvent` / `onEvent` / `offEvent`.
-- Shell elements, the board controller and the settings-UI registration
-  — Bowerbird's pattern for a fully plugin-built UI. That is the end
-  state of the migration, not phase 1; the core still owns its DOM
-  until more features migrate.
 - Toast on plugin failure — Manakin's core has no toast; failures are
   recorded in `list()` and surface in the future Settings UI.
 
+Landed in phase 2 (branch `core-plugins`), copied from the same source:
+- The events bus (`emitPluginEvent` / `onEvent` / `offEvent`): the
+  events are `tool`, `pen`, `selection`, `view`, `transport`,
+  `document`. Handlers run in try/catch and a throwing handler is
+  recorded, not propagated — a plugin cannot crash the core by
+  throwing from an event. The core emits the matching event from
+  every host setter; plugins subscribe to the events they care about
+  and re-render from them.
+- Shell elements (`registerShellElements` / `getShellElements`):
+  `toolbar`, `stageWrap`, `player`. The core registers the three
+  shell mounts before `initPlugins`; a plugin reads its mount from
+  `api.shell` and builds its UI inside it. The mount is a stable
+  element the core owns; the plugin owns everything inside it.
+- The canvas-renderer registry (`registerCanvasRenderer` /
+  `getCanvasElement` / `requestCanvasRender` / `renderFrameTo` /
+  `requestCanvasResize`): one plugin owns the stage surface and
+  registers a renderer `{ getElement, render, renderFrame, resize }`.
+  Everything that needs a frame — the player loop, the exports —
+  goes through the registry, never to a canvas it does not own.
+  With no renderer registered the calls are no-ops, so disabling the
+  canvas plugin degrades honestly instead of throwing.
+
 ## What is core, what is a plugin
 
-Core (stays in `src/main.ts` for now; splitting the core into files is a
-later phase, after more features migrate):
+Core (in `src/main.ts` for now; the pure model lives in `src/model.ts`,
+the plugin system in `src/plugins.ts`):
 - Document state: items, item groups, stage, loop length, background, grid.
 - Animation engine: `motionFor`, behaviours, Cycle/Amplitude/Offset/Easing,
   the seamless loop.
 - Undo snapshots, persistence (`manakin-v1`), the sample bird.
-- Stage/workspace rendering, the view transform (pan/zoom/rotate),
-  selection, hit-testing, drawing tools, the player.
-- The panel shell, the toolbar, the colour panel, the Actions section —
-  including the generic action and overlay registries below.
+- The panel shell, the colour panel, the Actions section — including the
+  generic action and overlay registries below.
+- The keyboard, the window chrome, the save/load boundary.
 
-Plugins (first-party, bundled in `src/plugins/`):
+Plugins (first-party, bundled in `src/core-plugins/`):
+- Canvas — the stage/workspace surface, rendering, pointer input
+  (drawing, erasing, dragging, marquee, text editing, pan/rotate drags).
+  Migrated in phase 2.
+- Toolbar — the floating toolbar: tool selection, brush size, the two
+  colour swatches and their swap. Migrated in phase 2.
+- Player — the bottom bar: transport (Back/Play/Stop/Forward), the
+  timeline and clock, the zoom control, the angle readout. Migrated in
+  phase 2.
 - Exports (PNG sequence, GIF, WebM, MP4 + the Export dropdown) — migrated
   in phase 1. It is the proof the system works: self-contained, its own UI,
   no hard-wired calls from the core.
 - Hello — the minimal example. Disabled by default; enable it to see the
   system work end to end.
 
-Later phases migrate the rest, in this order: colour panel, grids, editing
-(Duplicate/Copy-paste/Z-order/Align), behaviours as a plugin (the behaviour
-registry itself), groups. The order is smallest-boundary first; the
-behaviour engine is last because everything reads it.
+Disabling a core plugin removes its UI and degrades honestly: no canvas
+means no stage surface (the panel, the toolbar and the player stay up and
+the app does not crash; the player loop requests renders that no-op);
+no toolbar means no tool switching (the current tool keeps working, the
+keyboard still switches tools); no player means no transport or timeline
+(the canvas keeps rendering the current pose and the panel keeps working).
+Re-enabling rebuilds the UI from the live state.
+
+Later phases migrate the rest, in this order: the traditional animation
+layer (phase 3 — designed below), colour panel, grids, editing
+(Duplicate/Copy-paste/Z-order/Align), behaviours as an extra plugin (the
+behaviour registry itself), groups last. The order is smallest-boundary
+first; the behaviour engine is last because everything reads it. The
+behaviours stay core behaviour until the traditional layer is the
+default — they become an opt-in plugin only after that.
 
 ## What a plugin is
 
@@ -173,6 +204,45 @@ permissions. `api.version` is `'1'`. The full reference is the
   the one-time migration seed (values the core used to own that now
   belong to a plugin, keyed by plugin id) — read it at `activate` if the
   plugin needs it, then forget it.
+- `doc` — needs `doc`: the document. Reads: `getItems()` (the live
+  array — a plugin may push, splice and reorder it in place, exactly
+  as the canvas plugin does when it commits a stroke), `getItemGroups()`,
+  `getSelectedItems()`, `getItemGroupOf(itemId)`, `getSelection()`,
+  `getFocusedId()`, `getTool()`, `getColor()`, `getBgColor()`,
+  `getActiveSlot()`, `getPenWidth()`, `getShapeKind()`, `getStageBg()`,
+  `getGridMode()`, `getStageId()`. Writes (each emits the matching
+  event): `setSelection(ids)`, `setFocusedId(id)` (emit `selection`),
+  `setTool(t)`, `setColor(hex)`, `setBgColor(hex)`, `setActiveSlot(slot)`,
+  `swapColors()`, `setPenWidth(n)`, `setShapeKind(kind)` (emit `pen` or
+  `tool`), `setStageBg(id, custom)`, `pruneItemGroups()` (emit
+  `document`). Gestures: `gestureStart()` returns the undo snapshot
+  to restore on cancel; `gestureCommit(before, changed)` pushes the
+  undo entry (only when `changed` is true) and emits `document`.
+  `pushHistory()` and `save()` are the raw forms.
+- `view` — needs `view`: the view transform. `getZoom()` / `setZoom(z)`,
+  `zoomStep(dir)`, `resetView()`, `resetZoom()`, `getPan()` /
+  `setPan(x, y)`, `getRotate()` / `setRotate(deg)`, `getLayout()`
+  (the workspace layout: stage origin, scale, rotation — read it
+  fresh, never cache it), `getViewState()`, `isSpaceHeld()`,
+  `isRotateHeld()`. Every setter emits `view`.
+- `transport` — needs `transport`: the player clock. `isPlaying()`,
+  `getPlayTime()` / `setPlayTime(ms)`, `play()`, `pause()`, `stop()`,
+  `back()`, `forward()`, `tick(ts)` (advances the clock and returns
+  the loop position `t01`). Every method emits `transport`.
+- `canvas` — needs `canvas`: the stage surface. `getElement()` (the
+  live canvas, or `null` when the canvas plugin is disabled),
+  `requestRender(t01?)` (re-render the current pose), `resize()`
+  (re-fit the canvas to the workspace), `registerRenderer(renderer)`
+  (the canvas plugin registers `{ getElement, render, renderFrame,
+  resize }`; `registerRenderer(null)` unregisters it). Reads are
+  safe with no renderer — they no-op.
+- `shell` — needs `shell`: the three shell mounts, `toolbar`,
+  `stageWrap`, `player`. A plugin builds its UI inside its mount and
+  empties it on `deactivate`. Throws if the shell was not registered.
+- `events` — needs `events`: `on(event, handler)`, `off(event,
+  handler)`, `emit(event)`. The events are `tool`, `pen`, `selection`,
+  `view`, `transport`, `document`. A handler that throws is recorded
+  and does not propagate.
 - `files` — needs `export`: `download(blob, filename)` (the anchor
   download, straight to Downloads) and the PNG-sequence folder surface,
   `pickSequenceFolder()` and `writeSequenceFile(dir, name, dataUrl)`
@@ -181,7 +251,10 @@ permissions. `api.version` is `'1'`. The full reference is the
   the Canvas panel's Actions section, between Save and Clear; `chevron`
   gives it the Export-style chevron), `getActionButton(id)` (the live
   button, for anchoring), `registerOverlay` / `unregisterOverlay` (a
-  floating panel anchored to an action button — see below).
+  floating panel anchored to an action button — see below),
+  `openColour(slot)` (open the Colour view on the foreground or
+  background swatch), `attachTooltip(btn, text)` (the shared frosted
+  hint pill above the button).
 - `storage` — needs `storage`: per-plugin key/value settings in
   localStorage, namespaced `manakin-plugin:<id>:<key>`. Never another
   plugin's keys, never the core save.
@@ -246,6 +319,158 @@ window.manakinPlugins.setEnabled('hello', true)
 
 A Settings → Plugins UI is a later phase; it uses the same `list` and
 `setEnabled` calls.
+
+## The traditional animation layer (phase 3 design)
+
+This is the design phase 3 builds from. It is the default animation
+model: the app without any extra plugin is frame-by-frame animation,
+the way a flipbook is. Behaviours become an extra plugin layered on
+top of it, only after this layer is the default.
+
+### The frame model
+
+A frame is a full pose of the document at one instant: the set of
+items as drawn in that frame. Frames are the document's timeline, not
+a property of one item.
+
+```ts
+type Frame = {
+  id: string;
+  items: Item[];          // the items as they look in this frame
+  duration: number;       // frames held, in timeline frames (default 1)
+};
+type Timeline = {
+  frames: Frame[];        // in order; index 0 is the first frame
+  fps: number;            // timeline frames per second (default 12)
+  current: number;        // the frame being edited (index into frames)
+};
+```
+
+- The timeline lives in the document, next to `items` and
+  `itemGroups`, and is saved in `manakin-v1` under `timeline` with a
+  migration: a save without one gets a single frame holding its items
+  (`{ id, items: <the saved items>, duration: 1 }`), so every existing
+  document opens as a one-frame animation and keeps working.
+- A frame holds its own items. The first frame is the document as it
+  is today; drawing on frame N edits frame N's items only. Copying a
+  frame duplicates its items (fresh ids, like Duplicate); deleting a
+  frame removes its items; the timeline never has zero frames.
+- `duration` is hold time: a frame with `duration: 2` shows for two
+  timeline frames. It is the simple way to slow a pose down without
+  duplicating it. The default is 1.
+- `fps` is the timeline rate (default 12, the classic hand-drawn
+  rate). The loop length setting stays: the loop is the whole
+  timeline played at `fps`, and the loop length in seconds is
+  `totalFrames / fps` — the Loop 4/6/8/10s control becomes a display
+  of the timeline's length (and, when the timeline is a single frame,
+  the behaviour loop length it already is). Phase 3 decides the exact
+  seam: the Loop control stays in the Canvas panel and shows the
+  timeline length when the timeline has more than one frame.
+- Items keep their ids across frames only when copied from the
+  previous frame — that is what makes onion skin and "edit this item
+  in every frame" possible. An item drawn fresh in frame N has a new
+  id and exists only in frame N.
+
+### The filmstrip UI
+
+The filmstrip is a horizontal strip of frame thumbnails along the
+bottom of the workspace, above the player bar (the player owns the
+transport; the filmstrip is the traditional layer's UI, registered
+through the shell as a fourth mount, `filmstrip`, below the stage
+wrap).
+
+- One tile per frame, in order: a small live thumbnail of the frame's
+  items (rendered through the canvas renderer at low resolution),
+  the frame number underneath, the current frame outlined in ink.
+- Click a tile to edit that frame. Drag a tile to reorder it.
+  The tile's context actions (long-press / right-click / the small
+  `+` at the end): duplicate frame, delete frame, add frame after,
+  set hold duration (1/2/3/4).
+- `+` at the end of the strip adds a frame: it starts as a copy of
+  the current frame (so the drawing is there to change), the way a
+  flipbook artist traces the previous drawing. A blank frame is the
+  duplicate with its items deleted — one click, not a mode.
+- The strip scrolls horizontally when the timeline is long. It never
+  moves the player bar; the player bar stays where it is.
+
+### Onion skin
+
+Onion skin shows the neighbouring frames ghosted behind the current
+one while drawing, so the next pose can be traced from the last.
+
+- A toggle in the filmstrip (onion icon, on by default when the
+  timeline has more than one frame): previous frame at ~30% opacity
+  in ink, next frame at ~15% opacity in a different tint. Only the
+  immediately adjacent frames; more would muddy the drawing.
+- Onion frames are display-only: they are never hit-tested, never
+  selectable, never exported, and never in the undo snapshot.
+- The canvas plugin renders them: it reads the timeline through
+  `api.doc` (the traditional layer registers the timeline on the
+  `doc` domain, the same way items are registered) and draws the
+  adjacent frames' items under the current frame's items, at the
+  onion opacities, before the current frame.
+
+### Frame playback through the player
+
+The player does not change shape; it changes what it plays.
+
+- Play advances the timeline at `fps`: the current frame is
+  `floor(playTime * fps / 1000)` mapped through the hold durations,
+  and the canvas renders that frame's items. Pause holds the current
+  frame. Back returns to frame 0. Forward jumps to the last frame.
+  Stop returns to frame 0 and pauses.
+- The timeline progress bar is the player's existing progress fill:
+  it shows the loop position, which is now the timeline position.
+  The clock reads `frame N / total` as well as seconds.
+- A single-frame timeline plays exactly as today: the behaviour
+  loop. The frame model does not change the one-frame case at all —
+  that is the compatibility guarantee.
+- Exports render the timeline: PNG sequence, GIF, WebM and MP4 each
+  emit one image per timeline frame at the timeline's `fps` (held
+  frames repeat their image), so an export of a 24-frame timeline at
+  12fps is 24 images over 2 seconds. The exports plugin reads the
+  timeline through `api.doc` and falls back to the behaviour loop
+  when the timeline has one frame.
+
+### How it relates to the behaviour engine
+
+Frames are the default; behaviours are an extra plugin layered on
+top, in this order:
+
+1. The frame's items are the base pose (what the artist drew in
+   that frame).
+2. The behaviour engine superposes its motion on top of the base
+   pose, exactly as it does today: `motionFor` reads the frame's
+   items and returns the displaced pose for the loop position.
+3. The loop position for behaviours is the timeline position mapped
+   onto the loop: a behaviour with Cycle N completes N cycles per
+   loop, and the loop is the timeline's length. On a single-frame
+   timeline the loop is the Loop setting, as today.
+4. Turning the behaviours plugin off leaves pure frame-by-frame:
+   the frames play, nothing moves between them. Turning it on adds
+   motion to the frames. The behaviour layer stack in the panel
+   stays exactly as it is; it reads the current frame's items.
+5. A behaviour applied to a frame applies to that frame's items
+   only. A behaviour copied with a frame (duplicate frame) keeps
+   working on the copy's items, because the copy's layers are
+   copied with the items, the way Duplicate copies layers today.
+
+### Persistence and undo for frames
+
+- Persistence: `timeline` in the `manakin-v1` payload, next to
+  `items` (which becomes the current frame's items on load when no
+  timeline exists — see the migration above). The undo snapshot
+  gains `timeline` and `currentFrame` alongside `items`,
+  `itemGroups`, `stageId`, `stageBgId`, `stageBgCustom`, `gridMode`,
+  `loopLength`. One entry per gesture, pushed before the mutation,
+  as today.
+- Undo scope: a frame switch is not an undo entry (it is view state,
+  like focus); drawing, adding, deleting, duplicating or reordering
+  a frame is. Undoing a frame deletion restores the frame and its
+  items; undoing a drawing gesture restores the frame's items as
+  they were.
+- The current frame index is view state (not saved, not in undo),
+  like zoom and focus. Reloading opens on frame 0.
 
 ## User plugins (later phase, not phase 1)
 

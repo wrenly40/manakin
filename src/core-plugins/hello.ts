@@ -13,29 +13,29 @@
 // the name and the description, keep the shape, and register whatever
 // the plugin contributes in activate. See docs/plugins.md.
 
-import type { PluginContext, PluginModule } from '../plugins';
+import type { PluginContext, PluginModule } from "../plugins";
 
 export const manifest = {
-  id: 'hello',
-  name: 'Hello (example)',
-  version: '1.0.0',
-  apiVersion: '1',
-  description: 'The minimal example plugin: one action that downloads a hello file.',
-  permissions: ['ui', 'export'],
+  id: "hello",
+  name: "Hello (example)",
+  version: "1.0.0",
+  apiVersion: "1",
+  description: "The minimal example plugin: one action that downloads a hello file.",
+  permissions: ["ui", "export"],
   enabled: false,
   contributions: {
-    actions: [{ id: 'hello', label: 'Hello' }],
+    actions: [{ id: "hello", label: "Hello" }],
   },
 };
 
 export function activate(api: PluginContext): void {
   api.ui.registerAction({
-    id: 'hello',
-    label: 'Hello',
+    id: "hello",
+    label: "Hello",
     onClick: () => {
       api.files.download(
-        new Blob(['Hello from the Manakin plugin API v1\n'], { type: 'text/plain' }),
-        'hello.txt',
+        new Blob(["Hello from the Manakin plugin API v1\n"], { type: "text/plain" }),
+        "hello.txt",
       );
     },
   });
