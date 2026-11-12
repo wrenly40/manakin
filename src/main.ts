@@ -1,6 +1,6 @@
 import './styles.css';
 import { GIFEncoder, quantize, applyPalette } from 'gifenc';
-import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
+import { Output, Mp4OutputFormat, WebMOutputFormat, BufferTarget, CanvasSource } from 'mediabunny';
 
 // The frameless window's controls, exposed by electron/preload.ts.
 // Absent when the page runs outside Electron (e.g. vite preview).
@@ -840,7 +840,10 @@ function load(): void {
         fg?: string; bg?: string; penWidth?: number; recent?: string[]; saved?: string[];
         videoFormat?: unknown; exportTab?: unknown; loopLength?: unknown;
       };
-      if (Array.isArray(data.items) && data.items.length > 0) {
+      // An empty save (0 items) is a real document: it loads as an
+      // empty stage. The old `length > 0` guard fell through to the
+      // sample bird, so an emptied document came back as the bird.
+      if (Array.isArray(data.items)) {
         items = data.items;
         items.forEach(migrateItem);
         itemGroups = migrateItemGroups(data.itemGroups);
@@ -1033,7 +1036,9 @@ void syncWindowState();
 const TOOLS: { id: ToolId; label: string; key: string; svg: string }[] = [
   { id: 'select', label: 'Select', key: 'V', svg: '<path d="M5 3l14 7-6 2-3 6z"/>' },
   { id: 'brush', label: 'Brush', key: 'P', svg: '<path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M13 8l3 3"/>' },
-  { id: 'eraser', label: 'Eraser', key: '', svg: '<path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/>' },
+  // Eraser is D, not E: E is Geometry (and toggles rect/ellipse on a
+  // second press), so the nearest free key to it is the one below it.
+  { id: 'eraser', label: 'Eraser', key: 'D', svg: '<path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/>' },
   { id: 'shape', label: 'Geometry', key: 'E', svg: '<rect x="4" y="4" width="16" height="16" rx="2"/>' },
   { id: 'text', label: 'Text', key: 'T', svg: '<path d="M5 6h14M12 6v13"/>' },
   // Paint bucket: the Lucide paint-bucket icon (user's pick from
@@ -2915,20 +2920,27 @@ function alignSelection(mode: 'left' | 'center' | 'right' | 'top' | 'middle' | '
 // suppresses any re-show while the mouse stays put: the action
 // re-renders the panel, which recreates the button under a stationary
 // cursor and would otherwise re-trigger the hover immediately.
+// The Arrange/Align rows place it BELOW the row instead: the section
+// label sits directly above the row, and a tooltip above the button
+// covered it (the label read "Alig" under the pill). Below the row,
+// centred on the row, it clears the next section's left-aligned label
+// and only ever covers the divider or the Group pill beneath,
+// transiently; if there is no room below the viewport it falls back
+// to above.
 let tooltipTimer: number | null = null;
 let lastTooltipClick = 0;
 function closeTooltipEl(): void {
   if (tooltipTimer !== null) { window.clearTimeout(tooltipTimer); tooltipTimer = null; }
   document.querySelector('.tip')?.remove();
 }
-function attachTooltip(btn: HTMLButtonElement, text: string): void {
+function attachTooltip(btn: HTMLButtonElement, text: string, opts?: { below?: boolean; anchor?: HTMLElement }): void {
   btn.addEventListener('mouseenter', () => {
     if (btn.disabled) return;
     closeTooltipEl();
     tooltipTimer = window.setTimeout(() => {
       tooltipTimer = null;
       if (Date.now() - lastTooltipClick < 1000) return;
-      const r = btn.getBoundingClientRect();
+      const r = (opts?.anchor ?? btn).getBoundingClientRect();
       const tip = document.createElement('div');
       tip.className = 'tip';
       tip.textContent = text;
@@ -2936,9 +2948,16 @@ function attachTooltip(btn: HTMLButtonElement, text: string): void {
       const w = tip.offsetWidth;
       const h = tip.offsetHeight;
       const left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 8));
-      const above = r.top - 6 - h;
+      let top: number;
+      if (opts?.below) {
+        top = r.bottom + 6;
+        if (top + h > window.innerHeight - 8) top = r.top - 6 - h;
+      } else {
+        const above = r.top - 6 - h;
+        top = above >= 8 ? above : r.bottom + 6;
+      }
       tip.style.left = `${left}px`;
-      tip.style.top = `${above >= 8 ? above : r.bottom + 6}px`;
+      tip.style.top = `${top}px`;
     }, 400);
   });
   btn.addEventListener('mouseleave', () => { closeTooltipEl(); });
@@ -2982,7 +3001,7 @@ function renderArrangeSection(): HTMLDivElement {
     b.className = 'icon-btn';
     b.innerHTML = ARRANGE_ICONS[i];
     b.setAttribute('aria-label', d.label);
-    attachTooltip(b, d.label);
+    attachTooltip(b, d.label, { below: true, anchor: row });
     b.disabled = d.disabled;
     b.addEventListener('click', () => { reorderSelection(d.mode); });
     row.appendChild(b);
@@ -3012,7 +3031,7 @@ function renderAlignSection(): HTMLDivElement {
     b.className = 'icon-btn';
     b.innerHTML = ALIGN_ICONS[i];
     b.setAttribute('aria-label', d.label);
-    attachTooltip(b, d.label);
+    attachTooltip(b, d.label, { below: true, anchor: row });
     b.addEventListener('click', () => { alignSelection(d.mode); });
     row.appendChild(b);
   });
@@ -3152,10 +3171,9 @@ function renderExportCard(): HTMLDivElement {
     for (const b of tabBtns) b.disabled = true;
     for (const b of fmtBtns) b.disabled = true;
     if (actionBtn) actionBtn.disabled = true;
-    // An offline export (PNG sequence, GIF, MP4) shows its progress on
-    // the action button; a WebM recording has no progress to show.
+    // An offline export (PNG sequence, GIF, WebM, MP4) shows its
+    // progress on the action button.
     if (exportProgress && actionBtn) actionBtn.textContent = exportProgress.text;
-    else if (actionBtn && exportTab === 'video') actionBtn.textContent = 'Recording…';
   }
   return card;
 }
@@ -3713,7 +3731,11 @@ canvas.addEventListener('pointermove', (e) => {
     if (Math.abs(p.x - drag.start.x) > 4 || Math.abs(p.y - drag.start.y) > 4) drag.moved = true;
   }
 });
-canvas.addEventListener('pointerup', (e) => {
+// Ending a pointer drag — release or cancellation — runs the same
+// finish: commit the gesture, save, clear the drag state. A cancelled
+// pointer used to leave `drag` set (only pan/rotate were cleared),
+// so the next pointerdown started from a stale drag.
+function finishPointerDrag(): void {
   if (panDrag) {
     // A pan is view state, not a document change: no history entry,
     // no save, nothing moved.
@@ -3729,7 +3751,6 @@ canvas.addEventListener('pointerup', (e) => {
     return;
   }
   if (!drag) return;
-  const p = stagePoint(e);
   if (drag.kind === 'shape' && previewShape && previewShape.w > 4 && previewShape.h > 4) {
     pushHistory();
     items.push(previewShape);
@@ -3767,13 +3788,9 @@ canvas.addEventListener('pointerup', (e) => {
   previewShape = null;
   drag = null;
   renderPanel();
-});
-// A cancelled pointer ends a pan or rotate drag without applying
-// anything further; tool drags already tolerate a missing pointerup.
-canvas.addEventListener('pointercancel', () => {
-  if (panDrag) { panDrag = null; updateCursor(); }
-  if (rotateDrag) { rotateDrag = null; updateCursor(); }
-});
+}
+canvas.addEventListener('pointerup', () => finishPointerDrag());
+canvas.addEventListener('pointercancel', () => finishPointerDrag());
 // Wheel over the workspace pans the view — trackpad two-finger
 // scroll included, like scrolling a document (content moves against
 // the scroll direction). Zoom stays on the buttons and Cmd/Ctrl+=/-/0.
@@ -3822,11 +3839,18 @@ function paintAt(p: Pt): void {
 // when anything was actually erased.
 function eraseAt(p: Pt): boolean {
   const radius = penWidth;
+  // Like hitTest, the eraser tests what the user SEES: items render at
+  // their animated pose (motion offset, scale and rotation about their
+  // own centre), so the point is tested against the motion-adjusted
+  // geometry, not the stored one — at rest the bird sits ~19px from
+  // its stored position, and the old stored-geometry test missed a
+  // visibly displaced part. Text is tested by its rendered bbox.
+  const t01 = playTime / loopMs();
   let changed = false;
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i];
     if (it.type === 'text') {
-      const b = itemBBox(it);
+      const b = renderedBBox(it, t01);
       if (p.x >= b.x - radius && p.x <= b.x + b.w + radius && p.y >= b.y - radius && p.y <= b.y + b.h + radius) {
         items.splice(i, 1);
         if (selectedIds.includes(it.id)) selectedIds = selectedIds.filter((id) => id !== it.id);
@@ -3844,8 +3868,11 @@ function eraseAt(p: Pt): boolean {
     const runs: Pt[][] = [];
     let cur: Pt[] = [];
     let removed = 0;
+    // The eraser point in this item's stored space: the inverse of
+    // its rendered motion, exactly as hitTest tests a click.
+    const q = motionAdjustedPoint(it, p, t01);
     for (const pt of pts) {
-      if (Math.hypot(pt.x - p.x, pt.y - p.y) > radius) cur.push(pt);
+      if (Math.hypot(pt.x - q.x, pt.y - q.y) > radius) cur.push(pt);
       else {
         removed++;
         if (cur.length) { runs.push(cur); cur = []; }
@@ -4144,6 +4171,10 @@ async function exportGIF(): Promise<void> {
       const delay = (Math.round(((i + 1) * 10) / 3) - Math.round((i * 10) / 3)) * 10;
       gif.writeFrame(index, w, h, { palette, delay, repeat: 0 });
       setExportProgress(`Exporting ${i + 1}/${n}`, 'video');
+      // The encode loop never yielded, so no live progress was
+      // observable and the UI did not repaint until the file was
+      // done. One macrotask per frame lets the button repaint.
+      await new Promise((r) => setTimeout(r, 0));
     }
     gif.finish();
     downloadBlob(new Blob([gif.bytes() as BlobPart], { type: 'image/gif' }), 'manakin.gif');
@@ -4153,9 +4184,12 @@ async function exportGIF(): Promise<void> {
     renderPanel();
   }
 }
-// MP4: H.264 via WebCodecs (VideoEncoder) + mp4-muxer, both JS-only.
+// MP4: H.264 via WebCodecs (VideoEncoder) + Mediabunny, both JS-only.
 // Chromium cannot do this with MediaRecorder. If this build has no
 // H.264 encoder, isConfigSupported says so and nothing is exported.
+// Frames render offline to an offscreen canvas at stage size, one per
+// 1/30s step, so the frame count is exactly round(L*30) and the
+// duration is exactly L — the same offline path as PNG/GIF.
 async function exportMP4(): Promise<void> {
   if (typeof VideoEncoder === 'undefined') return;
   const { w, h } = stageSize();
@@ -4169,74 +4203,82 @@ async function exportMP4(): Promise<void> {
   renderPanel();
   try {
     const n = Math.max(1, Math.round((loopMs() / 1000) * 30));
-    const muxer = new Muxer({
-      target: new ArrayBufferTarget(),
-      video: { codec: 'avc', width: w, height: h, frameRate: 30 },
-      fastStart: 'in-memory',
-    });
-    let encoderError: Error | null = null;
-    const encoder = new VideoEncoder({
-      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-      error: (e) => { encoderError = e; },
-    });
-    encoder.configure(config);
     const off = document.createElement('canvas');
     off.width = w; off.height = h;
     const octx = off.getContext('2d')!;
+    const target = new BufferTarget();
+    const output = new Output({
+      format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
+      target,
+    });
+    const source = new CanvasSource(off, { codec: 'avc', bitrate: 8_000_000 });
+    output.addVideoTrack(source);
+    await output.start();
     for (let i = 0; i < n; i++) {
       renderFrame(i / n, octx, 1);
-      const frame = new VideoFrame(off, { timestamp: (i * 1e6) / 30 });
-      encoder.encode(frame, { keyFrame: i === 0 });
-      frame.close();
+      // CanvasSource snapshots the canvas synchronously (new
+      // VideoFrame), so the next render cannot corrupt this frame.
+      await source.add(i / 30, 1 / 30);
       setExportProgress(`Exporting ${i + 1}/${n}`, 'video');
-      while (encoder.encodeQueueSize > 4) await new Promise((r) => setTimeout(r, 10));
     }
-    await encoder.flush();
-    encoder.close();
-    if (encoderError) throw encoderError;
-    muxer.finalize();
-    downloadBlob(new Blob([muxer.target.buffer], { type: 'video/mp4' }), 'manakin.mp4');
+    await output.finalize();
+    const buf = target.buffer;
+    if (!buf) return;
+    downloadBlob(new Blob([buf], { type: 'video/mp4' }), 'manakin.mp4');
   } finally {
     exporting = false;
     exportProgress = null;
     renderPanel();
   }
 }
-// WebM: the existing path — one full loop, recorded in real time to an
-// offscreen canvas at stage size. The on-screen canvas and play state
-// are left alone.
+// WebM: VP9 via WebCodecs (VideoEncoder) + Mediabunny, rendered
+// offline like PNG/GIF/MP4 — one frame per 1/30s step, so the frame
+// count is exactly round(L*30) and the duration is exactly L. The
+// old path recorded an offscreen canvas in real time through
+// MediaRecorder, so the frame count followed the machine's rAF rate
+// (119 clean, 26 under CPU load, 171 in a 6s run) instead of the
+// frame schedule. Mediabunny's default 'quality' latency mode never
+// drops frames; the old 'realtime' behaviour is what lost them.
 async function exportWebM(): Promise<void> {
   if (exporting) return;
+  if (typeof VideoEncoder === 'undefined') return;
+  const { w, h } = stageSize();
+  const support = await VideoEncoder.isConfigSupported({
+    codec: 'vp09.00.10.08', width: w, height: h,
+    bitrate: 8_000_000, framerate: 30,
+  });
+  if (!support.supported) return;
   exporting = true;
   renderPanel();
-  const { w, h } = stageSize();
-  const off = document.createElement('canvas');
-  off.width = w; off.height = h;
-  const octx = off.getContext('2d')!;
-  const stream = off.captureStream(30);
-  const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-    ? 'video/webm;codecs=vp9' : 'video/webm';
-  const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8_000_000 });
-  const chunks: Blob[] = [];
-  rec.ondataavailable = (ev) => { if (ev.data.size > 0) chunks.push(ev.data); };
-  const done = new Promise<void>((resolve) => { rec.onstop = () => resolve(); });
-  rec.start(100);
-  const L = loopMs();
-  const start = performance.now();
-  await new Promise<void>((resolve) => {
-    const tick = () => {
-      const el = performance.now() - start;
-      if (el >= L) { renderFrame(0, octx, 1); resolve(); return; }
-      renderFrame(el / L, octx, 1);
-      requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  });
-  rec.stop();
-  await done;
-  downloadBlob(new Blob(chunks, { type: 'video/webm' }), 'manakin.webm');
-  exporting = false;
-  renderPanel();
+  try {
+    const n = Math.max(1, Math.round((loopMs() / 1000) * 30));
+    const off = document.createElement('canvas');
+    off.width = w; off.height = h;
+    const octx = off.getContext('2d')!;
+    const target = new BufferTarget();
+    const output = new Output({
+      format: new WebMOutputFormat(),
+      target,
+    });
+    const source = new CanvasSource(off, { codec: 'vp9', bitrate: 8_000_000 });
+    output.addVideoTrack(source);
+    await output.start();
+    for (let i = 0; i < n; i++) {
+      renderFrame(i / n, octx, 1);
+      // CanvasSource snapshots the canvas synchronously (new
+      // VideoFrame), so the next render cannot corrupt this frame.
+      await source.add(i / 30, 1 / 30);
+      setExportProgress(`Exporting ${i + 1}/${n}`, 'video');
+    }
+    await output.finalize();
+    const buf = target.buffer;
+    if (!buf) return;
+    downloadBlob(new Blob([buf], { type: 'video/webm' }), 'manakin.webm');
+  } finally {
+    exporting = false;
+    exportProgress = null;
+    renderPanel();
+  }
 }
 function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
@@ -4302,6 +4344,7 @@ window.addEventListener('keydown', (e) => {
   }
   if (k === 'v') tool = 'select';
   else if (k === 'p') tool = 'brush';
+  else if (k === 'd') tool = 'eraser';
   else if (k === 'b') tool = 'paint';
   else if (k === 'x') { swapColors(); return; }
   else if (k === 'e') { if (tool === 'shape') shapeKind = shapeKind === 'rect' ? 'ellipse' : 'rect'; tool = 'shape'; }
