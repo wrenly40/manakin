@@ -662,6 +662,93 @@ export function migrateItem(it: Item): void {
 }
 
 // ---------------------------------------------------------------------------
+// Timeline — the traditional animation layer
+// ---------------------------------------------------------------------------
+
+// A frame is a full pose of the document at one instant: the set of
+// items as drawn in that frame. Frames are the document's timeline,
+// not a property of one item.
+export type Frame = {
+  id: string;
+  items: Item[]; // the items as they look in this frame
+  duration: number; // frames held, in timeline frames (default 1)
+};
+export type Timeline = {
+  frames: Frame[]; // in order; index 0 is the first frame
+  fps: number; // timeline frames per second (default 12)
+  current: number; // the frame being edited (index into frames)
+};
+export const TIMELINE_FPS = 12;
+export const FRAME_HOLD_MIN = 1;
+export const FRAME_HOLD_MAX = 4;
+
+export function newFrame(items: Item[], duration = 1): Frame {
+  const d = typeof duration === "number" && Number.isFinite(duration) ? Math.round(duration) : 1;
+  return { id: nid(), items, duration: Math.max(FRAME_HOLD_MIN, Math.min(FRAME_HOLD_MAX, d)) };
+}
+// Whole timeline frames, holds expanded: a frame with duration 2
+// counts twice.
+export function totalTimelineFrames(tl: Timeline): number {
+  return tl.frames.reduce((n, f) => n + f.duration, 0);
+}
+// The loop length of a multi-frame timeline, in ms: the whole
+// timeline played at fps. A single-frame timeline never uses this —
+// its loop is the Loop setting (see loopMs below).
+export function timelineDurationMs(tl: Timeline): number {
+  return (totalTimelineFrames(tl) / tl.fps) * 1000;
+}
+// Which frame the playhead is in, at playMs within the loop: the
+// frame index mapped through the hold durations. Past the end (a
+// playhead clamped late) reads as the last frame.
+export function frameIndexAtTime(tl: Timeline, playMs: number): number {
+  const step = 1000 / tl.fps;
+  let t = 0;
+  for (let i = 0; i < tl.frames.length; i++) {
+    t += tl.frames[i].duration * step;
+    if (playMs < t) return i;
+  }
+  return tl.frames.length - 1;
+}
+// The ms at which a frame starts within the loop, through the holds
+// before it. Frame 0 starts at 0.
+export function frameStartMs(tl: Timeline, index: number): number {
+  const step = 1000 / tl.fps;
+  let t = 0;
+  for (let i = 0; i < Math.min(index, tl.frames.length); i++) t += tl.frames[i].duration * step;
+  return t;
+}
+// Validate a saved timeline in place: drop frames with no items
+// array, give missing/duplicate ids fresh ones, clamp holds to 1-4,
+// clamp the current frame into range. Returns null when nothing
+// usable survives — the caller then migrates from the save's items
+// (a save without a timeline) or falls back to the sample bird.
+export function migrateTimeline(raw: unknown): Timeline | null {
+  if (!raw || typeof raw !== "object") return null;
+  const t = raw as Partial<Timeline>;
+  if (!Array.isArray(t.frames)) return null;
+  const seen = new Set<string>();
+  const frames: Frame[] = [];
+  for (const r of t.frames as unknown[]) {
+    if (!r || typeof r !== "object") continue;
+    const f = r as Partial<Frame>;
+    if (!Array.isArray(f.items)) continue;
+    const items = f.items as Item[];
+    items.forEach(migrateItem);
+    let id = typeof f.id === "string" && f.id ? f.id : nid();
+    if (seen.has(id)) id = nid();
+    seen.add(id);
+    const duration = typeof f.duration === "number" && Number.isFinite(f.duration)
+      ? Math.max(FRAME_HOLD_MIN, Math.min(FRAME_HOLD_MAX, Math.round(f.duration))) : 1;
+    frames.push({ id, items, duration });
+  }
+  if (frames.length === 0) return null;
+  const fps = typeof t.fps === "number" && Number.isFinite(t.fps) && t.fps > 0 ? Math.round(t.fps) : TIMELINE_FPS;
+  const current = typeof t.current === "number" && Number.isFinite(t.current)
+    ? Math.max(0, Math.min(frames.length - 1, Math.floor(t.current))) : 0;
+  return { frames, fps, current };
+}
+
+// ---------------------------------------------------------------------------
 // Geometry
 // ---------------------------------------------------------------------------
 

@@ -120,7 +120,8 @@ export interface CanvasRenderer {
 //   view — zoom, pan or rotation changed
 //   transport — play state changed (play / pause / stop / back / forward)
 //   document — the document changed (items, groups, stage, loop, grid)
-export type PluginEvent = "tool" | "pen" | "selection" | "view" | "transport" | "document";
+//   timeline — the timeline changed (frames, current frame, onion skin)
+export type PluginEvent = "tool" | "pen" | "selection" | "view" | "transport" | "document" | "timeline";
 
 export type PluginEventHandler = () => void;
 

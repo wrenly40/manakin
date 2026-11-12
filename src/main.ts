@@ -15,6 +15,8 @@ import {
   EASING_ARIA,
   EASING_IDS,
   EASING_LABELS,
+  FRAME_HOLD_MAX,
+  FRAME_HOLD_MIN,
   GRID_OPTIONS,
   LAYER_ICONS,
   LEGACY_RATE_STOPS,
@@ -23,6 +25,7 @@ import {
   SAVE_KEY,
   STAGES,
   STAGE_BGS,
+  TIMELINE_FPS,
   ZOOM_STOPS,
   amplitudeScale,
   baseItem,
@@ -51,6 +54,8 @@ import {
   effCycle,
   effCycleIn,
   fadeRamp,
+  frameIndexAtTime,
+  frameStartMs,
   groupCtx,
   groupMotion,
   groupOf,
@@ -74,11 +79,13 @@ import {
   migrateItem,
   migrateItemGroup,
   migrateItemGroups,
+  migrateTimeline,
   motionAdjustedPoint,
   motionFor,
   motionForItem,
   motionForLayers,
   moveItem,
+  newFrame,
   newLayer,
   nid,
   normDeg,
@@ -95,6 +102,8 @@ import {
   stagePointFor,
   stageSizeFor,
   stageToScreenFor,
+  timelineDurationMs,
+  totalTimelineFrames,
   trembleTerms,
   wanderJitterAmp,
   wanderTerms,
@@ -119,6 +128,7 @@ import type {
   StageBgId,
   StrokeItem,
   TextItem,
+  Timeline,
   ToolId,
   ViewState,
   WorkspaceLayout,
@@ -142,7 +152,13 @@ declare global {
 
 
 // ---------- state ----------
+// `items` is the live binding: always the current frame's items.
+// Everything reads it; a frame switch rebinds it.
 let items: Item[] = [];
+// The timeline: the frames, the fps, and which frame is being edited.
+// A save without one migrates to a single frame holding its items.
+let timeline: Timeline = { frames: [newFrame([])], fps: TIMELINE_FPS, current: 0 };
+let onionSkin = true; // ghost the neighbouring frames on screen
 // Item groups: containers of canvas items with their own behaviour
 // layers — distinct from BehaviourGroup (v9, per-item collections of
 // behaviour layers). Flat only, no nesting, no groups in groups.
@@ -170,9 +186,136 @@ function itemGroupOf(itemId: string): ItemGroup | undefined {
 }
 // An item leaving the document leaves its item groups too; a group
 // left with fewer than 2 members dissolves and its layers are deleted.
+// Membership is tested against every frame's items: a group lives in
+// the frame it was made in, and viewing another frame must not
+// dissolve it.
 function pruneItemGroups(): void {
-  for (const g of itemGroups) g.memberIds = [...new Set(g.memberIds.filter((m) => items.some((i) => i.id === m)))];
+  const all = timeline.frames.flatMap((f) => f.items);
+  for (const g of itemGroups) g.memberIds = [...new Set(g.memberIds.filter((m) => all.some((i) => i.id === m)))];
   itemGroups = itemGroups.filter((g) => g.memberIds.length >= 2);
+}
+
+// ---------- frames ----------
+// The frame switch itself: timeline.current, the live items binding,
+// and the 'timeline' event the filmstrip follows. No history, no
+// panel re-render — the player calls this up to fps times a second,
+// and the panel rebuilds only on user action. The selection goes
+// dormant on a switch (its ids are not in the other frame), and the
+// outline returns when its frame comes back.
+function switchFrame(i: number): void {
+  timeline.current = i;
+  items = timeline.frames[i].items;
+  emitPluginEvent('timeline');
+}
+
+// A user-initiated frame switch (filmstrip click): the playhead jumps
+// to the frame's start, the selection clears (its items are not in
+// this frame), and the panel re-renders for the new frame.
+function setCurrentFrame(index: number): void {
+  const i = Math.max(0, Math.min(timeline.frames.length - 1, Math.floor(index)));
+  if (i === timeline.current) return;
+  switchFrame(i);
+  playTime = frameStartMs(timeline, i);
+  selectedIds = [];
+  focusedId = null;
+  renderPanel();
+}
+
+// `+` adds a copy of the current frame, so the drawing is there to
+// change — the way a flipbook artist traces the previous drawing.
+function addFrame(): void {
+  pushHistory();
+  const copy = timeline.frames[timeline.current].items.map((it) => cloneItemWithOffset(it, 0, 0));
+  const frame = newFrame(copy);
+  timeline.frames.splice(timeline.current + 1, 0, frame);
+  timeline.current += 1;
+  items = frame.items;
+  playTime = frameStartMs(timeline, timeline.current);
+  selectedIds = [];
+  focusedId = null;
+  save();
+  emitPluginEvent('timeline');
+  renderPanel();
+}
+
+// Duplicate inserts a copy after the frame and lands on it, so the
+// copy is the one being edited.
+function duplicateFrame(index: number): void {
+  if (index < 0 || index >= timeline.frames.length) return;
+  pushHistory();
+  const copy = timeline.frames[index].items.map((it) => cloneItemWithOffset(it, 0, 0));
+  const frame = newFrame(copy, timeline.frames[index].duration);
+  timeline.frames.splice(index + 1, 0, frame);
+  timeline.current = index + 1;
+  items = frame.items;
+  playTime = frameStartMs(timeline, timeline.current);
+  selectedIds = [];
+  focusedId = null;
+  save();
+  emitPluginEvent('timeline');
+  renderPanel();
+}
+
+function deleteFrame(index: number): void {
+  if (timeline.frames.length <= 1) return;
+  if (index < 0 || index >= timeline.frames.length) return;
+  pushHistory();
+  timeline.frames.splice(index, 1);
+  // Deleting the current frame moves to the frame that took its place;
+  // deleting a frame before it shifts the index down.
+  if (timeline.current >= timeline.frames.length) timeline.current = timeline.frames.length - 1;
+  else if (timeline.current > index) timeline.current -= 1;
+  items = timeline.frames[timeline.current].items;
+  playTime = frameStartMs(timeline, timeline.current);
+  selectedIds = [];
+  focusedId = null;
+  pruneItemGroups();
+  save();
+  emitPluginEvent('timeline');
+  renderPanel();
+}
+
+// `to` is the insertion index (0..frames.length); the frame moves
+// before it. Dropping a tile on its own position is a no-op.
+function moveFrame(from: number, to: number): void {
+  const n = timeline.frames.length;
+  if (from < 0 || from >= n) return;
+  const insert = Math.max(0, Math.min(n, Math.floor(to)));
+  if (insert === from || insert === from + 1) return;
+  pushHistory();
+  const [frame] = timeline.frames.splice(from, 1);
+  const at = insert > from ? insert - 1 : insert;
+  timeline.frames.splice(at, 0, frame);
+  if (timeline.current === from) timeline.current = at;
+  else if (from < timeline.current && at >= timeline.current) timeline.current -= 1;
+  else if (from > timeline.current && at <= timeline.current) timeline.current += 1;
+  items = timeline.frames[timeline.current].items;
+  playTime = frameStartMs(timeline, timeline.current);
+  save();
+  emitPluginEvent('timeline');
+  renderPanel();
+}
+
+function setFrameHold(index: number, duration: number): void {
+  const frame = timeline.frames[index];
+  if (!frame) return;
+  const d = Math.max(FRAME_HOLD_MIN, Math.min(FRAME_HOLD_MAX, Math.round(duration)));
+  if (frame.duration === d) return;
+  pushHistory();
+  frame.duration = d;
+  // A hold change before the playhead shifts the timings, so the
+  // frame being edited is re-derived from the playhead.
+  playTime = playTime % loopMs();
+  const fi = frameIndexAtTime(timeline, playTime);
+  if (fi !== timeline.current) {
+    timeline.current = fi;
+    items = timeline.frames[fi].items;
+    selectedIds = [];
+    focusedId = null;
+  }
+  save();
+  emitPluginEvent('timeline');
+  renderPanel();
 }
 // Double-click focus (view state only — never saved, never an undo entry):
 // the focused part renders full, every other part at 0.1.
@@ -284,7 +427,9 @@ function pushRecent(hex: string): void {
 // Thin wrappers over the model: the model takes its inputs as
 // arguments, the shell reads them from module state.
 function loopMs(): number {
-  return loopMsFor(loopLength);
+  // A single-frame timeline plays the behaviour loop (the Loop
+  // setting); a multi-frame timeline plays the whole timeline at fps.
+  return timeline.frames.length <= 1 ? loopMsFor(loopLength) : timelineDurationMs(timeline);
 }
 function stageSize(): { w: number; h: number } {
   return stageSizeFor(stageId);
@@ -304,17 +449,22 @@ function setShapeKind(k: 'rect' | 'ellipse'): void {
 }
 function save(): void {
   try {
+    // The timeline is saved without `current`: reloading opens on
+    // frame 0. The onion-skin toggle is a preference, saved alongside.
     localStorage.setItem(SAVE_KEY, JSON.stringify({
-      items, itemGroups, stageId, loopLength, projectName, stageBgId, stageBgCustom, gridMode, panelOpen,
+      timeline: { frames: timeline.frames, fps: timeline.fps }, onionSkin,
+      itemGroups, stageId, loopLength, projectName, stageBgId, stageBgCustom, gridMode, panelOpen,
       fg: color, bg: bgColour, penWidth, recent: recentColours, saved: savedColours,
     }));
   } catch { /* storage full or unavailable */ }
 }
 function snapshot(): string {
-  // The whole document state: items, item groups, stage size,
-  // loop length, background and grid. Tool settings (pen width,
-  // colours, project name) are not document state and stay out of undo.
-  return JSON.stringify({ items, itemGroups, stageId, loopLength, stageBgId, stageBgCustom, gridMode });
+  // The whole document state: the timeline (including which frame was
+  // being edited, so undoing a gesture restores that frame), item
+  // groups, stage size, loop length, background and grid. Tool
+  // settings (pen width, colours, project name) are not document
+  // state and stay out of undo.
+  return JSON.stringify({ timeline, itemGroups, stageId, loopLength, stageBgId, stageBgCustom, gridMode });
 }
 function pushHistory(): void {
   history.push(snapshot());
@@ -351,15 +501,23 @@ function restore(json: string): void {
   try {
     const data = JSON.parse(json) as unknown;
     if (Array.isArray(data)) {
-      items = data as Item[];
+      // A bare items array: a pre-timeline snapshot shape.
+      timeline = { frames: [newFrame(data as Item[])], fps: TIMELINE_FPS, current: 0 };
       itemGroups = [];
     } else if (data && typeof data === 'object') {
       const d = data as {
-        items?: Item[]; itemGroups?: unknown; stageId?: typeof stageId; stageBgId?: StageBgId;
+        timeline?: unknown; items?: Item[]; itemGroups?: unknown; stageId?: typeof stageId; stageBgId?: StageBgId;
         stageBgCustom?: string | null; gridMode?: unknown; loopLength?: unknown;
       };
-      if (Array.isArray(d.items)) items = d.items;
-      itemGroups = migrateItemGroups(d.itemGroups, items);
+      if (d.timeline !== undefined) {
+        const migrated = migrateTimeline(d.timeline);
+        if (migrated) timeline = migrated;
+      }
+      if (Array.isArray(d.items) && d.timeline === undefined) {
+        // Pre-timeline snapshot: the items are the one frame.
+        timeline = { frames: [newFrame(d.items)], fps: TIMELINE_FPS, current: 0 };
+      }
+      itemGroups = migrateItemGroups(d.itemGroups, timeline.frames.flatMap((f) => f.items));
       if (d.stageId === 'wide' || d.stageId === 'square' || d.stageId === 'portrait') stageId = d.stageId;
       if (isLoopLength(d.loopLength)) loopLength = d.loopLength;
       if (d.stageBgId) stageBgId = d.stageBgId;
@@ -368,7 +526,8 @@ function restore(json: string): void {
       if (gm !== null) gridMode = gm;
     }
   } catch { /* corrupted history entry: keep current items */ }
-  items.forEach(migrateItem); // undo snapshots from older saves may lack the newer parameter fields
+  timeline.frames.forEach((f) => f.items.forEach(migrateItem)); // undo snapshots from older saves may lack the newer parameter fields
+  items = timeline.frames[timeline.current].items;
   pruneItemGroups();
   selectedIds = selectedIds.filter((id) => items.some((i) => i.id === id));
   // Keep the eased amplitudes of layers that still exist: clearing them
@@ -377,13 +536,17 @@ function restore(json: string): void {
   // layer is gone are dropped — a layer id is never reused, so a
   // dropped entry is never read again.
   const liveLayerIds = new Set<string>();
-  for (const it of items) for (const l of it.layers) liveLayerIds.add(l.id);
+  for (const it of timeline.frames.flatMap((f) => f.items)) for (const l of it.layers) liveLayerIds.add(l.id);
   for (const g of itemGroups) for (const l of g.layers) liveLayerIds.add(l.id);
   pruneSmoothed(liveLayerIds);
   // A restored snapshot may carry a shorter loop than the current
   // playhead (e.g. undoing a 10s → 4s change while paused at 9s);
-  // keep the playhead inside the loop.
+  // keep the playhead inside the loop. And the playhead must sit
+  // inside the restored frame: if it does not (the snapshot was taken
+  // on another frame), jump to that frame's start.
   playTime = playTime % loopMs();
+  const fi = frameIndexAtTime(timeline, playTime);
+  if (fi !== timeline.current) playTime = frameStartMs(timeline, timeline.current);
   save();
   requestCanvasResize();
   renderPanel();
@@ -410,10 +573,10 @@ function load(): void {
     const raw = localStorage.getItem(SAVE_KEY);
     if (raw) {
       const data = JSON.parse(raw) as {
-        items: Item[]; itemGroups?: unknown; stageId: typeof stageId; projectName?: string;
+        timeline?: unknown; items?: Item[]; itemGroups?: unknown; stageId: typeof stageId; projectName?: string;
         stageBgId?: StageBgId; stageBgCustom?: string | null; gridMode?: unknown; panelOpen?: boolean;
         fg?: string; bg?: string; penWidth?: number; recent?: string[]; saved?: string[];
-        videoFormat?: unknown; exportTab?: unknown; loopLength?: unknown;
+        videoFormat?: unknown; exportTab?: unknown; loopLength?: unknown; onionSkin?: boolean;
       };
       // The tab and video format used to live in this save; they
       // belong to the Exports plugin now. Keep them as the one-time
@@ -422,27 +585,39 @@ function load(): void {
       // parseable save — including one with no items.
       if (data.videoFormat === 'gif' || data.videoFormat === 'webm' || data.videoFormat === 'mp4') legacyExportPrefs.videoFormat = data.videoFormat;
       if (data.exportTab === 'png' || data.exportTab === 'video') legacyExportPrefs.exportTab = data.exportTab;
-      // An empty save (0 items) is a real document: it loads as an
-      // empty stage. The old `length > 0` guard fell through to the
-      // sample bird, so an emptied document came back as the bird.
+      // Shared fields load the same way for both save shapes.
+      if (data.stageId) stageId = data.stageId;
+      if (isLoopLength(data.loopLength)) loopLength = data.loopLength;
+      if (typeof data.projectName === 'string' && data.projectName.trim()) projectName = data.projectName;
+      if (data.stageBgId && (STAGE_BGS.some((b) => b.id === data.stageBgId) || data.stageBgId === 'custom')) stageBgId = data.stageBgId;
+      if (typeof data.stageBgCustom === 'string') stageBgCustom = data.stageBgCustom;
+      const gm = migrateGridMode(data.gridMode);
+      if (gm !== null) gridMode = gm;
+      if (typeof data.panelOpen === 'boolean') panelOpen = data.panelOpen;
+      if (typeof data.fg === 'string') color = data.fg;
+      if (typeof data.bg === 'string') bgColour = data.bg;
+      if (typeof data.penWidth === 'number' && data.penWidth >= 2 && data.penWidth <= 32) penWidth = data.penWidth;
+      if (Array.isArray(data.recent)) recentColours = data.recent.filter((c) => typeof c === 'string').slice(0, 8);
+      if (Array.isArray(data.saved)) savedColours = data.saved.filter((c) => typeof c === 'string');
+      if (typeof data.onionSkin === 'boolean') onionSkin = data.onionSkin;
+      // A save with a timeline loads it (reloading opens on frame 0);
+      // a save without one — every save before the timeline — migrates
+      // to a single frame holding its items. An empty save (0 items)
+      // is a real document: it loads as an empty stage.
+      const migrated = migrateTimeline(data.timeline);
+      if (migrated) {
+        timeline = migrated;
+        timeline.current = 0;
+        items = timeline.frames[0].items;
+        itemGroups = migrateItemGroups(data.itemGroups, timeline.frames.flatMap((f) => f.items));
+        return;
+      }
       if (Array.isArray(data.items)) {
         items = data.items;
         items.forEach(migrateItem);
         itemGroups = migrateItemGroups(data.itemGroups, items);
-        if (data.stageId) stageId = data.stageId;
-        // Old saves carry no loopLength: they load at the 4s default.
-        if (isLoopLength(data.loopLength)) loopLength = data.loopLength;
-        if (typeof data.projectName === 'string' && data.projectName.trim()) projectName = data.projectName;
-        if (data.stageBgId && (STAGE_BGS.some((b) => b.id === data.stageBgId) || data.stageBgId === 'custom')) stageBgId = data.stageBgId;
-        if (typeof data.stageBgCustom === 'string') stageBgCustom = data.stageBgCustom;
-        const gm = migrateGridMode(data.gridMode);
-        if (gm !== null) gridMode = gm;
-        if (typeof data.panelOpen === 'boolean') panelOpen = data.panelOpen;
-        if (typeof data.fg === 'string') color = data.fg;
-        if (typeof data.bg === 'string') bgColour = data.bg;
-        if (typeof data.penWidth === 'number' && data.penWidth >= 2 && data.penWidth <= 32) penWidth = data.penWidth;
-        if (Array.isArray(data.recent)) recentColours = data.recent.filter((c) => typeof c === 'string').slice(0, 8);
-        if (Array.isArray(data.saved)) savedColours = data.saved.filter((c) => typeof c === 'string');
+        timeline = { frames: [newFrame(items)], fps: TIMELINE_FPS, current: 0 };
+        items = timeline.frames[0].items;
         return;
       }
     }
@@ -451,6 +626,8 @@ function load(): void {
   // The sample bird already carries new-format layer instances; migrate
   // only validates them (and drops any legacy fields).
   items.forEach(migrateItem);
+  timeline = { frames: [newFrame(items)], fps: TIMELINE_FPS, current: 0 };
+  items = timeline.frames[0].items;
   save();
 }
 
@@ -1832,27 +2009,39 @@ function renderCanvasPanel(): void {
   }
   stageSec.appendChild(stageSeg);
   const loopSec = mkSection('Loop');
-  const loopSeg = document.createElement('div');
-  loopSeg.className = 'seg';
-  loopSeg.setAttribute('role', 'group');
-  loopSeg.setAttribute('aria-label', 'Loop length');
-  for (const len of LOOP_LENGTHS) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = loopLength === len ? 'active' : '';
-    b.textContent = `${len}s`;
-    b.setAttribute('aria-label', `Loop ${len} seconds`);
-    b.addEventListener('click', () => {
-      if (loopLength === len) return;
-      pushHistory();
-      loopLength = len;
-      playTime = playTime % loopMs();
-      save();
-      renderPanel();
-    });
-    loopSeg.appendChild(b);
+  if (timeline.frames.length > 1) {
+    // A multi-frame timeline's length is the timeline itself: the
+    // frames at fps. The Loop setting only drives the single-frame
+    // behaviour loop, so it reads as a live readout instead of the seg.
+    const total = totalTimelineFrames(timeline);
+    const secs = timelineDurationMs(timeline) / 1000;
+    const readout = document.createElement('div');
+    readout.className = 'loop-readout';
+    readout.textContent = `${secs.toFixed(1)}s · ${total} frames @ ${timeline.fps} fps`;
+    loopSec.appendChild(readout);
+  } else {
+    const loopSeg = document.createElement('div');
+    loopSeg.className = 'seg';
+    loopSeg.setAttribute('role', 'group');
+    loopSeg.setAttribute('aria-label', 'Loop length');
+    for (const len of LOOP_LENGTHS) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = loopLength === len ? 'active' : '';
+      b.textContent = `${len}s`;
+      b.setAttribute('aria-label', `Loop ${len} seconds`);
+      b.addEventListener('click', () => {
+        if (loopLength === len) return;
+        pushHistory();
+        loopLength = len;
+        playTime = playTime % loopMs();
+        save();
+        renderPanel();
+      });
+      loopSeg.appendChild(b);
+    }
+    loopSec.appendChild(loopSeg);
   }
-  loopSec.appendChild(loopSeg);
   const bgSec = mkSection('Background');
   const bgDots = document.createElement('div');
   bgDots.className = 'bg-dots';
@@ -2140,11 +2329,14 @@ function renderColourPanel(): void {
 (document.getElementById('undo-btn') as HTMLButtonElement).addEventListener('click', undo);
 (document.getElementById('redo-btn') as HTMLButtonElement).addEventListener('click', redo);
 function clearStage(): void {
+  // Clear clears the frame being edited, not the whole timeline: the
+  // other frames keep their drawings.
   if (items.length === 0) return;
   pushHistory();
-  items = [];
-  itemGroups = [];
+  timeline.frames[timeline.current].items = [];
+  items = timeline.frames[timeline.current].items;
   selectedIds = [];
+  pruneItemGroups();
   clearSmoothed();
   save();
   renderPanel();
@@ -2321,13 +2513,17 @@ const pluginHost: PluginHost = {
   setPlayTime: (ms) => { playTime = ms; emitPluginEvent('transport'); },
   play: () => { if (!playing) { playing = true; lastTs = 0; } emitPluginEvent('transport'); },
   pause: () => { playing = false; emitPluginEvent('transport'); },
-  stop: () => { playing = false; playTime = 0; emitPluginEvent('transport'); },
-  back: () => { playTime = 0; emitPluginEvent('transport'); },
-  forward: () => { playTime = loopMs() - 1; emitPluginEvent('transport'); },
+  stop: () => { playing = false; playTime = 0; if (timeline.current !== 0) switchFrame(0); emitPluginEvent('transport'); },
+  back: () => { playTime = 0; if (timeline.current !== 0) switchFrame(0); emitPluginEvent('transport'); },
+  forward: () => { playTime = frameStartMs(timeline, timeline.frames.length - 1); if (timeline.current !== timeline.frames.length - 1) switchFrame(timeline.frames.length - 1); emitPluginEvent('transport'); },
   tick: (ts) => {
     if (playing) {
       if (lastTs) playTime = (playTime + (ts - lastTs)) % loopMs();
       lastTs = ts;
+      // Playback advances through the frames at fps: the frame is
+      // whatever the playhead is inside.
+      const fi = frameIndexAtTime(timeline, playTime);
+      if (fi !== timeline.current) switchFrame(fi);
     } else {
       lastTs = 0;
     }
