@@ -19,8 +19,8 @@ declare global {
 }
 
 type Pt = { x: number; y: number };
-type BehaviourName = 'Bob' | 'Sway' | 'Breathe' | 'Blink' | 'Spin' | 'Wander';
-const BEHAVIOURS: BehaviourName[] = ['Bob', 'Sway', 'Breathe', 'Blink', 'Spin', 'Wander'];
+type BehaviourName = 'Bob' | 'Sway' | 'Breathe' | 'Blink' | 'Spin' | 'Wander' | 'Bounce' | 'Stretch' | 'Orbit' | 'Fade' | 'Tremble';
+const BEHAVIOURS: BehaviourName[] = ['Bob', 'Sway', 'Breathe', 'Blink', 'Spin', 'Wander', 'Bounce', 'Stretch', 'Orbit', 'Fade', 'Tremble'];
 // One behaviour cycle at tempo 1x lasts 4s; a tempo of tx makes it 4/t s.
 // Tempo is stepped: only powers of two, so the ratio of any two tempos is
 // an integer and every behaviour completes a whole number of cycles in the
@@ -47,6 +47,30 @@ function tempoStopIndex(t: number): number {
 function formatTempoStop(s: number): string {
   return `${s.toFixed(2).replace(/0$/, '').replace(/\.$/, '')}x`;
 }
+// Easing reshapes the normalized cycle phase u in [0,1] with a function
+// mapping 0->0 and 1->1, so every easing still closes the loop seamlessly.
+// Smooth is the identity: the current sine, so old saves and the sample
+// bird move exactly as before.
+type EasingName = 'smooth' | 'linear' | 'ease-in-out' | 'snap';
+const EASING_IDS: EasingName[] = ['smooth', 'linear', 'ease-in-out', 'snap'];
+// The picker-visible labels: "Ease In-Out" does not fit the 232px card
+// at full size, so it reads "In-Out" (the full name is the button's
+// aria-label).
+const EASING_LABELS: Record<EasingName, string> = { smooth: 'Smooth', linear: 'Linear', 'ease-in-out': 'In-Out', snap: 'Snap' };
+const EASING_ARIA: Record<EasingName, string> = { smooth: 'Easing Smooth', linear: 'Easing Linear', 'ease-in-out': 'Easing Ease In-Out', snap: 'Easing Snap' };
+function easePhase(easing: EasingName, u: number): number {
+  if (easing === 'linear') {
+    // Constant-speed rise and fall (a triangle wave out of the sine):
+    // the phase warp whose sine is linear in u. asin() is exact at the
+    // joints (u = 0.25 / 0.75), so the warp is continuous.
+    if (u < 0.25) return Math.asin(4 * u) / (Math.PI * 2);
+    if (u < 0.75) return 0.5 - Math.asin(2 - 4 * u) / (Math.PI * 2);
+    return 1 + Math.asin(4 * u - 4) / (Math.PI * 2);
+  }
+  if (easing === 'ease-in-out') return u * u * (3 - 2 * u); // smoothstep: dwell at the extremes, sweep through the middle
+  if (easing === 'snap') return Math.floor(u * 4) / 4; // 4 holds per cycle: hold, then jump
+  return u; // smooth
+}
 // One small icon per behaviour, same 1.8-stroke, 20px, ink language as the
 // toolbar icons — each distinct at a glance in the layer stack.
 const LAYER_ICONS: string[] = [
@@ -56,6 +80,11 @@ const LAYER_ICONS: string[] = [
   '<svg viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/></svg>', // Blink: eye outline with a dot
   '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6"/><path d="M20 3v4h-4"/></svg>', // Spin: circular arrow
   '<svg viewBox="0 0 24 24"><path d="M3 16c2.5-5 5 2 7.5-3s5 2 7.5-3" stroke-dasharray="0.5 3.5"/></svg>', // Wander: dotted squiggle
+  '<svg viewBox="0 0 24 24"><path d="M5 17c2-6 4-8 7-8s5 2 7 8"/><circle cx="12" cy="18.5" r="2.4" fill="currentColor" stroke="none"/></svg>', // Bounce: hop arc over the ball at rest
+  '<svg viewBox="0 0 24 24"><rect x="6" y="10" width="12" height="4" rx="1"/><path d="M12 3v4M12 17v4"/></svg>', // Stretch: wide flat rect, squash arrows
+  '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="20" cy="12" r="2.2" fill="currentColor" stroke="none"/></svg>', // Orbit: ring with a dot on it
+  '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none" opacity="0.35"/></svg>', // Fade: ring with a faint centre
+  '<svg viewBox="0 0 24 24"><path d="M3 12l2.5-4 2.5 8 2.5-10 2.5 12 2.5-10 2.5 8 2.5-4"/></svg>', // Tremble: dense fast zigzag
 ];
 // Z-order icons: stacked squares, same 1.8-stroke ink language —
 // the filled square is the one on top (front) or at the back (back);
@@ -91,19 +120,23 @@ type BehaviourGroup = {
 // can appear several times in a stack, each instance with its own id and
 // its own parameters; only the parameters relevant to its behaviour are
 // used (Blink also uses blinkDuration, Spin also spinReverse, Wander also
-// wanderSmooth).
+// wanderSmooth, Orbit also orbitReverse). Easing reshapes every
+// behaviour's cycle phase; Smooth is the identity, so it is the current
+// motion for the existing six.
 type LayerParams = {
   on: boolean;
   tempo: number; // one of TEMPO_STOPS
   amplitude: number; // 0-1
   offset: number; // 0-1 shift of the motion within its own cycle
+  easing: EasingName; // reshapes the cycle phase; 'smooth' is the current sine
   blinkDuration: number; // % of the cycle the blink bump spans (Blink only)
   spinReverse: boolean; // Spin only: run the spin backwards
   wanderSmooth: number; // 0-100% (Wander only); 50+ is the smooth drift
+  orbitReverse: boolean; // Orbit only: run the orbit counter-clockwise
 };
 type BehaviourLayer = LayerParams & {
   id: string; // unique within the item; never reused
-  behaviour: number; // 0-5, index into BEHAVIOURS
+  behaviour: number; // 0-10, index into BEHAVIOURS
 };
 type ItemBase = {
   id: string;
@@ -165,7 +198,7 @@ function nid(): string {
   return `i${Date.now().toString(36)}${uid}`;
 }
 function defaultLayerParams(): LayerParams {
-  return { on: true, tempo: 1, amplitude: 0.66, offset: 0, blinkDuration: 26, spinReverse: false, wanderSmooth: 50 };
+  return { on: true, tempo: 1, amplitude: 0.66, offset: 0, easing: 'smooth', blinkDuration: 26, spinReverse: false, wanderSmooth: 50, orbitReverse: false };
 }
 // The default blink duration of 26% is a raised-cosine bump whose
 // half-depth width (13%) matches the old sin^8 blink.
@@ -489,9 +522,11 @@ function cleanParams(p: Partial<LayerParams>): LayerParams {
     offset: typeof p.offset === 'number'
       ? clampNum(p.offset, 0, 1, 0)
       : clampNum(legacy.phase, 0, 100, 0) / 100,
+    easing: typeof p.easing === 'string' && (EASING_IDS as string[]).includes(p.easing) ? p.easing as EasingName : 'smooth',
     blinkDuration: clampNum(p.blinkDuration, 10, 60, 26),
     spinReverse: p.spinReverse === true,
     wanderSmooth: clampNum(p.wanderSmooth, 0, 100, 50),
+    orbitReverse: p.orbitReverse === true,
   };
 }
 // Validate a saved layer stack in place: drop layers with a bad
@@ -614,28 +649,32 @@ function migrateItem(it: Item): void {
   // Old format: per-behaviour parameter arrays, with an optional
   // layers: number[] stack (v10) or no stack at all (pre-v10).
   // v2 saves stored a 6x8 beat grid; a row with any cell on becomes layer on.
+  // The legacy arrays hold the six behaviours that existed before v34
+  // added Bounce/Stretch/Orbit/Fade/Tremble — they are 6 long, not
+  // BEHAVIOURS.length, and the new behaviours never appear in them.
+  const LEGACY_BEHAVIOUR_COUNT = 6;
   let active = [false, false, false, false, false, false];
   if (Array.isArray(anyIt.pattern)) {
     const grid = anyIt.pattern as boolean[][];
-    active = BEHAVIOURS.map((_, b) => Array.isArray(grid[b]) && grid[b].some(Boolean));
-  } else if (Array.isArray(anyIt.active) && anyIt.active.length === BEHAVIOURS.length) {
+    active = Array.from({ length: LEGACY_BEHAVIOUR_COUNT }, (_, b) => Array.isArray(grid[b]) && grid[b].some(Boolean));
+  } else if (Array.isArray(anyIt.active) && anyIt.active.length === LEGACY_BEHAVIOUR_COUNT) {
     active = (anyIt.active as unknown[]).map((v) => v === true);
   }
-  const tempos = (Array.isArray(anyIt.speeds) && anyIt.speeds.length === BEHAVIOURS.length
+  const tempos = (Array.isArray(anyIt.speeds) && anyIt.speeds.length === LEGACY_BEHAVIOUR_COUNT
     ? (anyIt.speeds as unknown[]).map((v) => snapTempo(v)) : [1, 1, 1, 1, 1, 1]);
-  const amounts = (Array.isArray(anyIt.amounts) && anyIt.amounts.length === BEHAVIOURS.length
+  const amounts = (Array.isArray(anyIt.amounts) && anyIt.amounts.length === LEGACY_BEHAVIOUR_COUNT
     ? (anyIt.amounts as unknown[]).map((a) => {
         const n = typeof a === 'number' ? a : NaN;
         return n === 0.5 ? 33 : n === 1 ? 66 : n === 2 ? 100 : n > 2 ? n : 66;
       }) : [66, 66, 66, 66, 66, 66]);
-  const phases = (Array.isArray(anyIt.phases) && anyIt.phases.length === BEHAVIOURS.length
+  const phases = (Array.isArray(anyIt.phases) && anyIt.phases.length === LEGACY_BEHAVIOUR_COUNT
     ? (anyIt.phases as unknown[]).map((p) => (typeof p === 'number' && p >= 0 && p <= 100 ? p : 0)) : [0, 0, 0, 0, 0, 0]);
   const blinkDuration = clampNum(anyIt.blinkDuration, 10, 60, 26);
   const spinReverse = anyIt.spinReverse === true;
   const wanderSmooth = clampNum(anyIt.wanderSmooth, 0, 100, 50);
   const paramsOf = (b: number): LayerParams => ({
     on: active[b], tempo: tempos[b], amplitude: amounts[b] / 100, offset: phases[b] / 100,
-    blinkDuration, spinReverse, wanderSmooth,
+    easing: 'smooth', blinkDuration, spinReverse, wanderSmooth, orbitReverse: false,
   });
   const hasCustom = (b: number): boolean =>
     tempos[b] !== 1 || amounts[b] !== 66 || phases[b] !== 0 ||
@@ -650,7 +689,7 @@ function migrateItem(it: Item): void {
     const legacy = g as Partial<BehaviourGroup> & { speed?: unknown; amount?: unknown };
     const rawMembers = (Array.isArray(g.members) ? g.members : []) as unknown[];
     const members = rawMembers
-      .filter((m): m is number => typeof m === 'number' && Number.isInteger(m) && m >= 0 && m < BEHAVIOURS.length && !seen.has(m));
+      .filter((m): m is number => typeof m === 'number' && Number.isInteger(m) && m >= 0 && m < LEGACY_BEHAVIOUR_COUNT && !seen.has(m));
     members.forEach((m) => seen.add(m));
     return {
       id: typeof g.id === 'string' && g.id ? g.id : nid(),
@@ -668,9 +707,9 @@ function migrateItem(it: Item): void {
   // parameter). Group members are always in the stack.
   let oldStack: number[];
   if (Array.isArray(anyIt.layers) && (anyIt.layers as unknown[]).every((m) => Number.isInteger(m))) {
-    oldStack = [...new Set((anyIt.layers as number[]).filter((m) => m >= 0 && m < BEHAVIOURS.length))];
+    oldStack = [...new Set((anyIt.layers as number[]).filter((m) => m >= 0 && m < LEGACY_BEHAVIOUR_COUNT))];
   } else {
-    oldStack = BEHAVIOURS.map((_, b) => b).filter((b) => active[b] || hasCustom(b));
+    oldStack = Array.from({ length: LEGACY_BEHAVIOUR_COUNT }, (_, b) => b).filter((b) => active[b] || hasCustom(b));
   }
   const indexToId = new Map<number, string>();
   const layers: BehaviourLayer[] = [];
@@ -688,7 +727,7 @@ function migrateItem(it: Item): void {
   // Off + fully-default ones need no stash: the defaults restore exactly
   // what re-adding gave in v10.
   const stash: Partial<Record<number, LayerParams>> = {};
-  for (let b = 0; b < BEHAVIOURS.length; b++) if (!indexToId.has(b) && hasCustom(b)) stash[b] = paramsOf(b);
+  for (let b = 0; b < LEGACY_BEHAVIOUR_COUNT; b++) if (!indexToId.has(b) && hasCustom(b)) stash[b] = paramsOf(b);
   it.stash = stash;
   it.groups = oldGroups.map((g) => ({
     ...g,
@@ -1159,12 +1198,14 @@ function motionAdjustedPoint(it: Item, p: Pt, t01: number): Pt {
   const m = motionForItem(it, t01);
   const b = itemBBox(it);
   const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
-  // Inverse of drawItem's translate/rotate/scale about the centre
-  // (uniform scale commutes with rotation, so the order here is free).
-  const x = (p.x - m.dx - cx) / m.scale;
-  const y = (p.y - m.dy - cy) / m.scale;
+  // Inverse of drawItem's translate/rotate/scale about the centre:
+  // translate(-(cx+dx, cy+dy)), rotate(-rot), then scale by the
+  // per-axis reciprocal. (A uniform scale commutes with rotation, so
+  // the old order was free; Stretch's sx/sy does not commute.)
+  const x = p.x - m.dx - cx, y = p.y - m.dy - cy;
   const cos = Math.cos(-m.rot), sin = Math.sin(-m.rot);
-  return { x: x * cos - y * sin + cx, y: x * sin + y * cos + cy };
+  const rx = x * cos - y * sin, ry = x * sin + y * cos;
+  return { x: rx / (m.scale * m.sx) + cx, y: ry / (m.scale * m.sy) + cy };
 }
 // The bbox of an item as drawn: the stored bbox carried through the
 // item's motion (offset, scale and rotation about its centre). The
@@ -1176,7 +1217,7 @@ function renderedBBox(it: Item, t01: number): { x: number; y: number; w: number;
   const cos = Math.cos(m.rot), sin = Math.sin(m.rot);
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const [px, py] of [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]] as const) {
-    const dx = (px - cx) * m.scale, dy = (py - cy) * m.scale;
+    const dx = (px - cx) * m.scale * m.sx, dy = (py - cy) * m.scale * m.sy;
     const rx = cx + m.dx + dx * cos - dy * sin;
     const ry = cy + m.dy + dx * sin + dy * cos;
     x0 = Math.min(x0, rx); y0 = Math.min(y0, ry); x1 = Math.max(x1, rx); y1 = Math.max(y1, ry);
@@ -1348,7 +1389,7 @@ function smoothedAmp(layer: BehaviourLayer, target: number): number {
   smoothed.set(layer.id, next);
   return next;
 }
-type Motion = { dx: number; dy: number; scale: number; rot: number; opacity: number };
+type Motion = { dx: number; dy: number; scale: number; rot: number; opacity: number; sx: number; sy: number };
 // Blink pulse: a smooth raised-cosine bump centred where sin(ph) peaks
 // (ph = PI/2), spanning `durationPct` % of the cycle at its base. At the
 // default 26% the eye is more than half closed for ~13% of the cycle,
@@ -1373,11 +1414,71 @@ function wanderJitterAmp(smooth: number): number {
 // start. The old 0.5x/0.7x base and 2.3x/3.1x jitter never closed.
 function wanderTerms(layer: BehaviourLayer, cycles: number, t01: number): { x: number; y: number } {
   const twoPi = Math.PI * 2;
-  const ph = twoPi * layer.offset;
   const j = wanderJitterAmp(layer.wanderSmooth);
+  if (layer.easing === 'smooth') {
+    // The old expression exactly, so Wander moves bit-identically on
+    // old saves.
+    const ph = twoPi * layer.offset;
+    return {
+      x: Math.sin(twoPi * cycles * t01 + ph) + j * Math.sin(twoPi * 2 * cycles * t01 + 0.4 + ph),
+      y: Math.sin(twoPi * cycles * t01 + 1.3 + ph) + j * Math.sin(twoPi * 3 * cycles * t01 + 2.1 + ph),
+    };
+  }
+  // Eased: every term reads the eased cycle position. The jitter is
+  // 2x/3x the eased position (minus the offset, as the old expression
+  // had it), so it still advances by whole cycles over the loop.
+  const pos = easedCyclePos(layer, cycles, t01);
+  const off = layer.offset;
   return {
-    x: Math.sin(twoPi * cycles * t01 + ph) + j * Math.sin(twoPi * 2 * cycles * t01 + 0.4 + ph),
-    y: Math.sin(twoPi * cycles * t01 + 1.3 + ph) + j * Math.sin(twoPi * 3 * cycles * t01 + 2.1 + ph),
+    x: Math.sin(twoPi * pos) + j * Math.sin(twoPi * (2 * pos - off) + 0.4),
+    y: Math.sin(twoPi * pos + 1.3) + j * Math.sin(twoPi * (3 * pos - 2 * off) + 2.1),
+  };
+}
+// The instance's position within its own cycle, in cycles, after easing:
+// whole cycles advance unwarped (so the pose at the wrap equals the pose
+// at the start); only the fractional phase is reshaped.
+function easedCyclePos(layer: BehaviourLayer, cycles: number, t01: number): number {
+  const cyc = cycles * t01 + layer.offset;
+  const whole = Math.floor(cyc);
+  return whole + easePhase(layer.easing, cyc - whole);
+}
+// The fractional eased phase, for curves read in [0,1) like Bounce's.
+function easedFrac(layer: BehaviourLayer, cycles: number, t01: number): number {
+  const pos = easedCyclePos(layer, cycles, t01);
+  return pos - Math.floor(pos);
+}
+// The phase angle for the sine-based behaviours. For Smooth the easing
+// is the identity, so this is exactly the old expression — old saves
+// and the sample bird move bit-identically.
+function phaseOf(layer: BehaviourLayer, cycles: number, t01: number): number {
+  if (layer.easing === 'smooth') return Math.PI * 2 * cycles * t01 + Math.PI * 2 * layer.offset;
+  return Math.PI * 2 * easedCyclePos(layer, cycles, t01);
+}
+// Bounce height over one cycle: a parabola peaked mid-cycle — the
+// constant-acceleration shape of a ball under gravity. It is 0 at the
+// cycle ends (rest on the ground) and the velocity flips there: fast
+// fall, sharp rebound. Always >= 0, unlike Bob's sine.
+function bounceCurve(u: number): number {
+  return 4 * u * (1 - u);
+}
+// Fade depth over one cycle: a slow raised-cosine ramp, 0 at the ends
+// and 1 mid-cycle — the whole loop is one fade out and back in, where
+// Blink's pulse spans only blinkDuration % of the cycle.
+function fadeRamp(ph: number): number {
+  return (1 - Math.cos(ph)) / 2;
+}
+// Tremble jitter, shared by the motion and the graph. Like Wander's
+// drift but at higher integer-multiple frequencies (7x/9x base, 11x/13x
+// second harmonic) and a much smaller radius, so it reads as a fast
+// shiver rather than a slow drift. Every component is an integer
+// multiple of the loop, so the pose at the cycle end equals the pose
+// at the start.
+function trembleTerms(layer: BehaviourLayer, cycles: number, t01: number): { x: number; y: number } {
+  const twoPi = Math.PI * 2;
+  const pos = easedCyclePos(layer, cycles, t01);
+  return {
+    x: Math.sin(twoPi * 7 * pos) + 0.6 * Math.sin(twoPi * 11 * pos + 0.4),
+    y: Math.sin(twoPi * 9 * pos + 1.3) + 0.6 * Math.sin(twoPi * 13 * pos + 2.1),
   };
 }
 // A layer's effective parameters, resolved through a context: an
@@ -1411,22 +1512,26 @@ function hostFindLayer(h: LayerHost, id: string): BehaviourLayer | undefined {
   return hostLayers(h).find((l) => l.id === id);
 }
 function motionForLayers(layers: BehaviourLayer[], ctx: LayerCtx, t01: number): Motion {
-  const twoPi = Math.PI * 2;
-  let dx = 0, dy = 0, scale = 1, rot = 0, opacity = 1;
+  let dx = 0, dy = 0, scale = 1, rot = 0, opacity = 1, sx = 1, sy = 1;
   for (const layer of layers) {
     const a = smoothedAmp(layer, ctx.active(layer) ? 1 : 0);
     if (a < 0.01) continue;
     const cycles = loopCyclesTempo(ctx.tempo(layer));
     const am = amplitudeScale(ctx.amplitude(layer));
-    const ph = twoPi * cycles * t01 + twoPi * layer.offset; // Offset shifts the motion within its own cycle
+    const ph = phaseOf(layer, cycles, t01); // Offset shifts the motion within its own cycle; easing reshapes the phase
     if (layer.behaviour === 0) dy += a * am * 16 * Math.sin(ph); // Bob
     if (layer.behaviour === 1) dx += a * am * 16 * Math.sin(ph + Math.PI / 2); // Sway
     if (layer.behaviour === 2) scale += a * am * 0.08 * Math.sin(ph); // Breathe
     if (layer.behaviour === 3) opacity -= a * ctx.amplitude(layer) * blinkPulse(ph, layer.blinkDuration); // Blink: depth is the amplitude (0 = never closes, 1 = fully shut)
     if (layer.behaviour === 4) rot += (layer.spinReverse ? -1 : 1) * a * am * 0.35 * Math.sin(ph); // Spin
     if (layer.behaviour === 5) { const w = wanderTerms(layer, cycles, t01); dx += a * am * 18 * w.x; dy += a * am * 14 * w.y; } // Wander
+    if (layer.behaviour === 6) dy -= a * am * 16 * bounceCurve(easedFrac(layer, cycles, t01)); // Bounce: a hop up from rest — fast fall, sharp rebound at the ground
+    if (layer.behaviour === 7) { const s = a * am * 0.08 * Math.sin(ph); sx += s; sy -= s; } // Stretch: scaleX and scaleY in opposition (wide+short <-> narrow+tall)
+    if (layer.behaviour === 8) { const dir = layer.orbitReverse ? -1 : 1; dx += a * am * 16 * Math.cos(ph); dy += dir * a * am * 16 * Math.sin(ph); } // Orbit: a small circle around the rest position
+    if (layer.behaviour === 9) opacity -= a * ctx.amplitude(layer) * fadeRamp(ph); // Fade: slow ramp in and out over the whole loop (depth is the amplitude, like Blink)
+    if (layer.behaviour === 10) { const tr = trembleTerms(layer, cycles, t01); dx += a * am * 3 * tr.x; dy += a * am * 2.5 * tr.y; } // Tremble: tiny fast jitter, where Wander is a slow drift
   }
-  return { dx, dy, scale, rot, opacity: Math.max(0.05, Math.min(1, opacity)) };
+  return { dx, dy, scale, rot, opacity: Math.max(0.05, Math.min(1, opacity)), sx, sy };
 }
 function motionFor(it: Item, t01: number): Motion {
   return motionForLayers(it.layers, itemCtx(it), t01);
@@ -1447,6 +1552,8 @@ function motionForItem(it: Item, t01: number): Motion {
     dx: m.dx + mg.dx,
     dy: m.dy + mg.dy,
     scale: m.scale * mg.scale,
+    sx: m.sx * mg.sx,
+    sy: m.sy * mg.sy,
     rot: m.rot + mg.rot,
     opacity: Math.max(0.05, Math.min(1, m.opacity * mg.opacity)),
   };
@@ -1454,13 +1561,17 @@ function motionForItem(it: Item, t01: number): Motion {
 // Motion value of one layer over the loop, for the layer graph.
 // Reads the same parameters as motionFor, so the graph and the motion agree.
 function behaviourValue(layer: BehaviourLayer, ctx: LayerCtx, t01: number): number {
-  const twoPi = Math.PI * 2;
   const am = amplitudeScale(ctx.amplitude(layer));
   const cycles = loopCyclesTempo(ctx.tempo(layer));
-  const ph = twoPi * cycles * t01 + twoPi * layer.offset;
+  const ph = phaseOf(layer, cycles, t01);
   if (layer.behaviour === 3) return am * blinkPulse(ph, layer.blinkDuration); // Blink: the widened pulse itself, not a square wave
   if (layer.behaviour === 4) return (layer.spinReverse ? -1 : 1) * am * Math.sin(ph); // Spin: mirrors when reversed
   if (layer.behaviour === 5) { const w = wanderTerms(layer, cycles, t01); return am * (w.x + 0.7 * w.y) / 1.7; } // Wander
+  if (layer.behaviour === 6) return am * bounceCurve(easedFrac(layer, cycles, t01)); // Bounce: the hop height (0 at rest, 1 at the apex)
+  if (layer.behaviour === 7) return am * Math.sin(ph); // Stretch: the scaleX deviation; scaleY is its mirror
+  if (layer.behaviour === 8) { const dir = layer.orbitReverse ? -1 : 1; return am * (Math.cos(ph) + 0.7 * dir * Math.sin(ph)) / 1.7; } // Orbit: mirrors when reversed, like Spin
+  if (layer.behaviour === 9) return am * fadeRamp(ph); // Fade: the slow ramp itself
+  if (layer.behaviour === 10) { const tr = trembleTerms(layer, cycles, t01); return am * (tr.x + 0.7 * tr.y) / 1.7; } // Tremble
   return am * Math.sin(ph);
 }
 
@@ -1525,7 +1636,7 @@ function drawItem(c: CanvasRenderingContext2D, it: Item, t01: number, applyFocus
   c.save();
   c.translate(cx + m.dx, cy + m.dy);
   c.rotate(m.rot);
-  c.scale(m.scale, m.scale);
+  c.scale(m.scale * m.sx, m.scale * m.sy);
   c.translate(-cx, -cy);
   // Focus dims the part; it multiplies the animated opacity (e.g. Blink)
   // rather than replacing it.
@@ -1740,6 +1851,47 @@ function paramSlider(opts: {
   row.appendChild(lab);
   row.appendChild(input);
   row.appendChild(val);
+  return row;
+}
+
+// A labelled segmented choice (Easing, Orbit Direction): the label sits
+// above the control, the control is a .seg. The active button updates in
+// place; the caller owns history/save/redraw. A click on the already
+// active option is a no-op (no undo entry, no re-render).
+function choiceSeg(opts: {
+  label: string; aria: string; compact?: boolean;
+  options: { id: string; label: string; aria: string }[];
+  value: string;
+  onPick: (id: string) => void;
+}): HTMLDivElement {
+  const row = document.createElement('div');
+  row.className = 'choice-row';
+  const lab = document.createElement('span');
+  lab.className = 'dctl-label';
+  lab.textContent = opts.label;
+  row.appendChild(lab);
+  const seg = document.createElement('div');
+  seg.className = 'seg' + (opts.compact ? ' compact-seg' : '');
+  seg.setAttribute('role', 'group');
+  seg.setAttribute('aria-label', opts.aria);
+  let current = opts.value;
+  const btns: HTMLButtonElement[] = [];
+  for (const o of opts.options) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = current === o.id ? 'active' : '';
+    b.textContent = o.label;
+    b.setAttribute('aria-label', o.aria);
+    b.addEventListener('click', () => {
+      if (current === o.id) return;
+      current = o.id;
+      for (const x of btns) x.classList.toggle('active', x === b);
+      opts.onPick(o.id);
+    });
+    seg.appendChild(b);
+    btns.push(b);
+  }
+  row.appendChild(seg);
   return row;
 }
 
@@ -1995,6 +2147,19 @@ function behaviourLayer(host: LayerHost, inst: BehaviourLayer, opts: { checkable
       onInput: (v) => { const l = liveLayer(); if (!l) return; l.offset = v; redraw(); },
       onCommit: () => save(),
     }));
+    body.appendChild(choiceSeg({
+      label: 'Easing', aria: `${displayName} easing`, compact: true,
+      options: EASING_IDS.map((e) => ({ id: e, label: EASING_LABELS[e], aria: EASING_ARIA[e] })),
+      value: inst.easing,
+      onPick: (id) => {
+        const l = liveLayer();
+        if (!l) return;
+        pushHistory();
+        l.easing = id as EasingName;
+        redraw();
+        save();
+      },
+    }));
     if (b === 3) {
       body.appendChild(paramSlider({
         label: 'Duration', min: 10, max: 60, step: 1, value: inst.blinkDuration,
@@ -2042,6 +2207,24 @@ function behaviourLayer(host: LayerHost, inst: BehaviourLayer, opts: { checkable
         aria: 'Wander smoothness',
         onInput: (v) => { const l = liveLayer(); if (!l) return; l.wanderSmooth = v; redraw(); },
         onCommit: () => save(),
+      }));
+    }
+    if (b === 8) {
+      body.appendChild(choiceSeg({
+        label: 'Direction', aria: 'Orbit direction',
+        options: [
+          { id: 'cw', label: 'Clockwise', aria: 'Orbit direction clockwise' },
+          { id: 'ccw', label: 'Counter-clockwise', aria: 'Orbit direction counter-clockwise' },
+        ],
+        value: inst.orbitReverse ? 'ccw' : 'cw',
+        onPick: (id) => {
+          const l = liveLayer();
+          if (!l) return;
+          pushHistory();
+          l.orbitReverse = id === 'ccw';
+          redraw();
+          save();
+        },
       }));
     }
     layer.appendChild(body);
@@ -2232,7 +2415,9 @@ function removeBehaviourLayer(host: LayerHost, layerId: string): void {
   pushHistory();
   sel.stash[layer.behaviour] = {
     on: layer.on, tempo: layer.tempo, amplitude: layer.amplitude, offset: layer.offset,
+    easing: layer.easing,
     blinkDuration: layer.blinkDuration, spinReverse: layer.spinReverse, wanderSmooth: layer.wanderSmooth,
+    orbitReverse: layer.orbitReverse,
   };
   sel.layers = sel.layers.filter((l) => l.id !== layerId);
   for (const g of sel.groups) g.members = g.members.filter((m) => m !== layerId);
@@ -2269,20 +2454,75 @@ function addBehaviour(host: LayerHost, b: number): void {
   renderPanel();
 }
 
+// Built-in presets: named combinations of behaviour layers with tuned
+// parameters, applied to the selected part (or item group) in one tap.
+// Applying a preset ADDS its layers to the stack as new instances — it
+// replaces nothing, and a preset's layers are ordinary layers afterwards
+// (toggleable, removable, groupable, undoable). Preset layers default to
+// Smooth easing: presets do not set easing.
+type PresetDef = { name: string; layers: { behaviour: number; tempo: number; amplitude: number }[] };
+const PRESETS: PresetDef[] = [
+  { name: 'Idle', layers: [{ behaviour: 0, tempo: 1, amplitude: 0.4 }, { behaviour: 2, tempo: 1, amplitude: 0.4 }] },
+  { name: 'Excited', layers: [{ behaviour: 6, tempo: 1, amplitude: 0.66 }, { behaviour: 4, tempo: 1, amplitude: 0.66 }] },
+  { name: 'Floating', layers: [{ behaviour: 1, tempo: 0.5, amplitude: 0.4 }, { behaviour: 0, tempo: 0.5, amplitude: 0.4 }] },
+  { name: 'Sleepy', layers: [{ behaviour: 2, tempo: 0.5, amplitude: 0.4 }, { behaviour: 9, tempo: 0.5, amplitude: 0.5 }] },
+  { name: 'Nervous', layers: [{ behaviour: 10, tempo: 2, amplitude: 0.5 }, { behaviour: 3, tempo: 1, amplitude: 0.66 }] },
+];
+// One undo entry for the whole preset, not one per layer. Preset layers
+// are fresh instances with the preset's tuned parameters — they do not
+// draw on the item's stash (that is only for re-adding a removed
+// behaviour from the picker).
+function applyPreset(host: LayerHost, preset: PresetDef): void {
+  pushHistory();
+  let first: BehaviourLayer | null = null;
+  for (const p of preset.layers) {
+    const layer = newLayer(p.behaviour, { tempo: p.tempo, amplitude: p.amplitude });
+    if (host.kind === 'group') host.group.layers.push(layer);
+    else host.item.layers.push(layer);
+    if (!first) first = layer;
+  }
+  if (first) scrollToLayerId = first.id;
+  addPickerOpen = false;
+  save();
+  renderPanel();
+}
+
 function closeAddPickerEl(): void {
   document.querySelector('.add-picker')?.remove();
 }
 
 // The Add behavior picker: a small popover anchored to the Add button,
-// listing all six behaviours with their icons. Every row is always
-// enabled: the same behaviour can be added several times, each add
-// creating a new instance. Fixed-position so the panel's scroll cannot
-// clip it; flips above the button when there is no room below.
+// listing the presets first (a "Presets" section, one row per preset,
+// name only) and then all eleven behaviours with their icons. Every
+// row is always enabled: the same behaviour can be added several times,
+// each add creating a new instance. Fixed-position so the panel's scroll
+// cannot clip it; flips above the button when there is no room below.
 function renderAddPicker(anchorBtn: HTMLElement, host: LayerHost): void {
   closeAddPickerEl();
   const pop = document.createElement('div');
   pop.className = 'add-picker';
   pop.setAttribute('role', 'menu');
+  const secLab = document.createElement('div');
+  secLab.className = 'add-picker-section';
+  secLab.textContent = 'Presets';
+  pop.appendChild(secLab);
+  for (const preset of PRESETS) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'add-picker-row preset';
+    row.setAttribute('role', 'menuitem');
+    row.setAttribute('aria-label', `Apply preset ${preset.name}`);
+    row.innerHTML = `<span class="layer-name">${preset.name}</span>`;
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      applyPreset(host, preset);
+    });
+    pop.appendChild(row);
+  }
+  const div = document.createElement('div');
+  div.className = 'add-picker-div';
+  div.setAttribute('aria-hidden', 'true');
+  pop.appendChild(div);
   for (let b = 0; b < BEHAVIOURS.length; b++) {
     const row = document.createElement('button');
     row.type = 'button';

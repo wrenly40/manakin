@@ -459,12 +459,20 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
    shape-picker flyout, anchored to the Add button. */
 .add-picker {
   position: fixed; z-index: 50; width: 220px; padding: 6px;
+  max-height: calc(100vh - 16px); overflow-y: auto;
   background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 16px;
   box-shadow: var(--shadow-md);
 }
+/* Presets section: a small grey label above the preset rows, then a
+   hairline before the behaviour list. */
+.add-picker-section {
+  font-size: 12px; font-weight: 600; color: var(--grey);
+  padding: 6px 10px 4px;
+}
+.add-picker-div { height: 1px; background: var(--hairline); margin: 6px 4px; }
 .add-picker-row {
   display: flex; align-items: center; gap: 10px;
   width: 100%; height: 36px; padding: 0 10px;
@@ -527,6 +535,11 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 /* Reverse toggle row: same switch as the layer toggles, label + value text. */
 .ptoggle-row { display: flex; align-items: center; gap: 8px; }
 .ptoggle-row .pslider-value { margin-left: auto; }
+/* Labelled segmented choice (Easing, Orbit Direction): the label sits
+   above the control. The compact variant is 12px with tight padding,
+   for four options across the 232px card. */
+.choice-row { display: flex; flex-direction: column; gap: 6px; }
+.compact-seg button { padding: 0 4px; font-size: 12px; }
 
 /* Bottom bar: the animation player — Back, Play/Pause, Stop, Forward
    on top, the timeline below. */
