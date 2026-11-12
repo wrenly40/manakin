@@ -575,17 +575,18 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 #time-state { font-size: 13px; color: var(--grey); white-space: nowrap; }
 /* Zoom control: bare like the player — minus, percentage, plus as
    plain ink glyphs with no bar, no background, no border. The −/+
-   buttons are the same 40px as the transport buttons, so the hit
-   area stays generous; the label is 13px ink text, clicking it
-   resets the view. The angle is a separate readout at the far left
-   of the bar, plain ink text, and exists only while rotated. */
+   buttons are 28px, the app's small-control size (same as the
+   Arrange/Align cells); the label is 13px ink text, clicking it
+   resets zoom and pan only, never the rotation. The angle is a
+   separate readout at the far left of the bar, plain ink text, and
+   exists only while rotated. */
 #zoom-control {
-  position: absolute; right: 16px; top: 10px;
+  position: absolute; right: 16px; top: 16px;
   display: flex; align-items: center;
 }
 #zoom-control .zctl {
   border: none; background: transparent; border-radius: 9px;
-  width: 40px; height: 40px; padding: 0;
+  width: 28px; height: 28px; padding: 0;
   display: flex; align-items: center; justify-content: center;
   color: var(--ink); flex: none;
 }

@@ -380,6 +380,15 @@ function resetView(): void {
   rotateDeg = 0;
   updateZoomLabel();
 }
+// Zoom-only reset for the zoom label: 100%, no pan, rotation untouched.
+// The zoom cluster must never modify the angle — rotation is reset
+// only by the full view reset (Cmd/Ctrl+0).
+function resetZoom(): void {
+  zoom = 1;
+  panX = 0;
+  panY = 0;
+  updateZoomLabel();
+}
 function zoomStep(dir: 1 | -1): void {
   const i = ZOOM_STOPS.indexOf(zoom);
   if (i === -1) { setZoom(dir === 1 ? (ZOOM_STOPS.find((s) => s > zoom) ?? 4) : ([...ZOOM_STOPS].reverse().find((s) => s < zoom) ?? 0.25)); return; }
@@ -910,7 +919,7 @@ app.innerHTML = `
       </div>
       <div id="zoom-control" aria-label="Zoom">
         <button id="zoom-out" class="zctl" aria-label="Zoom out"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
-        <button id="zoom-label" class="zoom-label" aria-label="Zoom level, activate to reset the view to 100%">100%</button>
+        <button id="zoom-label" class="zoom-label" aria-label="Zoom level, activate to reset zoom to 100%">100%</button>
         <button id="zoom-in" class="zctl" aria-label="Zoom in"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
       </div>
     </footer>
@@ -4037,7 +4046,7 @@ canvas.addEventListener('pointerdown', (e) => {
 (document.getElementById('redo-btn') as HTMLButtonElement).addEventListener('click', redo);
 (document.getElementById('zoom-in') as HTMLButtonElement).addEventListener('click', () => zoomStep(1));
 (document.getElementById('zoom-out') as HTMLButtonElement).addEventListener('click', () => zoomStep(-1));
-(document.getElementById('zoom-label') as HTMLButtonElement).addEventListener('click', () => resetView());
+(document.getElementById('zoom-label') as HTMLButtonElement).addEventListener('click', () => resetZoom());
 // Same shared tooltip as the Arrange/Align buttons; the label cell
 // gets none (its reset action is already known).
 attachTooltip(document.getElementById('zoom-out') as HTMLButtonElement, 'Zoom out');
