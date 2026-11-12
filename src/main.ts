@@ -3577,6 +3577,13 @@ let previewShape: ShapeItem | null = null;
 let marquee: { x0: number; y0: number; x1: number; y1: number } | null = null;
 
 canvas.addEventListener('pointerdown', (e) => {
+  // Clear any lingering text selection first: if a selection exists
+  // (from a drag that started on chrome before user-select was
+  // disabled, or any other path), the browser treats a press inside
+  // it as the start of a native drag — firing dragstart and
+  // cancelling this pointer drag after the first move. The text
+  // editor is a <textarea>, so its own selection is unaffected.
+  window.getSelection()?.removeAllRanges();
   try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
   // Pan: middle-button drag, or Space+left-drag. It is never a tool
   // gesture — no selection change, no item, no undo entry — so it is

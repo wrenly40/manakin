@@ -27,7 +27,15 @@ html, body {
   text-rendering: optimizeLegibility;
   letter-spacing: -0.01em;
   color: var(--ink); background: var(--bg-system);
+  /* Nothing in the UI is selectable text: a drag that starts on
+     chrome (toolbar padding, the header) used to select the whitespace
+     text nodes, and the lingering selection then made the browser
+     start a native drag — cancelling every later canvas drag
+     (pointercancel after the first move) until reload. The two
+     editable controls opt back in below. */
+  user-select: none; -webkit-user-select: none;
 }
+input, textarea { user-select: text; -webkit-user-select: text; }
 #app { display: flex; flex-direction: column; height: 100%; }
 button { font-family: inherit; cursor: pointer; }
 button:focus-visible, input:focus-visible, textarea:focus-visible {
