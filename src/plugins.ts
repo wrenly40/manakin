@@ -1,0 +1,608 @@
+// Manakin Plugin API v1 — see docs/plugins.md.
+//
+// A plugin is a module with a manifest, an activate(api) and an optional
+// deactivate(). Bundled first-party plugins live in src/plugins/ and are
+// passed to initPlugins by the core; user plugins from a local folder
+// come in a later phase. The shape is copied from Bowerbird's plugin
+// system (src/plugins.ts, PLUGIN_API.md) — one plugin philosophy across
+// both apps — sized to what Manakin actually builds in phase 1: actions,
+// overlays, the animation read surface, files and per-plugin storage.
+// Where Bowerbird has more (user-folder loading, trial plugins, secure
+// storage, the full context domains, the events bus), that lands with
+// the phase that needs it, copied from the same source, not reinvented.
+//
+// Trust model, stated honestly, as in Bowerbird: installing a plugin is
+// trusting its code, like an Obsidian or VS Code extension. The API is
+// the supported contract; reaching past it into core DOM or internals
+// may break. A plugin never gets Node or the filesystem directly —
+// privileged calls (folder picking, file writes) go through the core's
+// bridge, and downloads go through files.download here.
+
+// The current API version. A plugin whose manifest declares another
+// version does not load. Manakin's API is its own, starting at 1;
+// Bowerbird's current API is 2 — the version number is per app, the
+// rule (old versions do not load) is shared.
+export const PLUGIN_API_VERSION = '1';
+
+// Copied from Bowerbird: a manifest describes the plugin, its API
+// version, its permissions and what it contributes. `contributions`
+// is a summary for a future Settings UI; the code in activate() is
+// what actually registers each contribution, and if the two disagree
+// the registered contributions win. `main` / `styles` belong to the
+// user-folder loader and are not part of a bundled plugin in v1.
+export interface PluginManifest {
+  id: string;
+  name: string;
+  version: string;
+  apiVersion: string;
+  description?: string;
+  permissions?: string[];
+  // Off by default when false; absent means on. The enabled map (see
+  // below) wins over this when the user has toggled the plugin.
+  enabled?: boolean;
+  // Required plugins cannot be disabled: they are the foundation the
+  // rest of the app stands on. A required plugin is always enabled,
+  // whatever the enabled map says, so a stale "false" in the map
+  // cannot lock the app out. Nothing uses this in phase 1.
+  required?: boolean;
+  contributions?: {
+    actions?: Array<{ id: string; label: string }>;
+    overlays?: Array<{ id: string }>;
+  };
+}
+
+export interface PluginActionDef {
+  id: string;
+  label: string;
+  // A chevron action, like Export: the button gets the chevron treatment
+  // (label centred, chevron at the right edge) and aria-expanded.
+  chevron?: boolean;
+  onClick: (btn: HTMLButtonElement) => void;
+}
+
+export interface PluginOverlayDef {
+  id: string;
+  // The action button this overlay anchors to. The core looks the
+  // button up live, so a rebuilt panel re-anchors the overlay.
+  actionId: string;
+  isOpen: () => boolean;
+  // Rebuild the overlay DOM from scratch, anchored to the given
+  // button (null only when there is no anchor yet — render must
+  // still remove any stale DOM in that case). Called after every
+  // panel render while the overlay is open.
+  render: (anchor: HTMLButtonElement | null) => void;
+  // Remove the overlay DOM and set the plugin's open state to false.
+  close: () => void;
+  // Is this click target inside the overlay or its anchor button?
+  // The core's outside-click handler asks this before closing.
+  // Check closest() as well as the live overlay element: a click
+  // that rebuilt the panel (a tab click inside the dropdown)
+  // leaves its target detached, and closest() still walks the
+  // detached ancestors, while a live contains() would miss it.
+  contains: (t: HTMLElement) => boolean;
+}
+
+export interface PluginContext {
+  version: string;
+  plugin: { id: string; name: string; version: string };
+  has: (capability: string) => boolean;
+  app: {
+    getLoopMs: () => number;
+    getLoopLength: () => number;
+    getStageSize: () => { w: number; h: number };
+    // Whole frames in one loop at 30fps, at least 1.
+    frameCount: () => number;
+    // Render one frame offline, at the loop position t01 in [0, 1),
+    // into the given canvas context. The on-screen canvas is never
+    // the target for an export.
+    renderFrame: (t01: number, target: CanvasRenderingContext2D, dprOverride?: number) => void;
+    renderPanel: () => void;
+  };
+  // One-time migration seed: values the core used to own that now
+  // belong to this plugin, keyed by plugin id. Read it at activate
+  // if the plugin needs it, then forget it.
+  legacy: Record<string, unknown>;
+  files: {
+    download: (blob: Blob, filename: string) => void;
+    pickSequenceFolder: () => Promise<string | null>;
+    writeSequenceFile: (dir: string, name: string, dataUrl: string) => Promise<boolean>;
+  };
+  ui: {
+    registerAction: (def: PluginActionDef) => void;
+    unregisterAction: (id: string) => void;
+    // The calling plugin's own action button, by its short id.
+    // The core looks it up by the namespaced key; a plugin only
+    // ever sees its own buttons.
+    getActionButton: (id: string) => HTMLButtonElement | null;
+    registerOverlay: (def: PluginOverlayDef) => void;
+    unregisterOverlay: (id: string) => void;
+  };
+  storage: {
+    get: (key: string) => unknown;
+    set: (key: string, value: unknown) => void;
+    delete: (key: string) => void;
+  };
+}
+
+// What the core provides to the plugin system. All animation reads and
+// the panel re-render go through here, so plugins never touch core
+// state directly.
+export interface PluginHost {
+  getLoopMs: () => number;
+  getLoopLength: () => number;
+  getStageSize: () => { w: number; h: number };
+  renderFrame: (t01: number, target: CanvasRenderingContext2D, dprOverride?: number) => void;
+  renderPanel: () => void;
+  // Look an action button up by plugin and short id. The core keys
+  // its buttons by the namespaced key, so two plugins may register
+  // the same short action id without colliding.
+  getActionButton: (pluginId: string, id: string) => HTMLButtonElement | null;
+  // One-time migration seeds, keyed by plugin id. Populated from the
+  // loaded save before initPlugins runs.
+  legacy: Record<string, Record<string, unknown>>;
+  // The Electron bridge, or undefined outside Electron (e.g. vite
+  // preview). Folder picking needs it; everything else does not.
+  bridge: {
+    pickSequenceFolder: () => Promise<string | null>;
+    writeSequenceFile: (dir: string, name: string, dataUrl: string) => Promise<boolean>;
+  } | undefined;
+}
+
+export interface PluginModule {
+  manifest: PluginManifest;
+  activate: (api: PluginContext) => void;
+  deactivate?: () => void;
+}
+
+export interface PluginInfo {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  core: boolean;
+  required: boolean;
+  active: boolean;
+  failed: boolean;
+  error: string | null;
+}
+
+interface LoadedPlugin {
+  manifest: PluginManifest;
+  // First-party (bundled) plugins are shipped with the app and build
+  // the app's own UI; the rest will be user plugins. The flag is
+  // exposed in list() so a future Settings UI can group them.
+  firstParty: boolean;
+  // A first-party plugin's module is a bundled import, not a file on
+  // disk, so it cannot be re-loaded from anywhere. It is kept here
+  // across deactivation so re-enabling the plugin re-activates the
+  // same module instead of failing on a module that no longer exists.
+  // Copied from Bowerbird, where this is what makes disabling and
+  // re-enabling a core plugin work at runtime.
+  firstPartyModule: PluginModule | null;
+  active: boolean;
+  failed: boolean;
+  error: string | null;
+  module: PluginModule | null;
+}
+
+interface ActionEntry extends PluginActionDef {
+  pluginId: string;
+}
+
+interface OverlayEntry extends PluginOverlayDef {
+  pluginId: string;
+}
+
+// ---------------------------------------------------------------- state
+
+// Registries, keyed by the namespaced key `${pluginId}:${id}` —
+// copied from Bowerbird, where cards, commands and settings sections
+// are keyed the same way. Two plugins may register the same short id
+// without colliding; the core resolves a short id within one plugin.
+const actions = new Map<string, ActionEntry>();
+const overlays = new Map<string, OverlayEntry>();
+const loaded = new Map<string, LoadedPlugin>();
+
+let host: PluginHost | null = null;
+
+// The enabled map lives in localStorage under this key:
+// { [pluginId]: boolean }. Absent means enabled — bundled plugins
+// are on by default — except a manifest with enabled: false. In
+// Bowerbird the same map lives behind the bridge (plugins.json);
+// here localStorage is the store, because phase 1 has no
+// user-folder loader and no main-process plugin surface yet.
+const ENABLED_KEY = 'manakin-plugins';
+
+function namespacedKey(pluginId: string, id: string): string {
+  return `${pluginId}:${id}`;
+}
+
+function readEnabledMap(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(ENABLED_KEY);
+    if (!raw) return {};
+    const data: unknown = JSON.parse(raw);
+    if (data === null || typeof data !== 'object' || Array.isArray(data)) return {};
+    const out: Record<string, boolean> = {};
+    for (const [k, v] of Object.entries(data as Record<string, unknown>)) {
+      if (typeof v === 'boolean') out[k] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeEnabledMap(map: Record<string, boolean>): void {
+  try {
+    localStorage.setItem(ENABLED_KEY, JSON.stringify(map));
+  } catch { /* storage full or unavailable */ }
+}
+
+function isEnabled(manifest: PluginManifest, map: Record<string, boolean>): boolean {
+  // Copied from Bowerbird: a required plugin is always enabled,
+  // whatever the enabled map says — a stale "false" in the map
+  // must not lock the app out of its own foundation.
+  if (manifest.required) return true;
+  if (typeof map[manifest.id] === 'boolean') return map[manifest.id];
+  if (typeof manifest.enabled === 'boolean') return manifest.enabled;
+  return true;
+}
+
+// ---------------------------------------------------------------- helpers
+
+// Copied verbatim from Bowerbird: a DOM id namespaced by plugin, so
+// two plugins' contributions never collide in the document.
+export function domId(pluginId: string, kind: string, id: string): string {
+  return `${kind}-plugin-${pluginId}-${id}`.replace(/[^A-Za-z0-9_-]/g, "-");
+}
+
+// Copied verbatim from Bowerbird: permissions gate the API object. A
+// method that needs a permission the manifest did not declare throws.
+function requirePerm(manifest: PluginManifest, perm: string): void {
+  const perms = manifest.permissions ?? [];
+  if (perms.includes(perm)) return;
+  throw new Error(`Plugin ${manifest.id} lacks permission ${perm}`);
+}
+
+// ---------------------------------------------------------------- context
+
+function storageKey(pluginId: string, key: string): string {
+  return `manakin-plugin:${pluginId}:${key}`;
+}
+
+// Copied from Bowerbird (createContext): one API object per plugin,
+// filtered to the manifest's permissions. `has` answers whether the
+// API offers a capability at all — the fixed list of domains and
+// contribution kinds in this version — while the permission check
+// decides whether this plugin may use it.
+function createContext(manifest: PluginManifest): PluginContext {
+  const pluginId = manifest.id;
+  const require = (perm: string) => requirePerm(manifest, perm);
+  return {
+    version: PLUGIN_API_VERSION,
+    plugin: { id: manifest.id, name: manifest.name, version: manifest.version },
+    has: (capability: string) => {
+      // Capabilities in v1: every domain documented in docs/plugins.md,
+      // plus the contribution kinds a plugin can register. A future
+      // core may add more; a plugin should check before using a
+      // capability that was added after v1.
+      return ["app", "legacy", "files", "ui", "storage", "actions", "overlays"].includes(capability);
+    },
+    app: {
+      getLoopMs: () => host!.getLoopMs(),
+      getLoopLength: () => host!.getLoopLength(),
+      getStageSize: () => host!.getStageSize(),
+      frameCount: () => Math.max(1, Math.round((host!.getLoopMs() / 1000) * 30)),
+      renderFrame: (t01, target, dprOverride) => host!.renderFrame(t01, target, dprOverride),
+      renderPanel: () => host!.renderPanel(),
+    },
+    legacy: host?.legacy[manifest.id] ?? {},
+    files: {
+      download: (blob, filename) => {
+        require('export');
+        downloadBlob(blob, filename);
+      },
+      pickSequenceFolder: async () => {
+        require('export');
+        if (!host!.bridge) return null;
+        return host!.bridge.pickSequenceFolder();
+      },
+      writeSequenceFile: async (dir, name, dataUrl) => {
+        require('export');
+        if (!host!.bridge) return false;
+        return host!.bridge.writeSequenceFile(dir, name, dataUrl);
+      },
+    },
+    ui: {
+      registerAction: (def) => {
+        require('ui');
+        actions.set(namespacedKey(pluginId, def.id), { ...def, pluginId });
+      },
+      unregisterAction: (id) => {
+        require('ui');
+        actions.delete(namespacedKey(pluginId, id));
+      },
+      getActionButton: (id) => host!.getActionButton(pluginId, id),
+      registerOverlay: (def) => {
+        require('ui');
+        overlays.set(namespacedKey(pluginId, def.id), { ...def, pluginId });
+      },
+      unregisterOverlay: (id) => {
+        require('ui');
+        overlays.delete(namespacedKey(pluginId, id));
+      },
+    },
+    storage: {
+      get: (key) => {
+        require('storage');
+        try {
+          const raw = localStorage.getItem(storageKey(pluginId, key));
+          return raw === null ? undefined : JSON.parse(raw);
+        } catch {
+          return undefined;
+        }
+      },
+      set: (key, value) => {
+        require('storage');
+        try {
+          localStorage.setItem(storageKey(pluginId, key), JSON.stringify(value));
+        } catch { /* storage full or unavailable */ }
+      },
+      delete: (key) => {
+        require('storage');
+        try {
+          localStorage.removeItem(storageKey(pluginId, key));
+        } catch { /* storage unavailable */ }
+      },
+    },
+  };
+}
+
+// The anchor download: straight to Downloads, no dialog. The synthetic
+// click must not bubble to the document: the outside-click handler
+// would read it as a click outside an open overlay and close it
+// mid-download.
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.addEventListener('click', (e) => e.stopPropagation());
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// ---------------------------------------------------------------- registry
+
+// Copied from Bowerbird's unregisterPlugin: removing a plugin
+// unregisters everything it contributed, by plugin id, and closes
+// any open overlay it owned. The core re-renders after this, so a
+// disabled plugin's UI is gone and the rest of the app is untouched.
+function unregisterPlugin(id: string): void {
+  for (const [key, entry] of Array.from(actions.entries())) {
+    if (entry.pluginId === id) actions.delete(key);
+  }
+  for (const [key, entry] of Array.from(overlays.entries())) {
+    if (entry.pluginId === id) {
+      try {
+        if (entry.isOpen()) entry.close();
+      } catch { /* a failing close must not block the unregister */ }
+      overlays.delete(key);
+    }
+  }
+}
+
+function activatePlugin(lp: LoadedPlugin): void {
+  // Copied from Bowerbird: a first-party plugin's module is a bundled
+  // import — re-activate the retained module, not a file that does
+  // not exist. This is what makes disabling and re-enabling a bundled
+  // plugin work at runtime.
+  const mod = lp.firstPartyModule ?? lp.module;
+  if (!mod || typeof mod.activate !== 'function') {
+    throw new Error(`Plugin ${lp.manifest.id} does not export activate(api)`);
+  }
+  const api = createContext(lp.manifest);
+  mod.activate(api);
+  lp.module = mod;
+  lp.active = true;
+  lp.failed = false;
+  lp.error = null;
+}
+
+function deactivatePlugin(lp: LoadedPlugin): void {
+  try {
+    lp.module?.deactivate?.();
+  } catch {
+    // Deactivate failures must not trap the user with the plugin on.
+  }
+  unregisterPlugin(lp.manifest.id);
+  lp.module = null;
+  lp.active = false;
+}
+
+// ---------------------------------------------------------------- lifecycle
+
+// Load and activate the bundled first-party plugins, in the order
+// given. A plugin with the wrong apiVersion, or whose activate throws,
+// is recorded as failed with its error and never half-registers. The
+// core calls this once at boot, after load(), before the first
+// renderPanel() — synchronous in API v1: bundled modules are static
+// imports and the enabled map is localStorage, so nothing here awaits.
+// (The user-folder loader, when it lands, makes this async — copied
+// from Bowerbird, where initPlugins is async for exactly that reason.)
+export function initPlugins(h: PluginHost, firstParty: PluginModule[]): void {
+  host = h;
+  const enabledMap = readEnabledMap();
+  for (const mod of firstParty) {
+    const lp: LoadedPlugin = {
+      manifest: mod.manifest,
+      firstParty: true,
+      firstPartyModule: mod,
+      active: false,
+      failed: false,
+      error: null,
+      module: null,
+    };
+    loaded.set(mod.manifest.id, lp);
+    if (mod.manifest.apiVersion !== PLUGIN_API_VERSION) {
+      lp.failed = true;
+      lp.error = `Requires plugin API ${mod.manifest.apiVersion}, this app provides ${PLUGIN_API_VERSION}`;
+      continue;
+    }
+    // A plugin skipped here still enters the loaded map, so it shows
+    // in the plugin list and can be re-enabled there. A plugin that
+    // never entered the map would vanish entirely, and the only way
+    // back would be editing storage by hand. Copied from Bowerbird.
+    if (!isEnabled(mod.manifest, enabledMap)) continue;
+    try {
+      activatePlugin(lp);
+    } catch (e) {
+      lp.failed = true;
+      lp.error = String(e);
+      lp.active = false;
+      unregisterPlugin(mod.manifest.id);
+    }
+  }
+  exposeWindowHook();
+}
+
+export function listPlugins(): PluginInfo[] {
+  return Array.from(loaded.values()).map((lp) => ({
+    id: lp.manifest.id,
+    name: lp.manifest.name,
+    version: lp.manifest.version,
+    description: lp.manifest.description ?? '',
+    core: lp.firstParty,
+    required: lp.manifest.required ?? false,
+    active: lp.active,
+    failed: lp.failed,
+    error: lp.error,
+  }));
+}
+
+export function setPluginEnabled(id: string, enabled: boolean): void {
+  const lp = loaded.get(id);
+  if (!lp || !host) return;
+  if (!enabled && lp.manifest.required) {
+    throw new Error(`${lp.manifest.name} is required and cannot be disabled`);
+  }
+  const map = readEnabledMap();
+  map[id] = enabled;
+  writeEnabledMap(map);
+  if (enabled && !lp.active) {
+    // A previously failed plugin gets one retry on re-enable; a
+    // plugin that failed to load is not retried silently on every
+    // toggle — the user re-enabling it is the retry. Copied from
+    // Bowerbird.
+    lp.failed = false;
+    lp.error = null;
+    try {
+      activatePlugin(lp);
+    } catch (e) {
+      lp.failed = true;
+      lp.error = String(e);
+      lp.active = false;
+      unregisterPlugin(id);
+    }
+  } else if (!enabled && lp.active) {
+    deactivatePlugin(lp);
+  }
+  host.renderPanel();
+}
+
+// ---------------------------------------------------------------- actions
+
+export function listActions(): Array<PluginActionDef & { pluginId: string }> {
+  return Array.from(actions.values());
+}
+
+// ---------------------------------------------------------------- overlays
+
+// Close every open overlay. Returns whether anything was open. The
+// caller re-renders the panel afterwards; close() itself only removes
+// the overlay DOM and clears the plugin's open state.
+export function closeOverlays(): boolean {
+  let closed = false;
+  for (const entry of overlays.values()) {
+    if (!entry.isOpen()) continue;
+    try {
+      entry.close();
+    } catch { /* a failing close must not block the others */ }
+    closed = true;
+  }
+  return closed;
+}
+
+// Is this click target inside an open overlay or its anchor button?
+// The core's outside-click handler asks this before closing.
+export function clickInsideOverlay(t: HTMLElement): boolean {
+  for (const entry of overlays.values()) {
+    if (!entry.isOpen()) continue;
+    try {
+      if (entry.contains(t)) return true;
+    } catch { /* a failing contains is treated as outside */ }
+  }
+  return false;
+}
+
+export function anyOverlayOpen(): boolean {
+  for (const entry of overlays.values()) {
+    if (entry.isOpen()) return true;
+  }
+  return false;
+}
+
+// Re-render open overlays after a panel render. The anchor button is
+// rebuilt every time, so an open overlay must be rebuilt with it. An
+// open overlay whose anchor is gone (the panel switched away from the
+// Canvas panel) is closed instead. Called by the core at the end of
+// renderPanel(); a closed overlay is a no-op.
+export function refreshOverlays(): void {
+  if (!host) return;
+  for (const entry of overlays.values()) {
+    if (!entry.isOpen()) continue;
+    const anchor = host.getActionButton(entry.pluginId, entry.actionId);
+    if (!anchor) {
+      try {
+        entry.close();
+      } catch { /* a failing close must not block the others */ }
+      continue;
+    }
+    try {
+      entry.render(anchor);
+    } catch { /* a failing render leaves the old DOM in place */ }
+  }
+}
+
+// Is the overlay for this plugin's action open? The core reads this to
+// paint the action button's open state (the Export chevron's `open` class).
+export function isOverlayOpenFor(pluginId: string, actionId: string): boolean {
+  for (const entry of overlays.values()) {
+    if (entry.pluginId === pluginId && entry.actionId === actionId && entry.isOpen()) return true;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------- window hook
+
+// Phase-1 management surface, until a Settings → Plugins UI exists:
+// list plugins and toggle them. A later phase's Settings UI uses the
+// same listPlugins / setPluginEnabled calls.
+function exposeWindowHook(): void {
+  window.manakinPlugins = {
+    list: () => listPlugins(),
+    setEnabled: (id: string, enabled: boolean) => setPluginEnabled(id, enabled),
+  };
+}
+
+declare global {
+  interface Window {
+    manakinPlugins?: {
+      list: () => PluginInfo[];
+      setEnabled: (id: string, enabled: boolean) => void;
+    };
+  }
+}

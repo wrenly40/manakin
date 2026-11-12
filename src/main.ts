@@ -1,6 +1,7 @@
 import './styles.css';
-import { GIFEncoder, quantize, applyPalette } from 'gifenc';
-import { Output, Mp4OutputFormat, WebMOutputFormat, BufferTarget, CanvasSource } from 'mediabunny';
+import { initPlugins, listActions, isOverlayOpenFor, closeOverlays, clickInsideOverlay, anyOverlayOpen, refreshOverlays, domId, type PluginHost } from './plugins';
+import { plugin as exportsPlugin } from './plugins/exports';
+import { plugin as helloPlugin } from './plugins/hello';
 
 // The frameless window's controls, exposed by electron/preload.ts.
 // Absent when the page runs outside Electron (e.g. vite preview).
@@ -276,23 +277,21 @@ let stageBgCustom: string | null = null;
 let gridMode: GridMode = 'empty';
 let projectName = 'Untitled';
 let panelOpen = true;
-let exporting = false; // an export (PNG sequence or video) is running right now
-let exportTab: 'png' | 'video' = 'png'; // the active tab in the Export card, persisted like videoFormat
-let exportProgress: { text: string; target: 'png' | 'video' } | null = null;
-// "Exporting 45/120" while an offline export runs, on the button doing it.
-function setExportProgress(text: string, target: 'png' | 'video'): void {
-  exportProgress = { text, target };
-  const b = document.getElementById(target === 'png' ? 'export-png-btn' : 'export-video-btn');
-  if (b) b.textContent = text;
-}
-type VideoFormat = 'gif' | 'webm' | 'mp4';
-let videoFormat: VideoFormat = 'webm'; // video export format, persisted like panelOpen
 let panelView: 'auto' | 'colour' = 'auto';
+// One-time migration seed for plugins: values the core used to own
+// that now belong to a plugin (the Exports plugin's tab and format
+// used to live in manakin-v1). Populated by load(), read by the
+// plugin at activate, then forgotten.
+let legacyExportPrefs: Record<string, unknown> = {};
+// The live action buttons, rebuilt by renderCanvasPanel on every
+// panel render: the plugin system looks an anchor button up here.
+// Cleared at the top of renderPanelInner, populated by the Actions
+// section; empty whenever the Canvas panel is not showing.
+const actionButtons = new Map<string, HTMLButtonElement>();
 let colourSlot: 'fg' | 'bg' = 'fg';
 let expandedLayerId: string | null = null;
 let expandedGroup: string | null = null; // id of the open group in the Behaviours panel
 let addPickerOpen = false; // the inline Add behavior list is showing
-let exportDropdownOpen = false; // the Export dropdown (card in a popover) is showing
 let checkedLayers: Set<string> = new Set(); // top-level layer ids picked for grouping
 let checkedHostId: string | null = null; // the host (item or item group) the checked rows belong to
 let recentColours: string[] = [];
@@ -419,7 +418,6 @@ function save(): void {
     localStorage.setItem(SAVE_KEY, JSON.stringify({
       items, itemGroups, stageId, loopLength, projectName, stageBgId, stageBgCustom, gridMode, panelOpen,
       fg: color, bg: bgColour, penWidth, recent: recentColours, saved: savedColours,
-      videoFormat, exportTab,
     }));
   } catch { /* storage full or unavailable */ }
 }
@@ -840,6 +838,13 @@ function load(): void {
         fg?: string; bg?: string; penWidth?: number; recent?: string[]; saved?: string[];
         videoFormat?: unknown; exportTab?: unknown; loopLength?: unknown;
       };
+      // The tab and video format used to live in this save; they
+      // belong to the Exports plugin now. Keep them as the one-time
+      // migration seed the plugin reads at activate. This is about
+      // the save's preferences, not its items, so it runs for any
+      // parseable save — including one with no items.
+      if (data.videoFormat === 'gif' || data.videoFormat === 'webm' || data.videoFormat === 'mp4') legacyExportPrefs.videoFormat = data.videoFormat;
+      if (data.exportTab === 'png' || data.exportTab === 'video') legacyExportPrefs.exportTab = data.exportTab;
       // An empty save (0 items) is a real document: it loads as an
       // empty stage. The old `length > 0` guard fell through to the
       // sample bird, so an emptied document came back as the bird.
@@ -855,8 +860,6 @@ function load(): void {
         if (typeof data.stageBgCustom === 'string') stageBgCustom = data.stageBgCustom;
         const gm = migrateGridMode(data.gridMode);
         if (gm !== null) gridMode = gm;
-        if (data.videoFormat === 'gif' || data.videoFormat === 'webm' || data.videoFormat === 'mp4') videoFormat = data.videoFormat;
-        if (data.exportTab === 'png' || data.exportTab === 'video') exportTab = data.exportTab;
         if (typeof data.panelOpen === 'boolean') panelOpen = data.panelOpen;
         if (typeof data.fg === 'string') color = data.fg;
         if (typeof data.bg === 'string') bgColour = data.bg;
@@ -2060,17 +2063,19 @@ function renderPanel(): void {
     if (list) (list as HTMLElement).scrollIntoView({ block: 'nearest' });
     scrollToAddList = false;
   }
+  // Open plugin overlays are rebuilt last, after the scroll restore:
+  // their anchor button was rebuilt with the panel, so the overlay
+  // must be re-anchored to it. An open overlay whose anchor is gone
+  // (the panel switched away) is closed instead.
+  refreshOverlays();
 }
 function renderPanelInner(): void {
   syncUndoButtons();
-  closeExportDropdownEl();
   closeTooltipEl();
+  actionButtons.clear();
   const grp = selectedItemGroup();
   const sel = selected();
   if (panelView !== 'auto' || (!grp && !sel)) addPickerOpen = false;
-  // The Export dropdown is anchored to a button that only exists on
-  // the Canvas panel; any other view closes it.
-  if (panelView !== 'auto' || grp || sel || selectedIds.length >= 2) exportDropdownOpen = false;
   panelBody.innerHTML = '';
   if (panelView === 'colour') { renderColourPanel(); return; }
   if (grp) { renderItemGroupPanel(grp); return; }
@@ -3081,113 +3086,6 @@ function renderItemGroupPanel(group: ItemGroup): void {
   panelBody.appendChild(renderAddBehaviourButton(host));
 }
 
-function closeExportDropdownEl(): void {
-  document.querySelector('.export-dropdown')?.remove();
-}
-
-// The Export card itself, unchanged from the bordered-card round:
-// PNG and Video are tabs at its top, the active tab's content sits
-// below them. No Scale, no Frame. Built fresh on every render, so
-// tab switches and format picks re-render through renderPanel.
-function renderExportCard(): HTMLDivElement {
-  const card = document.createElement('div');
-  card.id = 'export-card';
-  const tabs = document.createElement('div');
-  tabs.className = 'seg';
-  tabs.id = 'export-tabs';
-  tabs.setAttribute('role', 'tablist');
-  tabs.setAttribute('aria-label', 'Export');
-  const tabBtns: HTMLButtonElement[] = [];
-  for (const t of [{ id: 'png', label: 'PNG' }, { id: 'video', label: 'Video' }] as const) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = exportTab === t.id ? 'active' : '';
-    b.textContent = t.label;
-    b.setAttribute('role', 'tab');
-    b.setAttribute('aria-selected', exportTab === t.id ? 'true' : 'false');
-    b.addEventListener('click', () => {
-      if (exportTab === t.id) return;
-      exportTab = t.id;
-      save();
-      renderPanel();
-    });
-    tabs.appendChild(b);
-    tabBtns.push(b);
-  }
-  card.appendChild(tabs);
-  let actionBtn: HTMLButtonElement | null = null;
-  const fmtBtns: HTMLButtonElement[] = [];
-  if (exportTab === 'png') {
-    actionBtn = document.createElement('button');
-    actionBtn.type = 'button';
-    actionBtn.className = 'pbtn';
-    actionBtn.id = 'export-png-btn';
-    actionBtn.textContent = 'Export PNG';
-    actionBtn.addEventListener('click', () => { void exportPNGSequence(); });
-    card.appendChild(actionBtn);
-  } else {
-    // Video format: the small segmented control above the action
-    // button. The choice persists (videoFormat) like before.
-    const fmtSeg = document.createElement('div');
-    fmtSeg.className = 'seg';
-    fmtSeg.id = 'video-format-seg';
-    fmtSeg.setAttribute('role', 'group');
-    fmtSeg.setAttribute('aria-label', 'Video format');
-    for (const f of [{ id: 'gif', label: 'GIF' }, { id: 'webm', label: 'WebM' }, { id: 'mp4', label: 'MP4' }] as const) {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = videoFormat === f.id ? 'active' : '';
-      b.textContent = f.label;
-      b.setAttribute('aria-label', `Video format ${f.label}`);
-      b.addEventListener('click', () => {
-        if (videoFormat === f.id) return;
-        videoFormat = f.id;
-        save();
-        renderPanel();
-      });
-      fmtSeg.appendChild(b);
-      fmtBtns.push(b);
-    }
-    card.appendChild(fmtSeg);
-    actionBtn = document.createElement('button');
-    actionBtn.type = 'button';
-    actionBtn.className = 'pbtn';
-    actionBtn.id = 'export-video-btn';
-    actionBtn.textContent = `Export ${videoFormat === 'gif' ? 'GIF' : videoFormat === 'webm' ? 'WebM' : 'MP4'}`;
-    actionBtn.addEventListener('click', () => { void exportVideo(); });
-    card.appendChild(actionBtn);
-  }
-  if (exporting) {
-    for (const b of tabBtns) b.disabled = true;
-    for (const b of fmtBtns) b.disabled = true;
-    if (actionBtn) actionBtn.disabled = true;
-    // An offline export (PNG sequence, GIF, WebM, MP4) shows its
-    // progress on the action button.
-    if (exportProgress && actionBtn) actionBtn.textContent = exportProgress.text;
-  }
-  return card;
-}
-
-// The Export dropdown: the card in a frosted popover anchored below
-// the Export button, like the Add behavior picker. Fixed-position so
-// it floats above the panel content and never pushes it down; flips
-// above the button when there is no room below.
-function renderExportDropdown(anchorBtn: HTMLElement): void {
-  closeExportDropdownEl();
-  const pop = document.createElement('div');
-  pop.className = 'export-dropdown';
-  pop.setAttribute('role', 'menu');
-  pop.appendChild(renderExportCard());
-  document.body.appendChild(pop);
-  const r = anchorBtn.getBoundingClientRect();
-  const w = pop.offsetWidth;
-  const h = pop.offsetHeight;
-  const left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
-  const top = (r.bottom + 6 + h > window.innerHeight) ? Math.max(8, r.top - 6 - h) : r.bottom + 6;
-  pop.style.left = `${left}px`;
-  pop.style.top = `${top}px`;
-}
-
 function renderCanvasPanel(): void {
   panelTitle.textContent = 'Canvas';
   const mkSection = (label: string): HTMLDivElement => {
@@ -3312,23 +3210,34 @@ function renderCanvasPanel(): void {
     if (saveTimer !== null) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => { saveBtn.textContent = 'Save'; }, 1500);
   });
-  // Export is a button with a chevron; clicking it opens a dropdown
-  // holding the bordered card (PNG / Video tabs). The dropdown is an
-  // overlay, so Clear never moves when it opens.
-  const exportBtn = document.createElement('button');
-  exportBtn.type = 'button';
-  exportBtn.className = 'pbtn export-btn' + (exportDropdownOpen ? ' open' : '');
-  exportBtn.id = 'export-btn';
-  exportBtn.setAttribute('aria-haspopup', 'true');
-  exportBtn.setAttribute('aria-expanded', String(exportDropdownOpen));
-  exportBtn.innerHTML = '<span>Export</span><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>';
-  exportBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    exportDropdownOpen = !exportDropdownOpen;
-    renderPanel();
-  });
-  actionsSec.appendChild(exportBtn);
-  if (exportDropdownOpen) renderExportDropdown(exportBtn);
+  // Plugin actions, in registration order, between Save and Clear.
+  // The Export button comes from the Exports plugin; disabling that
+  // plugin removes it and the rest of the Actions section is
+  // untouched. A chevron action gets the Export-style treatment
+  // (label centred, chevron at the right edge). An action's click
+  // never reaches the document's outside-click handler, so an action
+  // that opens an overlay does not immediately close it.
+  for (const a of listActions()) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    // Copied from Bowerbird: a DOM id namespaced by plugin, so two
+    // plugins' actions never collide in the document.
+    b.id = domId(a.pluginId, 'action', a.id);
+    b.className = 'pbtn' + (a.chevron ? ' export-btn' : '') + (isOverlayOpenFor(a.pluginId, a.id) ? ' open' : '');
+    if (a.chevron) {
+      b.setAttribute('aria-haspopup', 'true');
+      b.setAttribute('aria-expanded', String(isOverlayOpenFor(a.pluginId, a.id)));
+      b.innerHTML = `<span>${a.label}</span><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>`;
+    } else {
+      b.textContent = a.label;
+    }
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      a.onClick(b);
+    });
+    actionsSec.appendChild(b);
+    actionButtons.set(`${a.pluginId}:${a.id}`, b);
+  }
   mkAction('Clear', 'clear-btn', clearStage);
 }
 
@@ -4106,192 +4015,6 @@ stopBtn.addEventListener('click', () => {
 });
 forwardBtn.addEventListener('click', () => { playTime = loopMs() - 1; });
 // PNG export writes a sequence of one PNG per frame over one full loop
-// (30fps, stage size), into a folder the user picks. Frames render
-// offline to an offscreen canvas — the on-screen canvas and play state
-// are left alone, and exports never carry the grid, focus dimming or
-// selection outline (renderFrame gates those to the on-screen target).
-async function exportPNGSequence(): Promise<void> {
-  if (exporting) return;
-  const bridge = window.manakin;
-  if (!bridge) return; // folder picking needs Electron
-  const dir = await bridge.pickSequenceFolder();
-  if (!dir) return; // user cancelled the folder dialog
-  exporting = true;
-  exportProgress = null;
-  renderPanel();
-  try {
-    const { w, h } = stageSize();
-    const n = Math.max(1, Math.round((loopMs() / 1000) * 30));
-    const off = document.createElement('canvas');
-    off.width = w; off.height = h;
-    const octx = off.getContext('2d')!;
-    for (let i = 0; i < n; i++) {
-      renderFrame(i / n, octx, 1);
-      const dataUrl = off.toDataURL('image/png');
-      await bridge.writeSequenceFile(dir, `frame-${String(i + 1).padStart(4, '0')}.png`, dataUrl);
-      setExportProgress(`Exporting ${i + 1}/${n}`, 'png');
-    }
-  } finally {
-    exporting = false;
-    exportProgress = null;
-    renderPanel();
-  }
-}
-// Video export: GIF, WebM or MP4, one full loop at 30fps, stage size,
-// artwork only. The format is picked in the Actions area; no other
-// parameters.
-async function exportVideo(): Promise<void> {
-  if (exporting) return;
-  if (videoFormat === 'gif') { await exportGIF(); return; }
-  if (videoFormat === 'mp4') { await exportMP4(); return; }
-  await exportWebM();
-}
-// GIF: animated, looping forever. Frames render offline the same way as
-// the PNG sequence; gifenc quantizes each frame to a 256-colour palette.
-// GIF delays are stored in 10ms units, so the per-frame delay alternates
-// 30/40ms to average exactly 1/30s.
-async function exportGIF(): Promise<void> {
-  exporting = true;
-  renderPanel();
-  try {
-    const { w, h } = stageSize();
-    const n = Math.max(1, Math.round((loopMs() / 1000) * 30));
-    const off = document.createElement('canvas');
-    off.width = w; off.height = h;
-    const octx = off.getContext('2d')!;
-    const gif = GIFEncoder();
-    for (let i = 0; i < n; i++) {
-      renderFrame(i / n, octx, 1);
-      const img = octx.getImageData(0, 0, w, h);
-      const palette = quantize(img.data, 256);
-      const index = applyPalette(img.data, palette);
-      const delay = (Math.round(((i + 1) * 10) / 3) - Math.round((i * 10) / 3)) * 10;
-      gif.writeFrame(index, w, h, { palette, delay, repeat: 0 });
-      setExportProgress(`Exporting ${i + 1}/${n}`, 'video');
-      // The encode loop never yielded, so no live progress was
-      // observable and the UI did not repaint until the file was
-      // done. One macrotask per frame lets the button repaint.
-      await new Promise((r) => setTimeout(r, 0));
-    }
-    gif.finish();
-    downloadBlob(new Blob([gif.bytes() as BlobPart], { type: 'image/gif' }), 'manakin.gif');
-  } finally {
-    exporting = false;
-    exportProgress = null;
-    renderPanel();
-  }
-}
-// MP4: H.264 via WebCodecs (VideoEncoder) + Mediabunny, both JS-only.
-// Chromium cannot do this with MediaRecorder. If this build has no
-// H.264 encoder, isConfigSupported says so and nothing is exported.
-// Frames render offline to an offscreen canvas at stage size, one per
-// 1/30s step, so the frame count is exactly round(L*30) and the
-// duration is exactly L — the same offline path as PNG/GIF.
-async function exportMP4(): Promise<void> {
-  if (typeof VideoEncoder === 'undefined') return;
-  const { w, h } = stageSize();
-  const config: VideoEncoderConfig = {
-    codec: 'avc1.42001f', width: w, height: h,
-    bitrate: 8_000_000, framerate: 30, avc: { format: 'avc' },
-  };
-  const support = await VideoEncoder.isConfigSupported(config);
-  if (!support.supported) return;
-  exporting = true;
-  renderPanel();
-  try {
-    const n = Math.max(1, Math.round((loopMs() / 1000) * 30));
-    const off = document.createElement('canvas');
-    off.width = w; off.height = h;
-    const octx = off.getContext('2d')!;
-    const target = new BufferTarget();
-    const output = new Output({
-      format: new Mp4OutputFormat({ fastStart: 'in-memory' }),
-      target,
-    });
-    const source = new CanvasSource(off, { codec: 'avc', bitrate: 8_000_000 });
-    output.addVideoTrack(source);
-    await output.start();
-    for (let i = 0; i < n; i++) {
-      renderFrame(i / n, octx, 1);
-      // CanvasSource snapshots the canvas synchronously (new
-      // VideoFrame), so the next render cannot corrupt this frame.
-      await source.add(i / 30, 1 / 30);
-      setExportProgress(`Exporting ${i + 1}/${n}`, 'video');
-    }
-    await output.finalize();
-    const buf = target.buffer;
-    if (!buf) return;
-    downloadBlob(new Blob([buf], { type: 'video/mp4' }), 'manakin.mp4');
-  } finally {
-    exporting = false;
-    exportProgress = null;
-    renderPanel();
-  }
-}
-// WebM: VP9 via WebCodecs (VideoEncoder) + Mediabunny, rendered
-// offline like PNG/GIF/MP4 — one frame per 1/30s step, so the frame
-// count is exactly round(L*30) and the duration is exactly L. The
-// old path recorded an offscreen canvas in real time through
-// MediaRecorder, so the frame count followed the machine's rAF rate
-// (119 clean, 26 under CPU load, 171 in a 6s run) instead of the
-// frame schedule. Mediabunny's default 'quality' latency mode never
-// drops frames; the old 'realtime' behaviour is what lost them.
-async function exportWebM(): Promise<void> {
-  if (exporting) return;
-  if (typeof VideoEncoder === 'undefined') return;
-  const { w, h } = stageSize();
-  const support = await VideoEncoder.isConfigSupported({
-    codec: 'vp09.00.10.08', width: w, height: h,
-    bitrate: 8_000_000, framerate: 30,
-  });
-  if (!support.supported) return;
-  exporting = true;
-  renderPanel();
-  try {
-    const n = Math.max(1, Math.round((loopMs() / 1000) * 30));
-    const off = document.createElement('canvas');
-    off.width = w; off.height = h;
-    const octx = off.getContext('2d')!;
-    const target = new BufferTarget();
-    const output = new Output({
-      format: new WebMOutputFormat(),
-      target,
-    });
-    const source = new CanvasSource(off, { codec: 'vp9', bitrate: 8_000_000 });
-    output.addVideoTrack(source);
-    await output.start();
-    for (let i = 0; i < n; i++) {
-      renderFrame(i / n, octx, 1);
-      // CanvasSource snapshots the canvas synchronously (new
-      // VideoFrame), so the next render cannot corrupt this frame.
-      await source.add(i / 30, 1 / 30);
-      setExportProgress(`Exporting ${i + 1}/${n}`, 'video');
-    }
-    await output.finalize();
-    const buf = target.buffer;
-    if (!buf) return;
-    downloadBlob(new Blob([buf], { type: 'video/webm' }), 'manakin.webm');
-  } finally {
-    exporting = false;
-    exportProgress = null;
-    renderPanel();
-  }
-}
-function downloadBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  // The synthetic click must not bubble to the document: the
-  // outside-click handler would read it as a click outside the
-  // Export dropdown and close it mid-download.
-  a.addEventListener('click', (e) => e.stopPropagation());
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
-}
-
 // ---------- keyboard ----------
 window.addEventListener('keydown', (e) => {
   const target = e.target as HTMLElement;
@@ -4320,7 +4043,9 @@ window.addEventListener('keydown', (e) => {
   if (k === 'r' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); rotateHeld = true; updateCursor(); return; }
   if (k === 'escape') {
     if (addPickerOpen) { addPickerOpen = false; renderPanel(); return; }
-    if (exportDropdownOpen) { exportDropdownOpen = false; closeExportDropdownEl(); renderPanel(); return; }
+    // Plugin overlays (the Export dropdown) close the same way as the
+    // picker. The core never names the plugin; it asks the registry.
+    if (closeOverlays()) { renderPanel(); return; }
     if (focusedId !== null) { focusedId = null; renderPanel(); return; }
     if (selectedIds.length > 0) { selectedIds = []; renderPanel(); return; }
     if (panelView === 'colour') { panelView = 'auto'; renderPanel(); }
@@ -4366,8 +4091,8 @@ window.addEventListener('blur', () => {
 
 // The Add behavior list closes on a click anywhere else, on Escape
 // (handled above), or when the panel switches — it lives in the panel
-// flow, so scrolling and resizing leave it alone. The Export
-// dropdown closes the same way.
+// flow, so scrolling and resizing leave it alone. Plugin overlays
+// close the same way.
 document.addEventListener('click', (e) => {
   const t = e.target as HTMLElement | null;
   if (addPickerOpen) {
@@ -4376,34 +4101,43 @@ document.addEventListener('click', (e) => {
     renderPanel();
     return;
   }
-  if (exportDropdownOpen) {
-    if (t && t.closest('.export-dropdown, #export-btn')) return;
-    exportDropdownOpen = false;
-    closeExportDropdownEl();
-    renderPanel();
+  if (anyOverlayOpen()) {
+    if (t && clickInsideOverlay(t)) return;
+    if (closeOverlays()) renderPanel();
     return;
   }
 });
 panelBody.addEventListener('scroll', () => {
-  if (!exportDropdownOpen) return;
-  exportDropdownOpen = false;
-  closeExportDropdownEl();
-  renderPanel();
+  if (closeOverlays()) renderPanel();
 }, { passive: true });
 // A tooltip is anchored to a button rect that moves with the panel,
 // so it hides on scroll or resize rather than going stale.
 panelBody.addEventListener('scroll', () => { closeTooltipEl(); }, { passive: true });
 window.addEventListener('resize', () => { closeTooltipEl(); });
 window.addEventListener('resize', () => {
-  if (!exportDropdownOpen) return;
-  exportDropdownOpen = false;
-  closeExportDropdownEl();
-  renderPanel();
+  if (closeOverlays()) renderPanel();
 });
 
 // ---------- init ----------
 load();
 projectInput.value = projectName;
+// What the core provides to the plugin system: animation reads, the
+// panel re-render, the live action buttons (for overlay anchors),
+// the one-time migration seed from the loaded save, and the Electron
+// bridge for the folder-picking file surface. Bundled first-party
+// plugins register their actions and overlays here, before the first
+// panel render, so the Actions section renders them from the start.
+const pluginHost: PluginHost = {
+  getLoopMs: () => loopMs(),
+  getLoopLength: () => loopLength,
+  getStageSize: () => stageSize(),
+  renderFrame: (t01, target, dprOverride) => renderFrame(t01, target, dprOverride),
+  renderPanel: () => renderPanel(),
+  getActionButton: (pluginId, id) => actionButtons.get(`${pluginId}:${id}`) ?? null,
+  legacy: { exports: legacyExportPrefs },
+  bridge: window.manakin,
+};
+initPlugins(pluginHost, [exportsPlugin, helloPlugin]);
 renderPanel();
 setPlayLabel();
 applyPanelOpen();
