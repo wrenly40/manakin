@@ -2913,34 +2913,30 @@ function alignSelection(mode: 'left' | 'center' | 'right' | 'top' | 'middle' | '
   return true;
 }
 
-// One shared tooltip for the Arrange/Align hints: a small frosted pill
-// above the hovered button. Custom, not the native `title` (which would
-// double up). Shown after a short hover delay; hidden on mouseleave,
-// click, panel re-render, panel scroll and window resize. A click also
+// One shared tooltip for the Arrange/Align hints (and the zoom −/+
+// cells): a small frosted pill centred above the hovered button, 6px
+// gap, shown after a short hover delay; hidden on mouseleave, click,
+// panel re-render, panel scroll and window resize. A click also
 // suppresses any re-show while the mouse stays put: the action
 // re-renders the panel, which recreates the button under a stationary
 // cursor and would otherwise re-trigger the hover immediately.
-// The Arrange/Align rows place it BELOW the row instead: the section
-// label sits directly above the row, and a tooltip above the button
-// covered it (the label read "Alig" under the pill). Below the row,
-// centred on the row, it clears the next section's left-aligned label
-// and only ever covers the divider or the Group pill beneath,
-// transiently; if there is no room below the viewport it falls back
-// to above.
+// The pill may overlap the section label or other elements above the
+// button while showing — that is accepted, per the user, not a defect.
+// If there is no room above the viewport it falls back to below.
 let tooltipTimer: number | null = null;
 let lastTooltipClick = 0;
 function closeTooltipEl(): void {
   if (tooltipTimer !== null) { window.clearTimeout(tooltipTimer); tooltipTimer = null; }
   document.querySelector('.tip')?.remove();
 }
-function attachTooltip(btn: HTMLButtonElement, text: string, opts?: { below?: boolean; anchor?: HTMLElement }): void {
+function attachTooltip(btn: HTMLButtonElement, text: string): void {
   btn.addEventListener('mouseenter', () => {
     if (btn.disabled) return;
     closeTooltipEl();
     tooltipTimer = window.setTimeout(() => {
       tooltipTimer = null;
       if (Date.now() - lastTooltipClick < 1000) return;
-      const r = (opts?.anchor ?? btn).getBoundingClientRect();
+      const r = btn.getBoundingClientRect();
       const tip = document.createElement('div');
       tip.className = 'tip';
       tip.textContent = text;
@@ -2948,14 +2944,8 @@ function attachTooltip(btn: HTMLButtonElement, text: string, opts?: { below?: bo
       const w = tip.offsetWidth;
       const h = tip.offsetHeight;
       const left = Math.max(8, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 8));
-      let top: number;
-      if (opts?.below) {
-        top = r.bottom + 6;
-        if (top + h > window.innerHeight - 8) top = r.top - 6 - h;
-      } else {
-        const above = r.top - 6 - h;
-        top = above >= 8 ? above : r.bottom + 6;
-      }
+      const above = r.top - 6 - h;
+      const top = above >= 8 ? above : r.bottom + 6;
       tip.style.left = `${left}px`;
       tip.style.top = `${top}px`;
     }, 400);
@@ -3001,7 +2991,7 @@ function renderArrangeSection(): HTMLDivElement {
     b.className = 'icon-btn';
     b.innerHTML = ARRANGE_ICONS[i];
     b.setAttribute('aria-label', d.label);
-    attachTooltip(b, d.label, { below: true, anchor: row });
+    attachTooltip(b, d.label);
     b.disabled = d.disabled;
     b.addEventListener('click', () => { reorderSelection(d.mode); });
     row.appendChild(b);
@@ -3031,7 +3021,7 @@ function renderAlignSection(): HTMLDivElement {
     b.className = 'icon-btn';
     b.innerHTML = ALIGN_ICONS[i];
     b.setAttribute('aria-label', d.label);
-    attachTooltip(b, d.label, { below: true, anchor: row });
+    attachTooltip(b, d.label);
     b.addEventListener('click', () => { alignSelection(d.mode); });
     row.appendChild(b);
   });
