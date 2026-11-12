@@ -310,12 +310,45 @@ let lastTs = 0;
 // offscreen export targets render at s=1 regardless.
 const ZOOM_STOPS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
 let zoom = 1;
+// Pan is view state only, like zoom: not in the undo snapshot, not
+// saved, resets to 0 on reload. It shifts the stage origin in
+// workspace pixels, on top of the centred fit × zoom.
+let panX = 0;
+let panY = 0;
+let panDrag: { x: number; y: number; panX: number; panY: number } | null = null;
+let spaceHeld = false;
+const PAN_MARGIN = 80; // px of the stage kept visible in the workspace
+// Clamp the pan so the stage can never be dragged entirely out of
+// view. When the stage fits the workspace it stays fully inside;
+// when it is bigger, at least PAN_MARGIN px of it stays visible on
+// each side. Called after every zoom, wheel and drag change, and on
+// resize (a smaller window re-clamps the same pan).
+function clampAxis(pan: number, base: number, size: number, view: number): number {
+  if (size <= view) return Math.max(-base, Math.min(view - size - base, pan));
+  return Math.max(PAN_MARGIN - size - base, Math.min(view - PAN_MARGIN - base, pan));
+}
+function clampPan(): void {
+  const cw = stageWrap.clientWidth, ch = stageWrap.clientHeight;
+  const { w, h } = stageSize();
+  const fit = Math.min(1, cw / w, ch / h) || 1;
+  const s = fit * zoom;
+  panX = clampAxis(panX, (cw - w * s) / 2, w * s, cw);
+  panY = clampAxis(panY, (ch - h * s) / 2, h * s, ch);
+}
 function updateZoomLabel(): void {
   const el = document.getElementById('zoom-label');
   if (el) el.textContent = `${Math.round(zoom * 100)}%`;
 }
 function setZoom(z: number): void {
   zoom = z;
+  clampPan(); // zoom keeps the current pan, clamped to the new zoom
+  updateZoomLabel();
+}
+// Zoom reset also re-centres the view: 100% and no pan.
+function resetView(): void {
+  zoom = 1;
+  panX = 0;
+  panY = 0;
   updateZoomLabel();
 }
 function zoomStep(dir: 1 | -1): void {
@@ -848,7 +881,7 @@ app.innerHTML = `
       </div>
       <div id="zoom-control" aria-label="Zoom">
         <button id="zoom-out" class="zbtn" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
-        <button id="zoom-label" class="zoom-label" title="Reset zoom to 100%" aria-label="Zoom level, activate to reset to 100%">100%</button>
+        <button id="zoom-label" class="zoom-label" title="Reset zoom and pan to 100%" aria-label="Zoom level, activate to reset the view to 100%">100%</button>
         <button id="zoom-in" class="zbtn" title="Zoom in" aria-label="Zoom in"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
       </div>
     </footer>
@@ -1115,6 +1148,10 @@ let eraserRingEl: HTMLDivElement | null = null;
 function updateCursor(): void {
   canvas.classList.toggle('select-cursor', tool === 'select');
   canvas.classList.toggle('eraser-cursor', tool === 'eraser');
+  // Space held over the workspace offers a pan (grab); a pan drag in
+  // progress shows the grabbing hand. Pan wins over the tool cursor.
+  canvas.classList.toggle('pan-cursor', spaceHeld && panDrag === null);
+  canvas.classList.toggle('panning-cursor', panDrag !== null);
   if (tool !== 'eraser') updateEraserRing(0, 0, false);
 }
 renderToolbar();
@@ -1596,10 +1633,11 @@ function workspaceLayout(): WorkspaceLayout {
   // Zoom scales the fit around the workspace centre, so the stage
   // grows/shrinks in place; at zoom > 1 the origin goes negative and
   // the stage extends past the visible workspace (clipped by the
-  // canvas, no pan). Every stage-space conversion reads this, so
-  // hit-testing, drawing, dragging and the marquee all follow zoom.
+  // canvas). Pan shifts that centred origin in workspace pixels.
+  // Every stage-space conversion reads this, so hit-testing, drawing,
+  // dragging and the marquee all follow zoom and pan.
   const s = fit * zoom;
-  return { s, ox: (cw - w * s) / 2, oy: (ch - h * s) / 2, cw, ch };
+  return { s, ox: (cw - w * s) / 2 + panX, oy: (ch - h * s) / 2 + panY, cw, ch };
 }
 function roundRectPath(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
   const rr = Math.min(r, w / 2, h / 2);
@@ -1616,6 +1654,7 @@ function roundRectPath(c: CanvasRenderingContext2D, x: number, y: number, w: num
   c.closePath();
 }
 function resizeCanvas(): void {
+  clampPan(); // a smaller window re-clamps the same pan
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const { cw, ch } = workspaceLayout();
   canvas.width = Math.max(1, Math.round(cw * dpr));
@@ -3438,6 +3477,16 @@ let marquee: { x0: number; y0: number; x1: number; y1: number } | null = null;
 
 canvas.addEventListener('pointerdown', (e) => {
   try { canvas.setPointerCapture(e.pointerId); } catch { /* synthetic events */ }
+  // Pan: middle-button drag, or Space+left-drag. It is never a tool
+  // gesture — no selection change, no item, no undo entry — so it is
+  // intercepted before the pointer is mapped to stage coordinates
+  // and before the double-click bookkeeping below.
+  if (e.button === 1 || (spaceHeld && e.button === 0)) {
+    e.preventDefault();
+    panDrag = { x: e.clientX, y: e.clientY, panX, panY };
+    updateCursor();
+    return;
+  }
   const p = stagePoint(e);
   // The second press of a double-click pair (same spot, <400ms) is a
   // repeat, not a new action: paint and the text editor must not fire
@@ -3503,6 +3552,14 @@ canvas.addEventListener('pointerdown', (e) => {
   }
 });
 canvas.addEventListener('pointermove', (e) => {
+  if (panDrag) {
+    // Pan moves in screen pixels, not stage coordinates — the drag
+    // delta is added to the pan directly, then clamped.
+    panX = panDrag.panX + (e.clientX - panDrag.x);
+    panY = panDrag.panY + (e.clientY - panDrag.y);
+    clampPan();
+    return;
+  }
   if (!drag) return;
   const p = stagePoint(e);
   if (drag.kind === 'brush' && drag.item?.type === 'stroke') {
@@ -3549,6 +3606,13 @@ canvas.addEventListener('pointermove', (e) => {
   }
 });
 canvas.addEventListener('pointerup', (e) => {
+  if (panDrag) {
+    // A pan is view state, not a document change: no history entry,
+    // no save, nothing moved.
+    panDrag = null;
+    updateCursor();
+    return;
+  }
   if (!drag) return;
   const p = stagePoint(e);
   if (drag.kind === 'shape' && previewShape && previewShape.w > 4 && previewShape.h > 4) {
@@ -3589,6 +3653,21 @@ canvas.addEventListener('pointerup', (e) => {
   drag = null;
   renderPanel();
 });
+// A cancelled pointer ends a pan drag without applying anything
+// further; tool drags already tolerate a missing pointerup.
+canvas.addEventListener('pointercancel', () => {
+  if (panDrag) { panDrag = null; updateCursor(); }
+});
+// Wheel over the workspace pans the view — trackpad two-finger
+// scroll included, like scrolling a document (content moves against
+// the scroll direction). Zoom stays on the buttons and Cmd/Ctrl+=/-/0.
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const f = e.deltaMode === 1 ? 16 : 1; // line mode: ~16px a line
+  panX -= e.deltaX * f;
+  panY -= e.deltaY * f;
+  clampPan();
+}, { passive: false });
 // Paint bucket: a shape fills solid with the foreground colour;
 // a stroke or text is recoloured; empty stage fills the stage
 // background with the foreground colour. Clicking empty workspace
@@ -3846,7 +3925,7 @@ canvas.addEventListener('pointerdown', (e) => {
 (document.getElementById('redo-btn') as HTMLButtonElement).addEventListener('click', redo);
 (document.getElementById('zoom-in') as HTMLButtonElement).addEventListener('click', () => zoomStep(1));
 (document.getElementById('zoom-out') as HTMLButtonElement).addEventListener('click', () => zoomStep(-1));
-(document.getElementById('zoom-label') as HTMLButtonElement).addEventListener('click', () => setZoom(1));
+(document.getElementById('zoom-label') as HTMLButtonElement).addEventListener('click', () => resetView());
 function clearStage(): void {
   if (items.length === 0) return;
   pushHistory();
@@ -4063,7 +4142,12 @@ window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.code === 'BracketLeft') { e.preventDefault(); reorderSelection(e.shiftKey ? 'back' : 'backward'); return; }
   if ((e.ctrlKey || e.metaKey) && e.code === 'Equal') { e.preventDefault(); zoomStep(1); return; }
   if ((e.ctrlKey || e.metaKey) && e.code === 'Minus') { e.preventDefault(); zoomStep(-1); return; }
-  if ((e.ctrlKey || e.metaKey) && e.code === 'Digit0') { e.preventDefault(); setZoom(1); return; }
+  if ((e.ctrlKey || e.metaKey) && e.code === 'Digit0') { e.preventDefault(); resetView(); return; }
+  // Space held over the workspace is the pan modifier: the cursor
+  // turns to a grab hand (see updateCursor) and the next drag pans
+  // instead of starting a tool gesture. Repeat events are ignored;
+  // the keyup below clears it.
+  if (k === ' ' && !e.repeat) { e.preventDefault(); spaceHeld = true; updateCursor(); return; }
   if (k === 'escape') {
     if (addPickerOpen) { addPickerOpen = false; renderPanel(); return; }
     if (exportDropdownOpen) { exportDropdownOpen = false; closeExportDropdownEl(); renderPanel(); return; }
@@ -4093,6 +4177,16 @@ window.addEventListener('keydown', (e) => {
   else if (k === 't') tool = 'text';
   else return;
   renderToolbar();
+  updateCursor();
+});
+window.addEventListener('keyup', (e) => {
+  if (e.key === ' ') { spaceHeld = false; updateCursor(); }
+});
+// Losing the window while Space is held (or mid-pan) must not leave
+// the grab hand stuck on.
+window.addEventListener('blur', () => {
+  spaceHeld = false;
+  panDrag = null;
   updateCursor();
 });
 
