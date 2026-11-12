@@ -474,7 +474,7 @@ function sampleBird(): Item[] {
   const act = [true, true, true, true, false, false];
   const withAct = (it: Item): Item => {
     // The bird's Blink runs at amplitude 0.85, the depth the motion used
-    // to hard-code, so the preset bird blinks exactly as before.
+    // to hard-code, so the sample bird blinks exactly as before.
     it.layers = act.map((on, b) => (on ? newLayer(b, b === 3 ? { amplitude: 0.85 } : undefined) : null)).filter((l): l is BehaviourLayer => l !== null);
     return it;
   };
@@ -2454,75 +2454,20 @@ function addBehaviour(host: LayerHost, b: number): void {
   renderPanel();
 }
 
-// Built-in presets: named combinations of behaviour layers with tuned
-// parameters, applied to the selected part (or item group) in one tap.
-// Applying a preset ADDS its layers to the stack as new instances — it
-// replaces nothing, and a preset's layers are ordinary layers afterwards
-// (toggleable, removable, groupable, undoable). Preset layers default to
-// Smooth easing: presets do not set easing.
-type PresetDef = { name: string; layers: { behaviour: number; tempo: number; amplitude: number }[] };
-const PRESETS: PresetDef[] = [
-  { name: 'Idle', layers: [{ behaviour: 0, tempo: 1, amplitude: 0.4 }, { behaviour: 2, tempo: 1, amplitude: 0.4 }] },
-  { name: 'Excited', layers: [{ behaviour: 6, tempo: 1, amplitude: 0.66 }, { behaviour: 4, tempo: 1, amplitude: 0.66 }] },
-  { name: 'Floating', layers: [{ behaviour: 1, tempo: 0.5, amplitude: 0.4 }, { behaviour: 0, tempo: 0.5, amplitude: 0.4 }] },
-  { name: 'Sleepy', layers: [{ behaviour: 2, tempo: 0.5, amplitude: 0.4 }, { behaviour: 9, tempo: 0.5, amplitude: 0.5 }] },
-  { name: 'Nervous', layers: [{ behaviour: 10, tempo: 2, amplitude: 0.5 }, { behaviour: 3, tempo: 1, amplitude: 0.66 }] },
-];
-// One undo entry for the whole preset, not one per layer. Preset layers
-// are fresh instances with the preset's tuned parameters — they do not
-// draw on the item's stash (that is only for re-adding a removed
-// behaviour from the picker).
-function applyPreset(host: LayerHost, preset: PresetDef): void {
-  pushHistory();
-  let first: BehaviourLayer | null = null;
-  for (const p of preset.layers) {
-    const layer = newLayer(p.behaviour, { tempo: p.tempo, amplitude: p.amplitude });
-    if (host.kind === 'group') host.group.layers.push(layer);
-    else host.item.layers.push(layer);
-    if (!first) first = layer;
-  }
-  if (first) scrollToLayerId = first.id;
-  addPickerOpen = false;
-  save();
-  renderPanel();
-}
-
 function closeAddPickerEl(): void {
   document.querySelector('.add-picker')?.remove();
 }
 
 // The Add behavior picker: a small popover anchored to the Add button,
-// listing the presets first (a "Presets" section, one row per preset,
-// name only) and then all eleven behaviours with their icons. Every
-// row is always enabled: the same behaviour can be added several times,
-// each add creating a new instance. Fixed-position so the panel's scroll
-// cannot clip it; flips above the button when there is no room below.
+// listing all eleven behaviours with their icons. Every row is always
+// enabled: the same behaviour can be added several times, each add
+// creating a new instance. Fixed-position so the panel's scroll cannot
+// clip it; flips above the button when there is no room below.
 function renderAddPicker(anchorBtn: HTMLElement, host: LayerHost): void {
   closeAddPickerEl();
   const pop = document.createElement('div');
   pop.className = 'add-picker';
   pop.setAttribute('role', 'menu');
-  const secLab = document.createElement('div');
-  secLab.className = 'add-picker-section';
-  secLab.textContent = 'Presets';
-  pop.appendChild(secLab);
-  for (const preset of PRESETS) {
-    const row = document.createElement('button');
-    row.type = 'button';
-    row.className = 'add-picker-row preset';
-    row.setAttribute('role', 'menuitem');
-    row.setAttribute('aria-label', `Apply preset ${preset.name}`);
-    row.innerHTML = `<span class="layer-name">${preset.name}</span>`;
-    row.addEventListener('click', (e) => {
-      e.stopPropagation();
-      applyPreset(host, preset);
-    });
-    pop.appendChild(row);
-  }
-  const div = document.createElement('div');
-  div.className = 'add-picker-div';
-  div.setAttribute('aria-hidden', 'true');
-  pop.appendChild(div);
   for (let b = 0; b < BEHAVIOURS.length; b++) {
     const row = document.createElement('button');
     row.type = 'button';
