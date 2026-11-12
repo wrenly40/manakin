@@ -468,6 +468,10 @@ function restore(json: string): void {
   save();
   requestCanvasResize();
   renderPanel();
+  // Undo/redo restores the timeline too: the filmstrip only re-renders
+  // on the timeline event, so without this it keeps showing the
+  // pre-undo frames while the model has already moved.
+  emitPluginEvent('timeline');
 }
 function undo(): void {
   const prev = history.pop();
