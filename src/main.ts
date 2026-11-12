@@ -21,31 +21,33 @@ declare global {
 type Pt = { x: number; y: number };
 type BehaviourName = 'Bob' | 'Sway' | 'Breathe' | 'Blink' | 'Spin' | 'Wander' | 'Bounce' | 'Stretch' | 'Orbit' | 'Fade' | 'Tremble';
 const BEHAVIOURS: BehaviourName[] = ['Bob', 'Sway', 'Breathe', 'Blink', 'Spin', 'Wander', 'Bounce', 'Stretch', 'Orbit', 'Fade', 'Tremble'];
-// One behaviour cycle at tempo 1x lasts 4s; a tempo of tx makes it 4/t s.
-// Tempo is stepped: only powers of two, so the ratio of any two tempos is
-// an integer and every behaviour completes a whole number of cycles in the
-// loop (see loopMs / loopCycles below).
+// Cycle N = the behaviour completes N cycles per loop. The loop is
+// always 4s (BASE_CYCLE_MS): Cycle 1 is one cycle per loop, Cycle 10
+// is ten. A layer's effective cycle count is its own Cycle times its
+// behaviour group's Cycle multiplier (both whole numbers), so every
+// behaviour completes a whole number of cycles in the loop and the
+// pose at the wrap equals the pose at the start (see loopMs /
+// loopCycles below).
 const BASE_CYCLE_MS = 4000;
-const TEMPO_STOPS = [0.25, 0.5, 1, 2];
-function snapTempo(v: unknown): number {
+const CYCLE_MIN = 1;
+const CYCLE_MAX = 10;
+function clampCycle(v: unknown): number {
   if (typeof v !== 'number' || !Number.isFinite(v)) return 1;
-  if (v <= 0.25) return 0.25;
-  if (v >= 2) return 2;
-  let best = TEMPO_STOPS[0], bestD = Math.abs(v - TEMPO_STOPS[0]);
-  for (const s of TEMPO_STOPS) {
+  return Math.max(CYCLE_MIN, Math.min(CYCLE_MAX, Math.round(v)));
+}
+// Old saves stored a stepped rate (0.25/0.5/1/2) under `tempo` (or
+// `speed` before that). Map it to a Cycle: 2 -> Cycle 2, anything
+// slower -> Cycle 1 — there is no slower-than-one-cycle in the new
+// model, so a 0.25/0.5 layer gets faster on load (one cycle per loop).
+const LEGACY_RATE_STOPS = [0.25, 0.5, 1, 2];
+function cycleFromLegacyRate(v: unknown): number {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return 1;
+  let best = LEGACY_RATE_STOPS[0], bestD = Math.abs(v - LEGACY_RATE_STOPS[0]);
+  for (const s of LEGACY_RATE_STOPS) {
     const d = Math.abs(v - s);
     if (d <= bestD) { best = s; bestD = d; } // exact ties go to the higher stop
   }
-  return best;
-}
-function stopAt(i: number): number {
-  return TEMPO_STOPS[Math.max(0, Math.min(TEMPO_STOPS.length - 1, Math.round(i)))];
-}
-function tempoStopIndex(t: number): number {
-  return TEMPO_STOPS.indexOf(snapTempo(t));
-}
-function formatTempoStop(s: number): string {
-  return `${s.toFixed(2).replace(/0$/, '').replace(/\.$/, '')}x`;
+  return best >= 2 ? 2 : 1;
 }
 // Easing reshapes the normalized cycle phase u in [0,1] with a function
 // mapping 0->0 and 1->1, so every easing still closes the loop seamlessly.
@@ -113,7 +115,7 @@ type BehaviourGroup = {
   name: string;
   members: string[]; // layer ids; a layer belongs to at most one group
   active: boolean; // group off suspends its members without losing their own on/off states
-  tempo: number; // one of TEMPO_STOPS, multiplies each member's tempo
+  cycle: number; // 1-10, whole-number multiplier on each member's Cycle
   amplitude: number; // 0-1, scales each member's amplitude
 };
 // One layer = one instance of a behaviour on one item. The same behaviour
@@ -125,7 +127,7 @@ type BehaviourGroup = {
 // motion for the existing six.
 type LayerParams = {
   on: boolean;
-  tempo: number; // one of TEMPO_STOPS
+  cycle: number; // 1-10, cycles per loop
   amplitude: number; // 0-1
   offset: number; // 0-1 shift of the motion within its own cycle
   easing: EasingName; // reshapes the cycle phase; 'smooth' is the current sine
@@ -198,7 +200,7 @@ function nid(): string {
   return `i${Date.now().toString(36)}${uid}`;
 }
 function defaultLayerParams(): LayerParams {
-  return { on: true, tempo: 1, amplitude: 0.66, offset: 0, easing: 'smooth', blinkDuration: 26, spinReverse: false, wanderSmooth: 50, orbitReverse: false };
+  return { on: true, cycle: 1, amplitude: 0.66, offset: 0, easing: 'smooth', blinkDuration: 26, spinReverse: false, wanderSmooth: 50, orbitReverse: false };
 }
 // The default blink duration of 26% is a raised-cosine bump whose
 // half-depth width (13%) matches the old sin^8 blink.
@@ -507,15 +509,18 @@ function clampNum(v: unknown, min: number, max: number, dflt: number): number {
 }
 // Merge saved params with the current defaults, clamping them. Migration
 // is keyed on FIELD PRESENCE: an old save stores percents under `amount`
-// (66 = 66%) and `phase` (50 = half a loop) and a continuous `speed`,
-// while a new save stores fractions under `amplitude`/`offset` and a
-// stepped `tempo` — so an old amount of 1 (1%) and a new amplitude of 1
-// (full) are told apart by the field name, never by the value.
+// (66 = 66%) and `phase` (50 = half a loop) and a stepped rate under
+// `tempo`/`speed`, while a new save stores fractions under
+// `amplitude`/`offset` and an integer `cycle` — so an old amount of 1 (1%)
+// and a new amplitude of 1 (full) are told apart by the field name, never
+// by the value.
 function cleanParams(p: Partial<LayerParams>): LayerParams {
-  const legacy = p as Partial<LayerParams> & { amount?: unknown; phase?: unknown; speed?: unknown };
+  const legacy = p as Partial<LayerParams> & { amount?: unknown; phase?: unknown; speed?: unknown; tempo?: unknown };
   return {
     on: typeof p.on === 'boolean' ? p.on : true,
-    tempo: typeof p.tempo === 'number' ? snapTempo(p.tempo) : (typeof legacy.speed === 'number' ? snapTempo(legacy.speed) : 1),
+    cycle: typeof p.cycle === 'number' ? clampCycle(p.cycle)
+      : typeof legacy.tempo === 'number' ? cycleFromLegacyRate(legacy.tempo)
+      : typeof legacy.speed === 'number' ? cycleFromLegacyRate(legacy.speed) : 1,
     amplitude: typeof p.amplitude === 'number'
       ? clampNum(p.amplitude, 0, 1, 0.66)
       : clampNum(legacy.amount, 0, 100, 66) / 100,
@@ -559,6 +564,7 @@ function migrateItemGroup(raw: unknown): ItemGroup | null {
   const seenMember = new Set<string>();
   const groups = (Array.isArray(g.groups) ? g.groups : []).map((r) => {
     const bg = (r ?? {}) as Partial<BehaviourGroup>;
+    const legacyBg = bg as Partial<BehaviourGroup> & { tempo?: unknown; speed?: unknown };
     const members = (Array.isArray(bg.members) ? bg.members : [])
       .filter((m): m is string => typeof m === 'string' && ids.has(m) && !seenMember.has(m));
     members.forEach((m) => seenMember.add(m));
@@ -568,7 +574,9 @@ function migrateItemGroup(raw: unknown): ItemGroup | null {
       name: behaviourGroupName(bg.name),
       members: [...new Set(members)],
       active: typeof bg.active === 'boolean' ? bg.active : true,
-      tempo: typeof bg.tempo === 'number' ? snapTempo(bg.tempo) : 1,
+      cycle: typeof bg.cycle === 'number' ? clampCycle(bg.cycle)
+        : typeof legacyBg.tempo === 'number' ? cycleFromLegacyRate(legacyBg.tempo)
+        : typeof legacyBg.speed === 'number' ? cycleFromLegacyRate(legacyBg.speed) : 1,
       amplitude: typeof bg.amplitude === 'number' ? clampNum(bg.amplitude, 0, 1, 1) : 1,
     };
   }).filter((x): x is BehaviourGroup => x !== null);
@@ -616,7 +624,7 @@ function migrateItem(it: Item): void {
     const seenMember = new Set<string>();
     it.groups = (Array.isArray(it.groups) ? it.groups : []).map((raw) => {
       const g = (raw ?? {}) as Partial<BehaviourGroup>;
-      const legacy = g as Partial<BehaviourGroup> & { speed?: unknown; amount?: unknown };
+      const legacy = g as Partial<BehaviourGroup> & { speed?: unknown; amount?: unknown; tempo?: unknown };
       const members = (Array.isArray(g.members) ? g.members : [])
         .filter((m): m is string => typeof m === 'string' && ids.has(m) && !seenMember.has(m));
       members.forEach((m) => seenMember.add(m));
@@ -626,7 +634,9 @@ function migrateItem(it: Item): void {
         name: behaviourGroupName(g.name),
         members: [...new Set(members)],
         active: typeof g.active === 'boolean' ? g.active : true,
-        tempo: typeof g.tempo === 'number' ? snapTempo(g.tempo) : (typeof legacy.speed === 'number' ? snapTempo(legacy.speed) : 1),
+        cycle: typeof g.cycle === 'number' ? clampCycle(g.cycle)
+          : typeof legacy.tempo === 'number' ? cycleFromLegacyRate(legacy.tempo)
+          : typeof legacy.speed === 'number' ? cycleFromLegacyRate(legacy.speed) : 1,
         amplitude: typeof g.amplitude === 'number'
           ? clampNum(g.amplitude, 0, 1, 1)
           : clampNum(legacy.amount, 0, 100, 100) / 100,
@@ -660,8 +670,8 @@ function migrateItem(it: Item): void {
   } else if (Array.isArray(anyIt.active) && anyIt.active.length === LEGACY_BEHAVIOUR_COUNT) {
     active = (anyIt.active as unknown[]).map((v) => v === true);
   }
-  const tempos = (Array.isArray(anyIt.speeds) && anyIt.speeds.length === LEGACY_BEHAVIOUR_COUNT
-    ? (anyIt.speeds as unknown[]).map((v) => snapTempo(v)) : [1, 1, 1, 1, 1, 1]);
+  const cycles = (Array.isArray(anyIt.speeds) && anyIt.speeds.length === LEGACY_BEHAVIOUR_COUNT
+    ? (anyIt.speeds as unknown[]).map((v) => cycleFromLegacyRate(v)) : [1, 1, 1, 1, 1, 1]);
   const amounts = (Array.isArray(anyIt.amounts) && anyIt.amounts.length === LEGACY_BEHAVIOUR_COUNT
     ? (anyIt.amounts as unknown[]).map((a) => {
         const n = typeof a === 'number' ? a : NaN;
@@ -673,11 +683,11 @@ function migrateItem(it: Item): void {
   const spinReverse = anyIt.spinReverse === true;
   const wanderSmooth = clampNum(anyIt.wanderSmooth, 0, 100, 50);
   const paramsOf = (b: number): LayerParams => ({
-    on: active[b], tempo: tempos[b], amplitude: amounts[b] / 100, offset: phases[b] / 100,
+    on: active[b], cycle: cycles[b], amplitude: amounts[b] / 100, offset: phases[b] / 100,
     easing: 'smooth', blinkDuration, spinReverse, wanderSmooth, orbitReverse: false,
   });
   const hasCustom = (b: number): boolean =>
-    tempos[b] !== 1 || amounts[b] !== 66 || phases[b] !== 0 ||
+    cycles[b] !== 1 || amounts[b] !== 66 || phases[b] !== 0 ||
     (b === 3 && blinkDuration !== 26) ||
     (b === 4 && spinReverse === true) ||
     (b === 5 && wanderSmooth !== 50);
@@ -686,7 +696,7 @@ function migrateItem(it: Item): void {
   const seen = new Set<number>();
   const oldGroups = (Array.isArray(anyIt.groups) ? anyIt.groups : []).map((raw) => {
     const g = (raw ?? {}) as Partial<BehaviourGroup>;
-    const legacy = g as Partial<BehaviourGroup> & { speed?: unknown; amount?: unknown };
+    const legacy = g as Partial<BehaviourGroup> & { speed?: unknown; amount?: unknown; tempo?: unknown };
     const rawMembers = (Array.isArray(g.members) ? g.members : []) as unknown[];
     const members = rawMembers
       .filter((m): m is number => typeof m === 'number' && Number.isInteger(m) && m >= 0 && m < LEGACY_BEHAVIOUR_COUNT && !seen.has(m));
@@ -696,7 +706,9 @@ function migrateItem(it: Item): void {
       name: behaviourGroupName(g.name),
       members: [...members].sort((a, b) => a - b),
       active: typeof g.active === 'boolean' ? g.active : true,
-      tempo: typeof g.tempo === 'number' ? snapTempo(g.tempo) : (typeof legacy.speed === 'number' ? snapTempo(legacy.speed) : 1),
+      cycle: typeof g.cycle === 'number' ? clampCycle(g.cycle)
+        : typeof legacy.tempo === 'number' ? cycleFromLegacyRate(legacy.tempo)
+        : typeof legacy.speed === 'number' ? cycleFromLegacyRate(legacy.speed) : 1,
       amplitude: typeof g.amplitude === 'number'
         ? clampNum(g.amplitude, 0, 1, 1)
         : clampNum(legacy.amount, 0, 100, 100) / 100,
@@ -1328,12 +1340,12 @@ function effActiveIn(groups: BehaviourGroup[], layer: BehaviourLayer): boolean {
 function effActive(it: Item, layer: BehaviourLayer): boolean {
   return effActiveIn(it.groups, layer);
 }
-function effTempoIn(groups: BehaviourGroup[], layer: BehaviourLayer): number {
+function effCycleIn(groups: BehaviourGroup[], layer: BehaviourLayer): number {
   const g = groupOfIn(groups, layer);
-  return layer.tempo * (g ? g.tempo : 1);
+  return layer.cycle * (g ? g.cycle : 1);
 }
-function effTempo(it: Item, layer: BehaviourLayer): number {
-  return effTempoIn(it.groups, layer);
+function effCycle(it: Item, layer: BehaviourLayer): number {
+  return effCycleIn(it.groups, layer);
 }
 function effAmplitudeIn(groups: BehaviourGroup[], layer: BehaviourLayer): number {
   const g = groupOfIn(groups, layer);
@@ -1348,39 +1360,19 @@ function amplitudeScale(a: number): number {
   // factors) ~11% max scale and ~0.63 rad max rotation in the motion.
   return a * 1.8;
 }
-// The loop follows the slowest contributing behaviour: an instance
-// contributes when it is effectively on and its amplitude is above 0 (an
-// amplitude-0 layer moves nothing and must not stretch the loop). Its
-// cycle is BASE_CYCLE_MS / effective tempo; the loop is the longest cycle,
-// so every contributing instance completes a whole number of cycles in it
-// — all effective tempos are powers of two, so every ratio is an integer.
-function minContributingTempo(): number | null {
-  let min: number | null = null;
-  const consider = (tempo: number): void => {
-    if (min === null || tempo < min) min = tempo;
-  };
-  for (const it of items) for (const layer of it.layers) {
-    if (!effActive(it, layer) || layer.amplitude <= 0) continue;
-    consider(effTempo(it, layer));
-  }
-  // An item group's layers count like any other contributing behaviour,
-  // folding in the group's behaviour groups the same way an item's do.
-  for (const g of itemGroups) for (const layer of g.layers) {
-    if (!effActiveIn(g.groups, layer) || layer.amplitude <= 0) continue;
-    consider(effTempoIn(g.groups, layer));
-  }
-  return min;
-}
+// The loop is always 4s (BASE_CYCLE_MS): Cycle N completes N cycles in
+// it, so every contributing instance completes a whole number of cycles
+// and the pose at the wrap equals the pose at the start. A layer's
+// effective cycle count is its own Cycle times its behaviour group's
+// Cycle multiplier — both whole numbers, so the product is whole too.
 function loopMs(): number {
-  const min = minContributingTempo();
-  return min === null ? BASE_CYCLE_MS : BASE_CYCLE_MS / min;
+  return BASE_CYCLE_MS;
 }
-// Whole number of cycles an instance at this tempo completes in one
-// loop. The cycle math uses this, so the pose at the wrap equals the
-// pose at the start.
-function loopCyclesTempo(tempo: number): number {
-  const min = minContributingTempo();
-  return min === null ? 1 : tempo / min;
+// Whole number of cycles an instance at this effective cycle count
+// completes in one loop. The cycle math uses this, so the pose at the
+// wrap equals the pose at the start.
+function loopCycles(cycle: number): number {
+  return Math.max(1, Math.round(cycle));
 }
 function smoothedAmp(layer: BehaviourLayer, target: number): number {
   const cur = smoothed.get(layer.id) ?? 0;
@@ -1486,15 +1478,15 @@ function trembleTerms(layer: BehaviourLayer, cycles: number, t01: number): { x: 
 // layers fold in theirs the same way. Motion and graphs read through
 // the same context, so the two agree.
 type LayerCtx = {
-  tempo: (l: BehaviourLayer) => number;
+  cycle: (l: BehaviourLayer) => number;
   amplitude: (l: BehaviourLayer) => number;
   active: (l: BehaviourLayer) => boolean;
 };
 function itemCtx(it: Item): LayerCtx {
-  return { tempo: (l) => effTempo(it, l), amplitude: (l) => effAmplitude(it, l), active: (l) => effActive(it, l) };
+  return { cycle: (l) => effCycle(it, l), amplitude: (l) => effAmplitude(it, l), active: (l) => effActive(it, l) };
 }
 function groupCtx(g: ItemGroup): LayerCtx {
-  return { tempo: (l) => effTempoIn(g.groups, l), amplitude: (l) => effAmplitudeIn(g.groups, l), active: (l) => effActiveIn(g.groups, l) };
+  return { cycle: (l) => effCycleIn(g.groups, l), amplitude: (l) => effAmplitudeIn(g.groups, l), active: (l) => effActiveIn(g.groups, l) };
 }
 // A behaviour stack lives on an item or on an item group. The panel's
 // layer cards work on either, and behaviour groups (v9) exist on either too.
@@ -1516,7 +1508,7 @@ function motionForLayers(layers: BehaviourLayer[], ctx: LayerCtx, t01: number): 
   for (const layer of layers) {
     const a = smoothedAmp(layer, ctx.active(layer) ? 1 : 0);
     if (a < 0.01) continue;
-    const cycles = loopCyclesTempo(ctx.tempo(layer));
+    const cycles = loopCycles(ctx.cycle(layer));
     const am = amplitudeScale(ctx.amplitude(layer));
     const ph = phaseOf(layer, cycles, t01); // Offset shifts the motion within its own cycle; easing reshapes the phase
     if (layer.behaviour === 0) dy += a * am * 16 * Math.sin(ph); // Bob
@@ -1562,7 +1554,7 @@ function motionForItem(it: Item, t01: number): Motion {
 // Reads the same parameters as motionFor, so the graph and the motion agree.
 function behaviourValue(layer: BehaviourLayer, ctx: LayerCtx, t01: number): number {
   const am = amplitudeScale(ctx.amplitude(layer));
-  const cycles = loopCyclesTempo(ctx.tempo(layer));
+  const cycles = loopCycles(ctx.cycle(layer));
   const ph = phaseOf(layer, cycles, t01);
   if (layer.behaviour === 3) return am * blinkPulse(ph, layer.blinkDuration); // Blink: the widened pulse itself, not a square wave
   if (layer.behaviour === 4) return (layer.spinReverse ? -1 : 1) * am * Math.sin(ph); // Spin: mirrors when reversed
@@ -2030,7 +2022,7 @@ function layerDisplayName(h: LayerHost, layer: BehaviourLayer): string {
 }
 
 // One behaviour layer row: on/off toggle, name, expand chevron, and — when
-// expanded — its graph plus Tempo/Amplitude/Offset and its own extra controls.
+// expanded — its graph plus Cycle/Amplitude/Offset and its own extra controls.
 // Works on an item's stack or an item group's stack; the host is what
 // owns the layer. Returns the row and its graph canvas (null while
 // collapsed) so a group can redraw member graphs when a group slider moves.
@@ -2127,10 +2119,10 @@ function behaviourLayer(host: LayerHost, inst: BehaviourLayer, opts: { checkable
       opts.onParamChange?.();
     };
     body.appendChild(paramSlider({
-      label: 'Tempo', min: 0, max: TEMPO_STOPS.length - 1, step: 1, value: tempoStopIndex(inst.tempo),
-      format: (v) => formatTempoStop(stopAt(v)),
-      aria: `${displayName} tempo`,
-      onInput: (v) => { const l = liveLayer(); if (!l) return; l.tempo = stopAt(v); redraw(); },
+      label: 'Cycle', min: CYCLE_MIN, max: CYCLE_MAX, step: 1, value: inst.cycle,
+      format: (v) => `${Math.round(v)}`,
+      aria: `${displayName} cycle`,
+      onInput: (v) => { const l = liveLayer(); if (!l) return; l.cycle = Math.round(v); redraw(); },
       onCommit: () => save(),
     }));
     body.appendChild(paramSlider({
@@ -2234,7 +2226,7 @@ function behaviourLayer(host: LayerHost, inst: BehaviourLayer, opts: { checkable
 }
 
 // One group row: chevron, name (click to rename inline), on/off toggle,
-// ungroup button. When expanded: combined graph, the group's Tempo and
+// ungroup button. When expanded: combined graph, the group's Cycle and
 // Amplitude sliders, then the member rows with their own controls.
 function groupLayer(host: LayerHost, group: BehaviourGroup): HTMLDivElement {
   const open = expandedGroup === group.id;
@@ -2355,10 +2347,10 @@ function groupLayer(host: LayerHost, group: BehaviourGroup): HTMLDivElement {
       }
     };
     body.appendChild(paramSlider({
-      label: 'Tempo', min: 0, max: TEMPO_STOPS.length - 1, step: 1, value: tempoStopIndex(group.tempo),
-      format: (v) => formatTempoStop(stopAt(v)),
-      aria: `${group.name} tempo`,
-      onInput: (v) => { const g = hostGroups(host).find((gg) => gg.id === group.id); if (!g) return; g.tempo = stopAt(v); redrawGroupGraph(); redrawMemberGraphs(); },
+      label: 'Cycle', min: CYCLE_MIN, max: CYCLE_MAX, step: 1, value: group.cycle,
+      format: (v) => `${Math.round(v)}`,
+      aria: `${group.name} cycle`,
+      onInput: (v) => { const g = hostGroups(host).find((gg) => gg.id === group.id); if (!g) return; g.cycle = Math.round(v); redrawGroupGraph(); redrawMemberGraphs(); },
       onCommit: () => save(),
     }));
     body.appendChild(paramSlider({
@@ -2414,7 +2406,7 @@ function removeBehaviourLayer(host: LayerHost, layerId: string): void {
   if (!layer) return;
   pushHistory();
   sel.stash[layer.behaviour] = {
-    on: layer.on, tempo: layer.tempo, amplitude: layer.amplitude, offset: layer.offset,
+    on: layer.on, cycle: layer.cycle, amplitude: layer.amplitude, offset: layer.offset,
     easing: layer.easing,
     blinkDuration: layer.blinkDuration, spinReverse: layer.spinReverse, wanderSmooth: layer.wanderSmooth,
     orbitReverse: layer.orbitReverse,
@@ -2502,7 +2494,7 @@ function reanchorAddPicker(): void {
 }
 
 // Group the checked layers of a host's stack into one behaviour
-// group: the group's Tempo/Amplitude multiply its members'. Same
+// group: the group's Cycle/Amplitude multiply its members'. Same
 // flow on an item and on an item group.
 function createBehaviourGroup(host: LayerHost): void {
   if (checkedLayers.size < 2) return;
@@ -2515,7 +2507,7 @@ function createBehaviourGroup(host: LayerHost): void {
     const m = /^Layer Group (\d+)$/.exec(g.name);
     if (m) n = Math.max(n, parseInt(m[1], 10) + 1);
   }
-  const group: BehaviourGroup = { id: nid(), name: `Layer Group ${n}`, members, active: true, tempo: 1, amplitude: 1 };
+  const group: BehaviourGroup = { id: nid(), name: `Layer Group ${n}`, members, active: true, cycle: 1, amplitude: 1 };
   groups.push(group);
   checkedLayers.clear();
   expandedLayerId = null;
