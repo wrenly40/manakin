@@ -894,10 +894,10 @@ app.innerHTML = `
         <div id="progress-track" aria-hidden="true"><div id="progress-fill"></div></div>
         <span id="time-state">0.0 / 4.0s</span>
       </div>
-      <div id="zoom-control" aria-label="Zoom">
-        <button id="zoom-out" class="zbtn" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
-        <button id="zoom-label" class="zoom-label" title="Reset zoom, pan and rotation to 100%" aria-label="Zoom level, activate to reset the view to 100%">100%</button>
-        <button id="zoom-in" class="zbtn" title="Zoom in" aria-label="Zoom in"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      <div id="zoom-control" class="seg" aria-label="Zoom">
+        <button id="zoom-out" class="icon-btn" aria-label="Zoom out"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+        <button id="zoom-label" class="zoom-label" aria-label="Zoom level, activate to reset the view to 100%">100%</button>
+        <button id="zoom-in" class="icon-btn" aria-label="Zoom in"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
       </div>
     </footer>
   </div>
@@ -4024,6 +4024,10 @@ canvas.addEventListener('pointerdown', (e) => {
 (document.getElementById('zoom-in') as HTMLButtonElement).addEventListener('click', () => zoomStep(1));
 (document.getElementById('zoom-out') as HTMLButtonElement).addEventListener('click', () => zoomStep(-1));
 (document.getElementById('zoom-label') as HTMLButtonElement).addEventListener('click', () => resetView());
+// Same shared tooltip as the Arrange/Align buttons; the label cell
+// gets none (its reset action is already known).
+attachTooltip(document.getElementById('zoom-out') as HTMLButtonElement, 'Zoom out');
+attachTooltip(document.getElementById('zoom-in') as HTMLButtonElement, 'Zoom in');
 function clearStage(): void {
   if (items.length === 0) return;
   pushHistory();
