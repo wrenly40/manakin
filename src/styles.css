@@ -691,6 +691,15 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
   border-top: 1px solid var(--separator);
   overflow-x: auto; overflow-y: hidden;
 }
+.filmstrip-inner {
+  display: flex; align-items: center; gap: 8px;
+  height: 100%; min-width: 0; flex: 1;
+}
+.filmstrip-tiles {
+  display: flex; align-items: center; gap: 8px;
+  height: 100%; min-width: 0; flex: 1;
+  overflow-x: auto; overflow-y: hidden; padding: 2px 0;
+}
 .filmstrip-btn {
   border: none; background: transparent; border-radius: 9px;
   width: 40px; height: 40px; padding: 0; flex: none;
