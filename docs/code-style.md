@@ -136,6 +136,40 @@ debt, not a second style.
   `events` (the bus), plus the phase-1 domains (`app`, `files`, `ui`,
   `storage`, `legacy`).
 
+## Applied in Manakin (phase 3, branch `core-plugins`)
+
+- `src/model.ts` gained the timeline (`Frame`, `Timeline`,
+  `TIMELINE_FPS = 12`, `newFrame`, `migrateTimeline`,
+  `totalTimelineFrames`, `timelineDurationMs`, `frameIndexAtTime`,
+  `frameStartMs`) and the motion-provider read surface: the behaviour
+  engine moved out of the model into the Behaviours plugin, and the
+  model keeps only the data plus `MotionProvider`,
+  `setMotionProvider`, `hasMotionProvider` and a delegating
+  `motionForItem` (identity motion with no provider). The smoothed
+  map moved with the engine; `pruneSmoothed`/`clearSmoothed` stay as
+  delegating wrappers in the model because the core calls them.
+- `src/core-plugins/` gained `frames` (the traditional animation
+  layer: filmstrip, thumbnails, onion toggle, frame menu, drag
+  reorder) and `behaviours` (off by default: the motion engine in
+  `behaviours-motion.ts`, the layer-stack panel in
+  `behaviours-panel.ts`). The default app without any extra plugin is
+  frame-by-frame animation.
+- The plugin system gained the seams the layer needs: a `"timeline"`
+  event; `renderFrameAt` on the app domain and the canvas renderer;
+  the `filmstrip` shell element; the frame operations on the `doc`
+  domain; the panel-view registry (`registerPanelView`,
+  `getPanelView`, `closePanelTransients`) and the shared
+  `arrangeSection` / `panelDivider` builders on the `ui` domain, so a
+  plugin can claim the panel for a selection and the core falls back
+  to its own panels when none matches.
+- The exports plugin follows the export schedule: one-frame timeline
+  exports the behaviour loop at 30fps, multi-frame exports the
+  timeline at its fps through `renderFrameAt`.
+- `src/main.ts` keeps single quotes (the panel remainder still lives
+  there until the colour/grids/editing/groups migrations dissolve
+  it); the moved behaviour panel was converted to double quotes with
+  the same tokenizer.
+
 ## Still diverging (migration debt, later phases)
 
 - `src/main.ts` is still one large file (2,350 lines after phase 2)

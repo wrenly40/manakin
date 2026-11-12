@@ -132,12 +132,13 @@ keyboard still switches tools); no player means no transport or timeline
 Re-enabling rebuilds the UI from the live state.
 
 Later phases migrate the rest, in this order: the traditional animation
-layer (phase 3 — designed below), colour panel, grids, editing
-(Duplicate/Copy-paste/Z-order/Align), behaviours as an extra plugin (the
-behaviour registry itself), groups last. The order is smallest-boundary
-first; the behaviour engine is last because everything reads it. The
-behaviours stay core behaviour until the traditional layer is the
-default — they become an opt-in plugin only after that.
+layer (phase 3 — as built below, with behaviours as an opt-in plugin in
+the same phase), colour panel, grids, editing
+(Duplicate/Copy-paste/Z-order/Align), groups last. The order is
+smallest-boundary first; the behaviour engine moved with the
+traditional layer because the default had to change first — the
+behaviours became an opt-in plugin only once the traditional layer
+was the default.
 
 ## What a plugin is
 
@@ -320,12 +321,13 @@ window.manakinPlugins.setEnabled('hello', true)
 A Settings → Plugins UI is a later phase; it uses the same `list` and
 `setEnabled` calls.
 
-## The traditional animation layer (phase 3 design)
+## The traditional animation layer (phase 3, as built)
 
-This is the design phase 3 builds from. It is the default animation
-model: the app without any extra plugin is frame-by-frame animation,
-the way a flipbook is. Behaviours become an extra plugin layered on
-top of it, only after this layer is the default.
+This is the design phase 3 built from, corrected to as-built where
+the build changed it. It is the default animation model: the app
+without any extra plugin is frame-by-frame animation, the way a
+flipbook is. Behaviours are an extra plugin layered on top of it,
+only after this layer is the default.
 
 ### The frame model
 
@@ -351,25 +353,35 @@ type Timeline = {
   migration: a save without one gets a single frame holding its items
   (`{ id, items: <the saved items>, duration: 1 }`), so every existing
   document opens as a one-frame animation and keeps working.
+  `items` stays the live binding, always
+  `timeline.frames[timeline.current].items` — every reader (canvas,
+  hit-test, panel, exports) keeps reading `items`, and a frame switch
+  rebinds it. There is no separate `currentFrame` variable: the
+  Timeline object's `current` field is the current frame.
 - A frame holds its own items. The first frame is the document as it
   is today; drawing on frame N edits frame N's items only. Copying a
   frame duplicates its items (fresh ids, like Duplicate); deleting a
   frame removes its items; the timeline never has zero frames.
 - `duration` is hold time: a frame with `duration: 2` shows for two
   timeline frames. It is the simple way to slow a pose down without
-  duplicating it. The default is 1.
+  duplicating it. The default is 1, the range is 1–4, and `fps` is
+  fixed at 12 in phase 3 (no UI for it).
 - `fps` is the timeline rate (default 12, the classic hand-drawn
-  rate). The loop length setting stays: the loop is the whole
-  timeline played at `fps`, and the loop length in seconds is
-  `totalFrames / fps` — the Loop 4/6/8/10s control becomes a display
-  of the timeline's length (and, when the timeline is a single frame,
-  the behaviour loop length it already is). Phase 3 decides the exact
-  seam: the Loop control stays in the Canvas panel and shows the
-  timeline length when the timeline has more than one frame.
+  rate). The Loop control stays in the Canvas panel with this seam:
+  a single-frame timeline shows the 4/6/8/10s seg as today; a
+  multi-frame timeline shows a live readout instead —
+  `Xs · N frames @ 12 fps` — because the loop is the whole timeline
+  played at `fps` (`totalFrames / fps` seconds), and the Loop
+  setting only drives the single-frame behaviour loop.
 - Items keep their ids across frames only when copied from the
-  previous frame — that is what makes onion skin and "edit this item
-  in every frame" possible. An item drawn fresh in frame N has a new
-  id and exists only in frame N.
+  previous frame — that is what makes onion skin possible. An item
+  drawn fresh in frame N has a new id and exists only in frame N.
+  Item groups are document-level but effectively per-frame: a
+  group's members are frame items, and duplicated-frame copies get
+  fresh ids so they are not group members. `pruneItemGroups` checks
+  membership against the union of all frames' items, not just the
+  current frame's — otherwise viewing another frame would dissolve
+  the first frame's groups.
 
 ### The filmstrip UI
 
@@ -398,17 +410,19 @@ wrap).
 Onion skin shows the neighbouring frames ghosted behind the current
 one while drawing, so the next pose can be traced from the last.
 
-- A toggle in the filmstrip (onion icon, on by default when the
-  timeline has more than one frame): previous frame at ~30% opacity
-  in ink, next frame at ~15% opacity in a different tint. Only the
-  immediately adjacent frames; more would muddy the drawing.
+- A toggle in the filmstrip (onion icon, on by default, disabled
+  while the timeline has one frame): previous frame at ~30% opacity
+  in ink, next frame at ~15% opacity in accent. Only the immediately
+  adjacent frames; more would muddy the drawing. Both ghosts render
+  at rest pose (no motion — the ghost is the drawing), on screen
+  only.
 - Onion frames are display-only: they are never hit-tested, never
   selectable, never exported, and never in the undo snapshot.
-- The canvas plugin renders them: it reads the timeline through
-  `api.doc` (the traditional layer registers the timeline on the
-  `doc` domain, the same way items are registered) and draws the
-  adjacent frames' items under the current frame's items, at the
-  onion opacities, before the current frame.
+- The canvas plugin renders them in `renderFrame`, after the grid
+  and before the current frame's items — next frame first (accent,
+  0.15), then previous (ink, 0.30), both through `drawItem` with
+  `noMotion` — and only on screen, never when an `itemsOverride` is
+  rendering one frame (exports, thumbnails).
 
 ### Frame playback through the player
 
@@ -421,16 +435,24 @@ The player does not change shape; it changes what it plays.
   Stop returns to frame 0 and pauses.
 - The timeline progress bar is the player's existing progress fill:
   it shows the loop position, which is now the timeline position.
-  The clock reads `frame N / total` as well as seconds.
+  The clock reads `frame N / total` as well as seconds on a
+  multi-frame timeline (`frame 2/3 · 0.1 / 0.3s`); a single frame
+  keeps the old seconds-only reading.
 - A single-frame timeline plays exactly as today: the behaviour
   loop. The frame model does not change the one-frame case at all —
   that is the compatibility guarantee.
-- Exports render the timeline: PNG sequence, GIF, WebM and MP4 each
-  emit one image per timeline frame at the timeline's `fps` (held
-  frames repeat their image), so an export of a 24-frame timeline at
-  12fps is 24 images over 2 seconds. The exports plugin reads the
-  timeline through `api.doc` and falls back to the behaviour loop
-  when the timeline has one frame.
+- Exports render the timeline: a one-frame timeline exports the
+  behaviour loop as before (N = round(L×30) images at 30fps); a
+  multi-frame timeline exports one image per timeline frame at the
+  timeline's `fps` (held frames repeat their image), with behaviours
+  superposed at the timeline position (`t01 = k/total`) when the
+  Behaviours plugin is on, pure frames when it is off. The exports
+  plugin reads the timeline through `api.doc` and renders each image
+  through `api.app.renderFrameAt(frameIndex, t01, target)` — the
+  app-domain entry that renders one frame's items, no grid, no
+  onion, no selection. PNG, GIF, WebM and MP4 all follow the same
+  schedule; the GIF delay and the video timestamps follow the
+  schedule's step (1/30s for the loop, 1/fps for the timeline).
 
 ### How it relates to the behaviour engine
 
@@ -440,16 +462,30 @@ top, in this order:
 1. The frame's items are the base pose (what the artist drew in
    that frame).
 2. The behaviour engine superposes its motion on top of the base
-   pose, exactly as it does today: `motionFor` reads the frame's
-   items and returns the displaced pose for the loop position.
+   pose, exactly as it does today — but the engine lives in the
+   Behaviours plugin now, behind a motion provider. `src/model.ts`
+   keeps the data and a thin read surface (`MotionProvider`,
+   `setMotionProvider`, `hasMotionProvider`, and a delegating
+   `motionForItem` that returns the identity motion with no
+   provider); the plugin owns the engine (`createMotionProvider`)
+   and registers it on activate, clears it on deactivate. Geometry
+   (`motionAdjustedPoint`, `renderedBBox`, `hitTest`) keeps calling
+   `motionForItem`, so hit-testing follows the same rule. The motion
+   math is a move, not a rewrite.
 3. The loop position for behaviours is the timeline position mapped
    onto the loop: a behaviour with Cycle N completes N cycles per
    loop, and the loop is the timeline's length. On a single-frame
    timeline the loop is the Loop setting, as today.
 4. Turning the behaviours plugin off leaves pure frame-by-frame:
    the frames play, nothing moves between them. Turning it on adds
-   motion to the frames. The behaviour layer stack in the panel
-   stays exactly as it is; it reads the current frame's items.
+   motion to the frames. The behaviour panel is the plugin's too: it
+   registers a panel view through `api.ui.registerPanelView`, and
+   the core asks `getPanelView` for a single-item or item-group
+   selection — with the plugin off, no view matches and the core
+   falls back to Arrange only (single item) or Arrange + Ungroup
+   objects (item group). The panel view's transient (the Add
+   behavior list) closes through `closePanelTransients`, the same
+   registry the core's Esc and click handlers ask.
 5. A behaviour applied to a frame applies to that frame's items
    only. A behaviour copied with a frame (duplicate frame) keeps
    working on the copy's items, because the copy's layers are
@@ -458,19 +494,35 @@ top, in this order:
 ### Persistence and undo for frames
 
 - Persistence: `timeline` in the `manakin-v1` payload, next to
-  `items` (which becomes the current frame's items on load when no
-  timeline exists — see the migration above). The undo snapshot
-  gains `timeline` and `currentFrame` alongside `items`,
-  `itemGroups`, `stageId`, `stageBgId`, `stageBgCustom`, `gridMode`,
-  `loopLength`. One entry per gesture, pushed before the mutation,
-  as today.
+  `itemGroups` (`items` is gone from the save — the timeline holds
+  them). The save writes `{ frames, fps }` only, no `current`:
+  reloading opens on frame 0. The undo snapshot gains the whole
+  `timeline` alongside `itemGroups`, `stageId`, `stageBgId`,
+  `stageBgCustom`, `gridMode`, `loopLength`. One entry per gesture,
+  pushed before the mutation, as today. The snapshot's `current` is
+  the frame the gesture started on, so undoing restores that frame
+  — there is no separate `currentFrame` field. A bare frame switch
+  pushes no entry; a switch during playback clears nothing (the
+  selection goes dormant — its ids are not in the other frame — and
+  the outline returns when its frame comes back), while a
+  user-initiated switch clears selection and focus and moves the
+  playhead to the frame's start.
 - Undo scope: a frame switch is not an undo entry (it is view state,
   like focus); drawing, adding, deleting, duplicating or reordering
   a frame is. Undoing a frame deletion restores the frame and its
   items; undoing a drawing gesture restores the frame's items as
-  they were.
-- The current frame index is view state (not saved, not in undo),
-  like zoom and focus. Reloading opens on frame 0.
+  they were. Clear clears the current frame's items only, not the
+  whole timeline.
+- The current frame index is in the undo snapshot but not saved,
+  like a cursor position: reloading opens on frame 0.
+- The filmstrip follows a `"timeline"` plugin event (frames,
+  current frame, onion skin changed). The `doc` domain carries the
+  frame operations: `getTimeline`, `getCurrentFrame`,
+  `setCurrentFrame`, `addFrame`, `duplicateFrame`, `deleteFrame`,
+  `moveFrame`, `setFrameHold`, `getOnionSkin`, `setOnionSkin`. The
+  filmstrip renders thumbnails through
+  `api.app.renderFrameAt(i, 0, g, 96/960)` and caches them by frame
+  id + signature.
 
 ## User plugins (later phase, not phase 1)
 
