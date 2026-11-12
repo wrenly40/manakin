@@ -317,6 +317,16 @@ let panX = 0;
 let panY = 0;
 let panDrag: { x: number; y: number; panX: number; panY: number } | null = null;
 let spaceHeld = false;
+// Rotation is view state only, like zoom and pan: not in the undo
+// snapshot, not saved, resets to 0 on reload. It rotates the whole
+// workspace view around the centre of the visible workspace —
+// never the artwork, never exports.
+let rotateDeg = 0; // degrees, kept normalised to [0, 360)
+let rotateDrag: { startAngle: number; startDeg: number } | null = null;
+let rotateHeld = false;
+function normDeg(d: number): number {
+  return ((d % 360) + 360) % 360;
+}
 const PAN_MARGIN = 80; // px of the stage kept visible in the workspace
 // Clamp the pan so the stage can never be dragged entirely out of
 // view. When the stage fits the workspace it stays fully inside;
@@ -337,18 +347,23 @@ function clampPan(): void {
 }
 function updateZoomLabel(): void {
   const el = document.getElementById('zoom-label');
-  if (el) el.textContent = `${Math.round(zoom * 100)}%`;
+  if (!el) return;
+  // While rotated, the angle shows next to the zoom; at 0° nothing
+  // extra. The rounded angle wraps (359.6° reads as 0°, not 360°).
+  const d = Math.round(rotateDeg) % 360;
+  el.textContent = d === 0 ? `${Math.round(zoom * 100)}%` : `${Math.round(zoom * 100)}% · ${d}°`;
 }
 function setZoom(z: number): void {
   zoom = z;
   clampPan(); // zoom keeps the current pan, clamped to the new zoom
   updateZoomLabel();
 }
-// Zoom reset also re-centres the view: 100% and no pan.
+// Zoom reset also re-centres the view: 100%, no pan, no rotation.
 function resetView(): void {
   zoom = 1;
   panX = 0;
   panY = 0;
+  rotateDeg = 0;
   updateZoomLabel();
 }
 function zoomStep(dir: 1 | -1): void {
@@ -881,7 +896,7 @@ app.innerHTML = `
       </div>
       <div id="zoom-control" aria-label="Zoom">
         <button id="zoom-out" class="zbtn" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
-        <button id="zoom-label" class="zoom-label" title="Reset zoom and pan to 100%" aria-label="Zoom level, activate to reset the view to 100%">100%</button>
+        <button id="zoom-label" class="zoom-label" title="Reset zoom, pan and rotation to 100%" aria-label="Zoom level, activate to reset the view to 100%">100%</button>
         <button id="zoom-in" class="zbtn" title="Zoom in" aria-label="Zoom in"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
       </div>
     </footer>
@@ -1148,10 +1163,11 @@ let eraserRingEl: HTMLDivElement | null = null;
 function updateCursor(): void {
   canvas.classList.toggle('select-cursor', tool === 'select');
   canvas.classList.toggle('eraser-cursor', tool === 'eraser');
-  // Space held over the workspace offers a pan (grab); a pan drag in
-  // progress shows the grabbing hand. Pan wins over the tool cursor.
-  canvas.classList.toggle('pan-cursor', spaceHeld && panDrag === null);
-  canvas.classList.toggle('panning-cursor', panDrag !== null);
+  // Space held over the workspace offers a pan (grab), R held offers
+  // a rotation; a drag of either kind in progress shows the grabbing
+  // hand. View gestures win over the tool cursor.
+  canvas.classList.toggle('pan-cursor', (spaceHeld || rotateHeld) && panDrag === null && rotateDrag === null);
+  canvas.classList.toggle('panning-cursor', panDrag !== null || rotateDrag !== null);
   if (tool !== 'eraser') updateEraserRing(0, 0, false);
 }
 renderToolbar();
@@ -1625,7 +1641,7 @@ function behaviourValue(layer: BehaviourLayer, ctx: LayerCtx, t01: number): numb
 // the workspace maps to stage coords by subtracting the stage origin
 // and dividing by the scale; outside the stage that gives negative or
 // over-size coordinates, which is exactly where pasteboard items sit.
-type WorkspaceLayout = { s: number; ox: number; oy: number; cw: number; ch: number };
+type WorkspaceLayout = { s: number; ox: number; oy: number; cw: number; ch: number; r: number };
 function workspaceLayout(): WorkspaceLayout {
   const cw = stageWrap.clientWidth, ch = stageWrap.clientHeight;
   const { w, h } = stageSize();
@@ -1634,10 +1650,22 @@ function workspaceLayout(): WorkspaceLayout {
   // grows/shrinks in place; at zoom > 1 the origin goes negative and
   // the stage extends past the visible workspace (clipped by the
   // canvas). Pan shifts that centred origin in workspace pixels.
+  // Rotation turns the whole view around the workspace centre.
   // Every stage-space conversion reads this, so hit-testing, drawing,
-  // dragging and the marquee all follow zoom and pan.
+  // dragging and the marquee all follow zoom, pan and rotation.
   const s = fit * zoom;
-  return { s, ox: (cw - w * s) / 2 + panX, oy: (ch - h * s) / 2 + panY, cw, ch };
+  return { s, ox: (cw - w * s) / 2 + panX, oy: (ch - h * s) / 2 + panY, cw, ch, r: rotateDeg * Math.PI / 180 };
+}
+// Rotate a context around the workspace centre by the view rotation,
+// if any. Used by renderFrame and renderWithPreview so the stage, its
+// items, the grid, the shape preview and the marquee all rotate
+// together; the grey workspace background stays put (it fills the
+// viewport either way). The caller's save/restore undoes it.
+function rotateView(c: CanvasRenderingContext2D, L: WorkspaceLayout): void {
+  if (L.r === 0) return;
+  c.translate(L.cw / 2, L.ch / 2);
+  c.rotate(L.r);
+  c.translate(-L.cw / 2, -L.ch / 2);
 }
 function roundRectPath(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
   const rr = Math.min(r, w / 2, h / 2);
@@ -1743,7 +1771,7 @@ function renderFrame(t01: number, target: CanvasRenderingContext2D = ctx, dprOve
   // scale s); offscreen targets are exactly stage-sized, so the stage
   // sits at the origin at full scale — that is the export crop:
   // anything outside the stage rect simply falls off the canvas.
-  const L = onScreen ? workspaceLayout() : { s: 1, ox: 0, oy: 0, cw: w, ch: h };
+  const L = onScreen ? workspaceLayout() : { s: 1, ox: 0, oy: 0, cw: w, ch: h, r: 0 };
   target.save();
   target.setTransform(dpr, 0, 0, dpr, 0, 0);
   target.clearRect(0, 0, L.cw, L.ch);
@@ -1753,6 +1781,11 @@ function renderFrame(t01: number, target: CanvasRenderingContext2D = ctx, dprOve
     // workspace, the stage card on it, and items anywhere in it.
     target.fillStyle = '#f5f5f7';
     target.fillRect(0, 0, L.cw, L.ch);
+    // The view rotation turns the stage, its items, the grid and the
+    // selection around the workspace centre; the grey workspace
+    // itself stays put. Offscreen targets never rotate (r is 0
+    // there), so exports are always upright.
+    rotateView(target, L);
     // The stage card: stage background, soft shadow, hairline border,
     // 14px radius (var(--radius)). Drawn in workspace pixels, before
     // the items — a part straddling the edge paints over the border
@@ -3459,12 +3492,39 @@ function renderColourPanel(): void {
 // player.
 function stagePoint(e: { clientX: number; clientY: number }): Pt {
   const rect = canvas.getBoundingClientRect();
-  const { s, ox, oy, cw, ch } = workspaceLayout();
-  const x = (e.clientX - rect.left - ox) / s;
-  const y = (e.clientY - rect.top - oy) / s;
+  const { s, ox, oy, cw, ch, r } = workspaceLayout();
+  // Undo the view rotation first: rotate the screen point back around
+  // the workspace centre, then the usual origin/scale mapping. The
+  // clamp below is in unrotated workspace space, which bounds the
+  // visible region either way.
+  let x = e.clientX - rect.left, y = e.clientY - rect.top;
+  if (r !== 0) {
+    const cx = cw / 2, cy = ch / 2;
+    const cos = Math.cos(-r), sin = Math.sin(-r);
+    const dx = x - cx, dy = y - cy;
+    x = cx + dx * cos - dy * sin;
+    y = cy + dx * sin + dy * cos;
+  }
+  const sx = (x - ox) / s;
+  const sy = (y - oy) / s;
   const minX = -ox / s, maxX = (cw - ox) / s;
   const minY = -oy / s, maxY = (ch - oy) / s;
-  return { x: Math.max(minX, Math.min(maxX, x)), y: Math.max(minY, Math.min(maxY, y)) };
+  return { x: Math.max(minX, Math.min(maxX, sx)), y: Math.max(minY, Math.min(maxY, sy)) };
+}
+// Stage to screen coordinates, for DOM overlays (the text editor):
+// the inverse of stagePoint — origin and scale, then the view
+// rotation around the workspace centre.
+function stageToScreen(p: Pt): Pt {
+  const { s, ox, oy, cw, ch, r } = workspaceLayout();
+  let x = ox + p.x * s, y = oy + p.y * s;
+  if (r !== 0) {
+    const cx = cw / 2, cy = ch / 2;
+    const cos = Math.cos(r), sin = Math.sin(r);
+    const dx = x - cx, dy = y - cy;
+    x = cx + dx * cos - dy * sin;
+    y = cy + dx * sin + dy * cos;
+  }
+  return { x, y };
 }
 let drag: {
   kind: 'brush' | 'shape' | 'select' | 'erase' | 'marquee';
@@ -3484,6 +3544,19 @@ canvas.addEventListener('pointerdown', (e) => {
   if (e.button === 1 || (spaceHeld && e.button === 0)) {
     e.preventDefault();
     panDrag = { x: e.clientX, y: e.clientY, panX, panY };
+    updateCursor();
+    return;
+  }
+  // Rotate: R+left-drag turns the view around the workspace centre.
+  // Same interception as pan — never a tool gesture, no selection
+  // change, no item, no undo entry. The drag angle is measured from
+  // the centre, so the stage turns under the pointer like paper on
+  // a desk. Space wins if both modifiers are held.
+  if (rotateHeld && e.button === 0) {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+    rotateDrag = { startAngle: Math.atan2(e.clientY - cy, e.clientX - cx), startDeg: rotateDeg };
     updateCursor();
     return;
   }
@@ -3560,6 +3633,18 @@ canvas.addEventListener('pointermove', (e) => {
     clampPan();
     return;
   }
+  if (rotateDrag) {
+    // Rotate follows the pointer's angle around the workspace centre,
+    // not its distance: dragging a quarter-turn around the centre
+    // turns the view 90°. Rotation is around the centre, so it can
+    // never fling the stage out of view the way a pan could.
+    const rect = canvas.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+    const a = Math.atan2(e.clientY - cy, e.clientX - cx);
+    rotateDeg = normDeg(rotateDrag.startDeg + (a - rotateDrag.startAngle) * 180 / Math.PI);
+    updateZoomLabel();
+    return;
+  }
   if (!drag) return;
   const p = stagePoint(e);
   if (drag.kind === 'brush' && drag.item?.type === 'stroke') {
@@ -3613,6 +3698,13 @@ canvas.addEventListener('pointerup', (e) => {
     updateCursor();
     return;
   }
+  if (rotateDrag) {
+    // A rotation is view state too: no history entry, no save,
+    // nothing moved.
+    rotateDrag = null;
+    updateCursor();
+    return;
+  }
   if (!drag) return;
   const p = stagePoint(e);
   if (drag.kind === 'shape' && previewShape && previewShape.w > 4 && previewShape.h > 4) {
@@ -3653,10 +3745,11 @@ canvas.addEventListener('pointerup', (e) => {
   drag = null;
   renderPanel();
 });
-// A cancelled pointer ends a pan drag without applying anything
-// further; tool drags already tolerate a missing pointerup.
+// A cancelled pointer ends a pan or rotate drag without applying
+// anything further; tool drags already tolerate a missing pointerup.
 canvas.addEventListener('pointercancel', () => {
   if (panDrag) { panDrag = null; updateCursor(); }
+  if (rotateDrag) { rotateDrag = null; updateCursor(); }
 });
 // Wheel over the workspace pans the view — trackpad two-finger
 // scroll included, like scrolling a document (content moves against
@@ -3807,6 +3900,7 @@ function renderWithPreview(t01: number): void {
     const L = workspaceLayout();
     ctx.save();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    rotateView(ctx, L);
     ctx.translate(L.ox, L.oy);
     ctx.scale(L.s, L.s);
     ctx.strokeStyle = previewShape.color;
@@ -3823,6 +3917,7 @@ function renderWithPreview(t01: number): void {
     const w = Math.abs(marquee.x1 - marquee.x0), h = Math.abs(marquee.y1 - marquee.y0);
     ctx.save();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    rotateView(ctx, L);
     ctx.translate(L.ox, L.oy);
     ctx.scale(L.s, L.s);
     ctx.fillStyle = 'rgba(0, 122, 255, 0.06)';
@@ -3865,8 +3960,11 @@ function openTextEditor(it: TextItem | null, p: Pt): void {
   // by the stage origin and scale — like the text it edits.
   const L = workspaceLayout();
   textEditor.style.display = 'block';
-  textEditor.style.left = `${L.ox + (it ? it.x : p.x) * L.s}px`;
-  textEditor.style.top = `${L.oy + (it ? it.y - it.size : p.y - 20) * L.s}px`;
+  // Positioned in stage space, so it follows zoom, pan and rotation
+  // like everything else on the canvas.
+  const sp = stageToScreen({ x: it ? it.x : p.x, y: it ? it.y - it.size : p.y - 20 });
+  textEditor.style.left = `${sp.x}px`;
+  textEditor.style.top = `${sp.y}px`;
   textEditor.style.fontSize = `${20 * L.s}px`;
   textEditor.style.width = '220px';
   textEditor.value = it ? it.text : '';
@@ -4148,6 +4246,12 @@ window.addEventListener('keydown', (e) => {
   // instead of starting a tool gesture. Repeat events are ignored;
   // the keyup below clears it.
   if (k === ' ' && !e.repeat) { e.preventDefault(); spaceHeld = true; updateCursor(); return; }
+  // R held is the rotate modifier, like Space is for pan: the cursor
+  // turns to a grab hand and the next drag rotates the view around
+  // the workspace centre. No Ctrl/Cmd/Alt — those belong to the
+  // browser (Ctrl/Cmd+R reloads). Typing in an input is already
+  // guarded by the check at the top of this handler.
+  if (k === 'r' && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); rotateHeld = true; updateCursor(); return; }
   if (k === 'escape') {
     if (addPickerOpen) { addPickerOpen = false; renderPanel(); return; }
     if (exportDropdownOpen) { exportDropdownOpen = false; closeExportDropdownEl(); renderPanel(); return; }
@@ -4181,12 +4285,15 @@ window.addEventListener('keydown', (e) => {
 });
 window.addEventListener('keyup', (e) => {
   if (e.key === ' ') { spaceHeld = false; updateCursor(); }
+  if (e.key.toLowerCase() === 'r') { rotateHeld = false; updateCursor(); }
 });
-// Losing the window while Space is held (or mid-pan) must not leave
-// the grab hand stuck on.
+// Losing the window while Space or R is held (or mid-pan, mid-rotate)
+// must not leave the grab hand stuck on.
 window.addEventListener('blur', () => {
   spaceHeld = false;
   panDrag = null;
+  rotateHeld = false;
+  rotateDrag = null;
   updateCursor();
 });
 

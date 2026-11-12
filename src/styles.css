@@ -264,9 +264,9 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 }
 #stage.select-cursor { cursor: default; }
 #stage.eraser-cursor { cursor: none; }
-/* Pan: Space held offers a grab hand; a pan drag in progress shows
-   the grabbing hand. These come after the tool cursors so they win
-   while Space is held. */
+/* Pan (Space held) and rotate (R held) offer a grab hand; a pan or
+   rotate drag in progress shows the grabbing hand. These come after
+   the tool cursors so they win while Space or R is held. */
 #stage.pan-cursor { cursor: grab; }
 #stage.panning-cursor { cursor: grabbing; }
 /* The eraser's reach, drawn at the cursor while the eraser tool is
