@@ -220,6 +220,7 @@ export interface PluginContext {
     setFrameHold: (index: number, duration: number) => void;
     getOnionSkin: () => boolean;
     setOnionSkin: (on: boolean) => void;
+    ungroupItemGroup: (group: ItemGroup) => void;
     // A gesture is one undoable unit: snapshot before, commit after.
     // gestureStart returns the snapshot; gestureCommit pushes it onto
     // the undo stack when changed.
@@ -301,6 +302,22 @@ export interface PluginContext {
     getActionButton: (id: string) => HTMLButtonElement | null;
     registerOverlay: (def: PluginOverlayDef) => void;
     unregisterOverlay: (id: string) => void;
+    // A whole-panel view for one selection state (the Behaviours
+    // plugin's layer stack). The core asks the registry before its
+    // own panels; with the plugin off, no view matches.
+    registerPanelView: (def: PanelViewDef) => void;
+    unregisterPanelView: (id: string) => void;
+    // A panel transient: UI the plugin opened inside the panel flow
+    // that Escape / an outside click should close first. The closer
+    // gets the click target (undefined for Escape) and returns
+    // whether it closed anything.
+    registerPanelTransient: (close: (target?: HTMLElement) => boolean) => void;
+    unregisterPanelTransient: () => void;
+    // The core's shared panel builders, so a plugin's panel reads
+    // exactly like the core's: the Arrange section and the hairline
+    // divider between sections.
+    arrangeSection: () => HTMLDivElement;
+    panelDivider: () => HTMLDivElement;
     // Open the colour panel for a slot. The panel itself is still
     // core-owned; the toolbar asks for it, it does not build it.
     openColour: (slot: "fg" | "bg") => void;
@@ -313,6 +330,24 @@ export interface PluginContext {
     set: (key: string, value: unknown) => void;
     delete: (key: string) => void;
   };
+}
+
+// A panel view: a plugin's whole-panel rendering for one selection
+// state. The core asks the registry before its own panels; the first
+// view whose `when` matches renders the panel (title + body). With
+// the plugin off, no view matches and the core's fallback shows.
+// afterRender runs after the core's scroll restore, for
+// scroll-into-view work the view requested during render.
+export interface PanelContext {
+  selectedItems: Item[];
+  selectedGroup: ItemGroup | null;
+}
+
+export interface PanelViewDef {
+  id: string;
+  when: (ctx: PanelContext) => boolean;
+  render: (ctx: PanelContext, body: HTMLElement, setTitle: (t: string) => void) => void;
+  afterRender?: (ctx: PanelContext, body: HTMLElement) => void;
 }
 
 // What the core provides to the plugin system. All animation reads and
@@ -377,6 +412,9 @@ export interface PluginHost {
   setFrameHold: (index: number, duration: number) => void;
   getOnionSkin: () => boolean;
   setOnionSkin: (on: boolean) => void;
+  ungroupItemGroup: (group: ItemGroup) => void;
+  renderArrangeSection: () => HTMLDivElement;
+  renderPanelDivider: () => HTMLDivElement;
   gestureStart: () => string;
   gestureCommit: (before: string, changed: boolean) => void;
   pushHistory: () => void;
@@ -462,6 +500,10 @@ interface OverlayEntry extends PluginOverlayDef {
 // without colliding; the core resolves a short id within one plugin.
 const actions = new Map<string, ActionEntry>();
 const overlays = new Map<string, OverlayEntry>();
+const panelViews = new Map<string, PanelViewDef>();
+// Panel transients are keyed by plugin id alone: a plugin has at
+// most one transient UI open at a time.
+const panelTransients = new Map<string, (target?: HTMLElement) => boolean>();
 const loaded = new Map<string, LoadedPlugin>();
 
 let host: PluginHost | null = null;
@@ -680,6 +722,7 @@ function createContext(manifest: PluginManifest): PluginContext {
       setFrameHold: (index, duration) => { require("doc"); host!.setFrameHold(index, duration); },
       getOnionSkin: () => host!.getOnionSkin(),
       setOnionSkin: (on) => { require("doc"); host!.setOnionSkin(on); },
+      ungroupItemGroup: (group) => { require("doc"); host!.ungroupItemGroup(group); },
       gestureStart: () => { require("doc"); return host!.gestureStart(); },
       gestureCommit: (before, changed) => { require("doc"); host!.gestureCommit(before, changed); },
       pushHistory: () => { require("doc"); host!.pushHistory(); },
@@ -782,6 +825,30 @@ function createContext(manifest: PluginManifest): PluginContext {
         require("ui");
         overlays.delete(namespacedKey(pluginId, id));
       },
+      registerPanelView: (def) => {
+        require("ui");
+        panelViews.set(namespacedKey(pluginId, def.id), def);
+      },
+      unregisterPanelView: (id) => {
+        require("ui");
+        panelViews.delete(namespacedKey(pluginId, id));
+      },
+      registerPanelTransient: (close) => {
+        require("ui");
+        panelTransients.set(pluginId, close);
+      },
+      unregisterPanelTransient: () => {
+        require("ui");
+        panelTransients.delete(pluginId);
+      },
+      arrangeSection: () => {
+        require("ui");
+        return host!.renderArrangeSection();
+      },
+      panelDivider: () => {
+        require("ui");
+        return host!.renderPanelDivider();
+      },
       openColour: (slot) => { require("ui"); host!.openColour(slot); },
       attachTooltip: (btn, text) => { require("ui"); host!.attachTooltip(btn, text); },
     },
@@ -848,6 +915,10 @@ function unregisterPlugin(id: string): void {
     }
   }
   if (canvasRenderer?.pluginId === id) canvasRenderer = null;
+  for (const [key, entry] of Array.from(panelViews.entries())) {
+    if (key.startsWith(`${id}:`)) panelViews.delete(key);
+  }
+  panelTransients.delete(id);
 }
 
 function activatePlugin(lp: LoadedPlugin): void {
@@ -976,6 +1047,38 @@ export function setPluginEnabled(id: string, enabled: boolean): void {
 
 export function listActions(): Array<PluginActionDef & { pluginId: string }> {
   return Array.from(actions.values());
+}
+
+// ---------------------------------------------------------------------------
+// Panel views and transients
+// ---------------------------------------------------------------------------
+
+// The first registered panel view whose `when` matches the current
+// selection, in registration order. Null when none matches — the core
+// renders its own panels then.
+export function getPanelView(ctx: PanelContext): PanelViewDef | null {
+  for (const view of panelViews.values()) {
+    try {
+      if (view.when(ctx)) return view;
+    } catch {
+      // A failing `when` is treated as no match.
+    }
+  }
+  return null;
+}
+
+// Ask every registered panel transient to close, first match wins.
+// The core calls this on Escape (no target) and on a document click
+// (the click target), before its own overlay handling.
+export function closePanelTransients(target?: HTMLElement): boolean {
+  for (const close of panelTransients.values()) {
+    try {
+      if (close(target)) return true;
+    } catch {
+      // A failing closer is treated as closed nothing.
+    }
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
