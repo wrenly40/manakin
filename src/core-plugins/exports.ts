@@ -26,7 +26,7 @@ export const manifest = {
   version: "1.0.0",
   apiVersion: "1",
   description: "PNG sequence and GIF / WebM / MP4 video export, with the Export dropdown.",
-  permissions: ["export", "ui", "storage"],
+  permissions: ["doc", "export", "ui", "storage"],
   contributions: {
     actions: [{ id: "export", label: "Export" }],
     overlays: [{ id: "export-dropdown" }],
@@ -170,21 +170,50 @@ async function exportPNGSequence(): Promise<void> {
   a.app.renderPanel();
   try {
     const { w, h } = a.app.getStageSize();
-    const n = a.app.frameCount();
+    const { frames } = exportSchedule();
     const off = document.createElement("canvas");
     off.width = w; off.height = h;
     const octx = off.getContext("2d")!;
-    for (let i = 0; i < n; i++) {
-      a.app.renderFrame(i / n, octx, 1);
+    for (let i = 0; i < frames.length; i++) {
+      a.app.renderFrameAt(frames[i].frameIndex, frames[i].t01, octx, 1);
       const dataUrl = off.toDataURL("image/png");
       await a.files.writeSequenceFile(dir, `frame-${String(i + 1).padStart(4, "0")}.png`, dataUrl);
-      setExportProgress(`Exporting ${i + 1}/${n}`, "png");
+      setExportProgress(`Exporting ${i + 1}/${frames.length}`, "png");
     }
   } finally {
     exporting = false;
     exportProgress = null;
     a.app.renderPanel();
   }
+}
+
+// The export schedule: what each exported image is. A one-frame
+// timeline falls back to the behaviour loop (round(L*30) images at
+// 30fps, as before); a multi-frame timeline exports one image per
+// timeline frame at the timeline's fps, held frames repeating their
+// image, with behaviours superposed at the timeline position when the
+// Behaviours plugin is on (t01 = k/total) and pure frames when it is
+// off (the motion provider is gone, so t01 reads as rest). `time` is
+// the image's timestamp in the video, `step` the seconds per image.
+type ExportFrame = { frameIndex: number; t01: number; time: number };
+function exportSchedule(): { frames: ExportFrame[]; step: number } {
+  const tl = api.doc.getTimeline();
+  if (tl.frames.length <= 1) {
+    const n = api.app.frameCount();
+    const frames: ExportFrame[] = [];
+    for (let i = 0; i < n; i++) frames.push({ frameIndex: 0, t01: i / n, time: i / 30 });
+    return { frames, step: 1 / 30 };
+  }
+  const total = tl.frames.reduce((n, f) => n + f.duration, 0);
+  const frames: ExportFrame[] = [];
+  let k = 0;
+  for (let fi = 0; fi < tl.frames.length; fi++) {
+    for (let d = 0; d < tl.frames[fi].duration; d++) {
+      frames.push({ frameIndex: fi, t01: k / total, time: k / tl.fps });
+      k++;
+    }
+  }
+  return { frames, step: 1 / tl.fps };
 }
 
 // Video export: GIF, WebM or MP4, one full loop at 30fps, stage size,
@@ -200,26 +229,26 @@ async function exportVideo(): Promise<void> {
 // GIF: animated, looping forever. Frames render offline the same way as
 // the PNG sequence; gifenc quantizes each frame to a 256-colour palette.
 // GIF delays are stored in 10ms units, so the per-frame delay alternates
-// 30/40ms to average exactly 1/30s.
+// to average exactly the step (30/40ms at 30fps, 80/90ms at 12fps).
 async function exportGIF(): Promise<void> {
   const a = api;
   exporting = true;
   a.app.renderPanel();
   try {
     const { w, h } = a.app.getStageSize();
-    const n = a.app.frameCount();
+    const { frames, step } = exportSchedule();
     const off = document.createElement("canvas");
     off.width = w; off.height = h;
     const octx = off.getContext("2d")!;
     const gif = GIFEncoder();
-    for (let i = 0; i < n; i++) {
-      a.app.renderFrame(i / n, octx, 1);
+    for (let i = 0; i < frames.length; i++) {
+      a.app.renderFrameAt(frames[i].frameIndex, frames[i].t01, octx, 1);
       const img = octx.getImageData(0, 0, w, h);
       const palette = quantize(img.data, 256);
       const index = applyPalette(img.data, palette);
-      const delay = (Math.round(((i + 1) * 10) / 3) - Math.round((i * 10) / 3)) * 10;
+      const delay = Math.round((i + 1) * step * 100) - Math.round(i * step * 100);
       gif.writeFrame(index, w, h, { palette, delay, repeat: 0 });
-      setExportProgress(`Exporting ${i + 1}/${n}`, "video");
+      setExportProgress(`Exporting ${i + 1}/${frames.length}`, "video");
       // The encode loop never yielded, so no live progress was
       // observable and the UI did not repaint until the file was
       // done. One macrotask per frame lets the button repaint.
@@ -238,8 +267,8 @@ async function exportGIF(): Promise<void> {
 // Chromium cannot do this with MediaRecorder. If this build has no
 // H.264 encoder, isConfigSupported says so and nothing is exported.
 // Frames render offline to an offscreen canvas at stage size, one per
-// 1/30s step, so the frame count is exactly round(L*30) and the
-// duration is exactly L — the same offline path as PNG/GIF.
+// schedule step, so the frame count and the duration follow the
+// schedule — the behaviour loop at 30fps, or the timeline at its fps.
 async function exportMP4(): Promise<void> {
   const a = api;
   if (typeof VideoEncoder === "undefined") return;
@@ -253,7 +282,7 @@ async function exportMP4(): Promise<void> {
   exporting = true;
   a.app.renderPanel();
   try {
-    const n = a.app.frameCount();
+    const { frames, step } = exportSchedule();
     const off = document.createElement("canvas");
     off.width = w; off.height = h;
     const octx = off.getContext("2d")!;
@@ -265,12 +294,12 @@ async function exportMP4(): Promise<void> {
     const source = new CanvasSource(off, { codec: "avc", bitrate: 8_000_000 });
     output.addVideoTrack(source);
     await output.start();
-    for (let i = 0; i < n; i++) {
-      a.app.renderFrame(i / n, octx, 1);
+    for (let i = 0; i < frames.length; i++) {
+      a.app.renderFrameAt(frames[i].frameIndex, frames[i].t01, octx, 1);
       // CanvasSource snapshots the canvas synchronously (new
       // VideoFrame), so the next render cannot corrupt this frame.
-      await source.add(i / 30, 1 / 30);
-      setExportProgress(`Exporting ${i + 1}/${n}`, "video");
+      await source.add(frames[i].time, step);
+      setExportProgress(`Exporting ${i + 1}/${frames.length}`, "video");
     }
     await output.finalize();
     const buf = target.buffer;
@@ -284,13 +313,14 @@ async function exportMP4(): Promise<void> {
 }
 
 // WebM: VP9 via WebCodecs (VideoEncoder) + Mediabunny, rendered
-// offline like PNG/GIF/MP4 — one frame per 1/30s step, so the frame
-// count is exactly round(L*30) and the duration is exactly L. The
-// old path recorded an offscreen canvas in real time through
-// MediaRecorder, so the frame count followed the machine's rAF rate
-// (119 clean, 26 under CPU load, 171 in a 6s run) instead of the
-// frame schedule. Mediabunny's default 'quality' latency mode never
-// drops frames; the old 'realtime' behaviour is what lost them.
+// offline like PNG/GIF/MP4 — one frame per schedule step, so the frame
+// count follows the schedule (round(L*30) for the behaviour loop, the
+// timeline's frame count at its fps). The old path recorded an
+// offscreen canvas in real time through MediaRecorder, so the frame
+// count followed the machine's rAF rate (119 clean, 26 under CPU load,
+// 171 in a 6s run) instead of the frame schedule. Mediabunny's default
+// 'quality' latency mode never drops frames; the old 'realtime'
+// behaviour is what lost them.
 async function exportWebM(): Promise<void> {
   const a = api;
   if (exporting) return;
@@ -304,7 +334,7 @@ async function exportWebM(): Promise<void> {
   exporting = true;
   a.app.renderPanel();
   try {
-    const n = a.app.frameCount();
+    const { frames, step } = exportSchedule();
     const off = document.createElement("canvas");
     off.width = w; off.height = h;
     const octx = off.getContext("2d")!;
@@ -316,12 +346,12 @@ async function exportWebM(): Promise<void> {
     const source = new CanvasSource(off, { codec: "vp9", bitrate: 8_000_000 });
     output.addVideoTrack(source);
     await output.start();
-    for (let i = 0; i < n; i++) {
-      a.app.renderFrame(i / n, octx, 1);
+    for (let i = 0; i < frames.length; i++) {
+      a.app.renderFrameAt(frames[i].frameIndex, frames[i].t01, octx, 1);
       // CanvasSource snapshots the canvas synchronously (new
       // VideoFrame), so the next render cannot corrupt this frame.
-      await source.add(i / 30, 1 / 30);
-      setExportProgress(`Exporting ${i + 1}/${n}`, "video");
+      await source.add(frames[i].time, step);
+      setExportProgress(`Exporting ${i + 1}/${frames.length}`, "video");
     }
     await output.finalize();
     const buf = target.buffer;
