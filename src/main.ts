@@ -285,7 +285,7 @@ let panelView: 'auto' | 'colour' = 'auto';
 let colourSlot: 'fg' | 'bg' = 'fg';
 let expandedLayerId: string | null = null;
 let expandedGroup: string | null = null; // id of the open group in the Behaviours panel
-let addPickerOpen = false; // the Add behavior popover is showing
+let addPickerOpen = false; // the inline Add behavior list is showing
 let exportDropdownOpen = false; // the Export dropdown (card in a popover) is showing
 let checkedLayers: Set<string> = new Set(); // top-level layer ids picked for grouping
 let checkedHostId: string | null = null; // the host (item or item group) the checked rows belong to
@@ -1920,13 +1920,14 @@ function drawGraph(cv: HTMLCanvasElement, layer: BehaviourLayer, ctx: LayerCtx):
 }
 
 // The panel rebuilds its DOM on every render, which drops the scroll
-// position: rebuilding while scrolled clamps scrollTop to 0 (and the
-// clamp's scroll event closes the Add picker). Keep the scroll where it
-// was when the same stack is still showing; a different stack (another
-// part, a group, the Canvas panel) starts at the top. After adding a
-// behaviour, scroll the new layer into view.
+// position: rebuilding while scrolled clamps scrollTop to 0. Keep the
+// scroll where it was when the same stack is still showing; a different
+// stack (another part, a group, the Canvas panel) starts at the top.
+// After adding a behaviour, scroll the new layer into view; after
+// opening the Add list, scroll the list into view.
 let lastPanelKey = '';
 let scrollToLayerId: string | null = null;
+let scrollToAddList = false; // set when the Add button opens the list
 function renderPanel(): void {
   const grp = selectedItemGroup();
   const sel = selected();
@@ -1940,13 +1941,14 @@ function renderPanel(): void {
     if (el) (el as HTMLElement).scrollIntoView({ block: 'nearest' });
     scrollToLayerId = null;
   }
-  // The picker is anchored to the Add button's rect, which moves when
-  // the scroll is restored — re-anchor it after the scroll settles.
-  if (addPickerOpen) reanchorAddPicker();
+  if (scrollToAddList) {
+    const list = panelBody.querySelector('.add-list');
+    if (list) (list as HTMLElement).scrollIntoView({ block: 'nearest' });
+    scrollToAddList = false;
+  }
 }
 function renderPanelInner(): void {
   syncUndoButtons();
-  closeAddPickerEl();
   closeExportDropdownEl();
   closeTooltipEl();
   const grp = selectedItemGroup();
@@ -2446,51 +2448,30 @@ function addBehaviour(host: LayerHost, b: number): void {
   renderPanel();
 }
 
-function closeAddPickerEl(): void {
-  document.querySelector('.add-picker')?.remove();
-}
-
-// The Add behavior picker: a small popover anchored to the Add button,
-// listing all eleven behaviours with their icons. Every row is always
-// enabled: the same behaviour can be added several times, each add
-// creating a new instance. Fixed-position so the panel's scroll cannot
-// clip it; flips above the button when there is no room below.
-function renderAddPicker(anchorBtn: HTMLElement, host: LayerHost): void {
-  closeAddPickerEl();
-  const pop = document.createElement('div');
-  pop.className = 'add-picker';
-  pop.setAttribute('role', 'menu');
+// The Add behavior list: opens inline in the panel, directly below
+// the Add button, as part of the panel's own scrollable flow — it
+// covers nothing and pushes nothing aside. Lists all eleven
+// behaviours with their icons. Every row is always enabled: the same
+// behaviour can be added several times, each add creating a new
+// instance. Picking a row adds the behaviour and collapses the list.
+function renderAddList(host: LayerHost): HTMLElement {
+  const list = document.createElement('div');
+  list.className = 'add-list';
+  list.setAttribute('role', 'listbox');
   for (let b = 0; b < BEHAVIOURS.length; b++) {
     const row = document.createElement('button');
     row.type = 'button';
-    row.className = 'add-picker-row';
-    row.setAttribute('role', 'menuitem');
+    row.className = 'add-list-row';
+    row.setAttribute('role', 'option');
     row.setAttribute('aria-label', `Add ${BEHAVIOURS[b]}`);
     row.innerHTML = `<span class="layer-icon">${LAYER_ICONS[b]}</span><span class="layer-name">${BEHAVIOURS[b]}</span>`;
     row.addEventListener('click', (e) => {
       e.stopPropagation();
       addBehaviour(host, b);
     });
-    pop.appendChild(row);
+    list.appendChild(row);
   }
-  document.body.appendChild(pop);
-  reanchorAddPicker();
-}
-
-// The picker is positioned from the Add button's rect; the panel's
-// scroll moves that rect, so the position is re-applied after any
-// scroll restore (see renderPanel).
-function reanchorAddPicker(): void {
-  const pop = document.querySelector('.add-picker') as HTMLElement | null;
-  const anchorBtn = document.querySelector('.add-btn') as HTMLElement | null;
-  if (!pop || !anchorBtn) return;
-  const r = anchorBtn.getBoundingClientRect();
-  const w = pop.offsetWidth;
-  const h = pop.offsetHeight;
-  const left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8));
-  const top = (r.bottom + 6 + h > window.innerHeight) ? Math.max(8, r.top - 6 - h) : r.bottom + 6;
-  pop.style.left = `${left}px`;
-  pop.style.top = `${top}px`;
+  return list;
 }
 
 // Group the checked layers of a host's stack into one behaviour
@@ -2578,7 +2559,8 @@ function renderBehavioursPanel(sel: Item): void {
 }
 
 // The Add behavior pill, shared by the item stack and the item-group
-// stack: it opens the picker anchored to the button, for that host.
+// stack: it expands the behaviour list inline below the button, for
+// that host.
 function renderAddBehaviourButton(host: LayerHost): HTMLDivElement {
   const wrap = document.createElement('div');
   wrap.className = 'add-wrap';
@@ -2591,10 +2573,11 @@ function renderAddBehaviourButton(host: LayerHost): HTMLDivElement {
   addBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     addPickerOpen = !addPickerOpen;
+    if (addPickerOpen) scrollToAddList = true;
     renderPanel();
   });
   wrap.appendChild(addBtn);
-  if (addPickerOpen) renderAddPicker(addBtn, host);
+  if (addPickerOpen) wrap.appendChild(renderAddList(host));
   return wrap;
 }
 
@@ -4046,7 +4029,7 @@ window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.code === 'Minus') { e.preventDefault(); zoomStep(-1); return; }
   if ((e.ctrlKey || e.metaKey) && e.code === 'Digit0') { e.preventDefault(); setZoom(1); return; }
   if (k === 'escape') {
-    if (addPickerOpen) { addPickerOpen = false; closeAddPickerEl(); renderPanel(); return; }
+    if (addPickerOpen) { addPickerOpen = false; renderPanel(); return; }
     if (exportDropdownOpen) { exportDropdownOpen = false; closeExportDropdownEl(); renderPanel(); return; }
     if (focusedId !== null) { focusedId = null; renderPanel(); return; }
     if (selectedIds.length > 0) { selectedIds = []; renderPanel(); return; }
@@ -4077,16 +4060,15 @@ window.addEventListener('keydown', (e) => {
   updateCursor();
 });
 
-// The Add behavior picker closes on a click anywhere else, on Escape
-// (handled above), or when the panel scrolls / the window resizes —
-// its anchor moved, so the popover would point at nothing. The Export
+// The Add behavior list closes on a click anywhere else, on Escape
+// (handled above), or when the panel switches — it lives in the panel
+// flow, so scrolling and resizing leave it alone. The Export
 // dropdown closes the same way.
 document.addEventListener('click', (e) => {
   const t = e.target as HTMLElement | null;
   if (addPickerOpen) {
-    if (t && t.closest('.add-picker, .add-btn')) return;
+    if (t && t.closest('.add-wrap')) return;
     addPickerOpen = false;
-    closeAddPickerEl();
     renderPanel();
     return;
   }
@@ -4099,11 +4081,6 @@ document.addEventListener('click', (e) => {
   }
 });
 panelBody.addEventListener('scroll', () => {
-  if (!addPickerOpen) return;
-  addPickerOpen = false;
-  closeAddPickerEl();
-}, { passive: true });
-panelBody.addEventListener('scroll', () => {
   if (!exportDropdownOpen) return;
   exportDropdownOpen = false;
   closeExportDropdownEl();
@@ -4113,11 +4090,6 @@ panelBody.addEventListener('scroll', () => {
 // so it hides on scroll or resize rather than going stale.
 panelBody.addEventListener('scroll', () => { closeTooltipEl(); }, { passive: true });
 window.addEventListener('resize', () => { closeTooltipEl(); });
-window.addEventListener('resize', () => {
-  if (!addPickerOpen) return;
-  addPickerOpen = false;
-  closeAddPickerEl();
-});
 window.addEventListener('resize', () => {
   if (!exportDropdownOpen) return;
   exportDropdownOpen = false;

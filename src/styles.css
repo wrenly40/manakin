@@ -455,25 +455,22 @@ header h1 { font-size: 13px; font-weight: 600; margin: 0; white-space: nowrap; }
 /* Empty stack after a divider: the same 14px below the hairline —
    the line's own top padding is 8px, so raise it to match. */
 .pdiv + .no-behaviours { padding-top: 14px; }
-/* Add behavior picker: a small frosted popover like Bowerbird's
-   shape-picker flyout, anchored to the Add button. */
-.add-picker {
-  position: fixed; z-index: 50; width: 220px; padding: 6px;
-  max-height: calc(100vh - 16px); overflow-y: auto;
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 16px;
-  box-shadow: var(--shadow-md);
+/* Add behavior list: opens inline in the panel, directly below the
+   Add button, as part of the panel's own scrollable flow — it covers
+   nothing and pushes nothing aside. Same card treatment as the layer
+   cards, same rows as the old popover. */
+.add-list {
+  margin-top: 8px; padding: 6px;
+  background: #fff; border: 1px solid var(--hairline); border-radius: 9px;
 }
-.add-picker-row {
+.add-list-row {
   display: flex; align-items: center; gap: 10px;
   width: 100%; height: 36px; padding: 0 10px;
   border: none; border-radius: 9px; background: transparent;
   font-size: 13px; font-weight: 500; color: var(--ink); text-align: left;
 }
-.add-picker-row:hover { background: rgba(0, 0, 0, 0.05); }
-.add-picker-row .layer-name { flex: 1; }
+.add-list-row:hover { background: rgba(0, 0, 0, 0.05); }
+.add-list-row .layer-name { flex: 1; }
 /* Grid tiles: six small preview tiles showing the pattern itself,
    name only in the title / aria-label. One row of six: the tiles flex
    to fill the 257px panel content width exactly (6 tiles + 5 x 6px
