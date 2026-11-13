@@ -367,6 +367,12 @@ button:focus-visible, input:focus-visible {
 }
 .pctl:hover { background: rgba(0, 0, 0, 0.05); }
 .pctl:active { background: rgba(0, 0, 0, 0.09); }
+/* The old active treatment: white pill + shadow + ink, no blue. */
+.pctl.active {
+  background: #fff; color: var(--ink);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+}
+.pctl.active:hover { background: #fff; }
 .pctl svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .pctl.solid svg { fill: currentColor; stroke: none; }
 #play-btn {

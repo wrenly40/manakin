@@ -12,6 +12,7 @@ export function createPlayer(barEl: HTMLElement, store: Store): void {
         <button id="play-btn" class="pctl play" title="Play" aria-label="Play"><svg viewBox="0 0 12 12"><path d="M3 1.5 10 6l-7 4.5z"/></svg></button>
         <button id="stop-btn" class="pctl solid" title="Stop" aria-label="Stop"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
         <button id="forward-btn" class="pctl solid" title="Forward" aria-label="Forward to end"><svg viewBox="0 0 24 24"><path d="M15.5 5h2.5v14h-2.5z"/><path d="M4 5v14l9.5-7z"/></svg></button>
+        <button id="loop-btn" class="pctl" title="Loop" aria-label="Loop" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg></button>
         <span id="clock">1/1 · 0.0s · 12 fps</span>
       </div>
     </div>
@@ -25,6 +26,7 @@ export function createPlayer(barEl: HTMLElement, store: Store): void {
   const backBtn = barEl.querySelector("#back-btn") as HTMLButtonElement;
   const stopBtn = barEl.querySelector("#stop-btn") as HTMLButtonElement;
   const forwardBtn = barEl.querySelector("#forward-btn") as HTMLButtonElement;
+  const loopBtn = barEl.querySelector("#loop-btn") as HTMLButtonElement;
   const clockEl = barEl.querySelector("#clock") as HTMLSpanElement;
   const angleEl = barEl.querySelector("#angle-readout") as HTMLSpanElement;
   const zoomOut = barEl.querySelector("#zoom-out") as HTMLButtonElement;
@@ -34,6 +36,7 @@ export function createPlayer(barEl: HTMLElement, store: Store): void {
   backBtn.addEventListener("click", () => store.back());
   stopBtn.addEventListener("click", () => store.stop());
   forwardBtn.addEventListener("click", () => store.forward());
+  loopBtn.addEventListener("click", () => store.toggleLoop());
   playBtn.addEventListener("click", () => store.playToggle());
   zoomOut.addEventListener("click", () => zoomStep(-1));
   zoomIn.addEventListener("click", () => zoomStep(1));
@@ -61,6 +64,12 @@ export function createPlayer(barEl: HTMLElement, store: Store): void {
       acc -= step;
       const len = timelineLength(store.doc);
       if (store.pos + 1 >= len) {
+        // Loop on: back to frame 1 and keep playing. Loop off: stop.
+        if (store.loop) {
+          store.setPos(0);
+          advanced = true;
+          continue;
+        }
         store.setPlaying(false);
         store.setPos(len - 1);
         acc = 0;
@@ -82,6 +91,8 @@ export function createPlayer(barEl: HTMLElement, store: Store): void {
       ? `<svg viewBox="0 0 12 12"><rect x="2" y="1.5" width="3" height="9" rx="0.5"/><rect x="7" y="1.5" width="3" height="9" rx="0.5"/></svg>`
       : `<svg viewBox="0 0 12 12"><path d="M3 1.5 10 6l-7 4.5z"/></svg>`;
     clockEl.textContent = `${pos + 1}/${len} · ${(pos / FPS).toFixed(1)}s · ${FPS} fps`;
+    loopBtn.classList.toggle("active", store.loop);
+    loopBtn.setAttribute("aria-pressed", String(store.loop));
     angleEl.textContent = store.view.rotateDeg !== 0 ? `${Math.round(store.view.rotateDeg)}°` : "";
     zoomLabel.textContent = `${Math.round(store.view.zoom * 100)}%`;
   }

@@ -33,6 +33,7 @@ export type Store = {
   currentByLayer: Map<string, number>;
   pos: number;
   playing: boolean;
+  loop: boolean;
   selection: SelectionRef[];
   onChange(cb: () => void): () => void;
   emit(): void;
@@ -51,6 +52,7 @@ export type Store = {
   displayPos(): number;
   setPos(p: number): void;
   setPlaying(b: boolean): void;
+  toggleLoop(): void;
   playToggle(): void;
   stop(): void;
   back(): void;
@@ -123,6 +125,7 @@ export function createStore(): Store {
     currentByLayer: new Map(initial.layers.map((l) => [l.id, 0])),
     pos: 0,
     playing: false,
+    loop: false,
     selection: [],
 
     onChange(cb: () => void): () => void {
@@ -221,6 +224,11 @@ export function createStore(): Store {
 
     setPlaying(b: boolean): void {
       store.playing = b;
+      store.emit();
+    },
+
+    toggleLoop(): void {
+      store.loop = !store.loop;
       store.emit();
     },
 
