@@ -152,11 +152,11 @@ export function renderStage(
 // ---------------------------------------------------------------------------
 
 export function renderThumbnail(canvas: HTMLCanvasElement, frame: Frame, stage: { w: number; h: number }, opacity = 1): void {
-  // 108px wide, so 108×61 at the stage's 16:9 — it fills the 112×63
+  // 92px wide, so 92×52 at the stage's 16:9 — it fills the 96×54
   // cell (1px inset each side, inside the cell's 1px border) with no
   // letterbox space and no distortion.
-  const w = 108;
-  const h = Math.max(24, Math.round((108 * stage.h) / stage.w));
+  const w = 92;
+  const h = Math.max(24, Math.round((92 * stage.h) / stage.w));
   const dpr = window.devicePixelRatio || 1;
   canvas.width = w * dpr;
   canvas.height = h * dpr;

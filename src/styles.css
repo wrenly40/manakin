@@ -224,7 +224,7 @@ button:focus-visible, input:focus-visible {
    so the ruler starts at the strip's left edge. */
 #timeline-header-left { width: 250px; flex: none; display: flex; }
 /* Frame-number ruler: one small grey number per timeline frame,
-   centred over its cell at the 118px pitch, vertically centred in
+   centred over its cell at the 102px pitch, vertically centred in
    the header row. It lives in the header, outside the strip's
    scroll container, so its inner strip follows the strip's
    scrollLeft by transform (syncRuler in timeline.ts). Numbers only
@@ -233,7 +233,7 @@ button:focus-visible, input:focus-visible {
 #frame-ruler-inner { position: absolute; top: 0; bottom: 0; left: 0; }
 .frame-ruler-num {
   position: absolute; top: 50%; transform: translateY(-50%);
-  width: 112px; text-align: center;
+  width: 96px; text-align: center;
   font-size: 12px; color: var(--grey); font-variant-numeric: tabular-nums;
   user-select: none; -webkit-user-select: none;
 }
@@ -266,7 +266,8 @@ button:focus-visible, input:focus-visible {
    top-right; line 2 holds ALL the controls on one line —
    visibility toggle, lock, opacity %, move up/down. The card is
    63px tall (5px + 4px padding, 1px border, 28px name line, 24px
-   controls line) so the 112×63 cell still equals the card height.
+   controls line). The 96×54 cell sits a little smaller than the
+   card, centred in the 63px row with 4.5px margins top and bottom.
    The frame row's height is set from the card's height, so the rows
    stay aligned. */
 .layer-row {
@@ -380,15 +381,16 @@ button:focus-visible, input:focus-visible {
   position: relative; padding: 0; border: 1px solid var(--hairline);
   border-radius: 9px; background: #fff; cursor: pointer; flex: none;
   line-height: 0;
-  /* Every cell is 112px wide (108px thumbnail + 2px border, 1px inset
-     each side) and as tall as its layer's card: it stretches to fill
-     the row, whose height sync() sets from the card height, so the
-     two stay linked with no second hard-coded number. The cell keeps
-     the canvas's 16:9 aspect ratio (112×63), and the 108×61
-     thumbnail fills it at the same ratio — no letterbox space, no
-     distortion. The hold is shown by the line in the gap after the
-     cell, not by the cell's size. */
-  width: 112px; align-self: stretch;
+  /* Every cell is 96px wide (92px thumbnail + 2px border, 1px inset
+     each side) and a little smaller than its layer's card: 54px tall
+     in the 63px row, vertically centred (the row is align-items:
+     center) with 4.5px margins top and bottom — the cell reads a
+     little smaller than the label, by design. The cell keeps the
+     canvas's 16:9 aspect ratio (96×54), and the 92×52 thumbnail
+     fills it at the same ratio — no letterbox space, no distortion.
+     The hold is shown by the line in the gap after the cell, not by
+     the cell's size. */
+  width: 96px; height: 54px;
   display: flex; align-items: center; justify-content: center;
   /* The cell stacks above the gap that follows it: the hold
      handle's hit area extends a few px over the cell's right edge,
@@ -426,7 +428,7 @@ button:focus-visible, input:focus-visible {
    browser clamps the 9px radius to the bar's 4px width, so the right
    side is as round as the bar allows — the width and the 6px gap stay
    as they are, because growing the gap to fit a wider bar would
-   re-space the whole timeline (the 118px pitch) for a radius the eye
+   re-space the whole timeline (the 102px pitch) for a radius the eye
    cannot distinguish at this size. Visible only while its cell (or
    the gap) is hovered, or while dragging — nothing shows on a cell at
    rest. The hit area is 14px wide for grabbability and may extend over
