@@ -40,11 +40,11 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
   // set, sync updates the gap in place instead of rebuilding — a
   // rebuild would destroy the handle mid-drag (pointer capture lost).
   let holdDrag: { frameId: string } | null = null;
-  // The frame pitch: a 128px cell plus the 6px between cells. A hold
+  // The frame pitch: a 112px cell plus the 6px between cells. A hold
   // gap is (hold − 1) pitches plus the 6px inter-cell space, so the
   // line spans exactly from one cell's right edge to the next cell's
   // left edge.
-  const PITCH = 134;
+  const PITCH = 118;
   const gapWidth = (hold: number): number => (hold > 1 ? (hold - 1) * PITCH + 6 : 6);
   // The frame-number ruler: one number per timeline frame, centred
   // over its cell at the pitch. The total is the same one the clock
@@ -309,8 +309,8 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
         // Double-clicking the hold line splits the frame at the
         // clicked tick: the original keeps the hold up to the click,
         // a new EMPTY frame takes the rest. The tick comes from the
-        // click's x within the gap — one 134px pitch per tick, the
-        // cell itself being tick 0, so the first 134px of the gap is
+        // click's x within the gap — one 118px pitch per tick, the
+        // cell itself being tick 0, so the first 118px of the gap is
         // tick 1. The trailing 6px of inter-cell space maps to the
         // last tick. A hold-1 frame has no line, so there is nothing
         // to double-click there; the handle is excluded (below) — it
