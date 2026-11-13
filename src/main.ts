@@ -31,8 +31,8 @@ app.innerHTML = `
     <span id="app-name">Manakin</span>
     <input id="project-name" type="text" spellcheck="false" aria-label="Project name" />
     <div id="top-actions">
-      <button id="undo-btn" title="Undo" aria-label="Undo"><svg viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg></button>
-      <button id="redo-btn" title="Redo" aria-label="Redo"><svg viewBox="0 0 24 24"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg></button>
+      <button id="undo-btn" class="hbtn" title="Undo" aria-label="Undo"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
+      <button id="redo-btn" class="hbtn" title="Redo" aria-label="Redo"><svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></svg></button>
     </div>
   </div>
   <div id="middle"><div id="workspace-wrap"></div></div>
@@ -63,8 +63,8 @@ undoBtn.addEventListener("click", () => store.undo());
 redoBtn.addEventListener("click", () => store.redo());
 
 function syncTopBar(): void {
-  undoBtn.classList.toggle("dim", !store.canUndo());
-  redoBtn.classList.toggle("dim", !store.canRedo());
+  undoBtn.disabled = !store.canUndo();
+  redoBtn.disabled = !store.canRedo();
   if (document.activeElement !== nameInput) nameInput.value = store.name;
 }
 store.onChange(syncTopBar);

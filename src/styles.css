@@ -71,8 +71,10 @@ button:focus-visible, input:focus-visible {
   justify-content: center; cursor: pointer; color: var(--ink);
 }
 #top-actions button:hover { background: rgba(0, 0, 0, 0.05); }
-#top-actions button.dim { opacity: 0.35; cursor: default; }
-#top-actions button.dim:hover { background: transparent; }
+/* The old header buttons disable with the disabled attribute, not a
+   class — a dimmed button is truly inert, no focus, no hover wash. */
+#top-actions button:disabled { opacity: 0.35; cursor: default; }
+#top-actions button:disabled:hover { background: transparent; }
 #top-actions button svg {
   width: 20px; height: 20px; fill: none; stroke: currentColor;
   stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
