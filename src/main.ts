@@ -36,8 +36,8 @@ app.innerHTML = `
     </div>
   </div>
   <div id="middle"><div id="workspace-wrap"></div></div>
-  <div id="timeline-panel"></div>
-  <div id="player-bar"></div>`;
+  <div id="player-bar"></div>
+  <div id="timeline-panel"></div>`;
 
 const store = createStore();
 const wrap = document.getElementById("workspace-wrap") as HTMLDivElement;
