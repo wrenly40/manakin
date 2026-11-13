@@ -346,33 +346,34 @@ button:focus-visible, input:focus-visible {
   height: 2px; transform: translateY(-50%);
   background: var(--ink);
 }
-/* The hold handle: a knot on the hold line, OUTSIDE the cell — at
-   the gap's right end (the hold's endpoint), centred on the line,
+/* The hold handle: a vertical solid-ink bar on the hold line,
+   OUTSIDE the cell — at the gap's right end (the hold's endpoint),
    its visible box entirely outside the cell's border. The cell
    interior is back to just the thumbnail and the hover-revealed ×.
-   Visible only while its cell (or the gap) is hovered, or while
-   dragging — nothing shows on a cell at rest. The knot copies
-   Bowerbird's resize handle exactly: white, 1px solid #8e8e93,
-   3px radius, 0 1px 3px rgba(0,0,0,0.2) shadow — adapted from a
-   14px square to a 6px-wide vertical knot so it fits the 6px gap
-   of a hold-1 frame, where it fills the gap exactly. The hit area
-   is 14px wide for grabbability and may extend over the cell's
-   edge; the cell stacks above the gap, so the delete × still wins
-   clicks where the two cross. Dragging it sets the hold — the only
-   hold control. It is its own pointer interaction and never selects
-   the cell. */
+   The bar spans the FULL HEIGHT of the frame cell: 38px (36px
+   thumbnail + 2px border), centred on the row exactly like the cell,
+   so bar and cell share their top and bottom edges. It is 4px wide:
+   in the 6px gap of a hold-1 frame it sits at the gap's right end
+   with a 2px sliver of line between it and the cell, and the line
+   runs through to it. Solid ink, no border, no shadow — the app's
+   ink language (direction A, picked by the user), not a borrowed
+   resize handle. Visible only while its cell (or the gap) is
+   hovered, or while dragging — nothing shows on a cell at rest.
+   The hit area is 14px wide for grabbability and may extend over
+   the cell's edge; the cell stacks above the gap, so the delete ×
+   still wins clicks where the two cross. Dragging it sets the hold
+   — the only hold control. It is its own pointer interaction and
+   never selects the cell. */
 .frame-handle {
   position: absolute; right: 0; top: 50%; transform: translateY(-50%);
-  width: 14px; height: 24px; cursor: ew-resize;
+  width: 14px; height: 38px; cursor: ew-resize;
   opacity: 0; transition: opacity 0.15s;
 }
 .frame-handle::before {
-  content: ""; position: absolute; right: 0; top: 50%; transform: translateY(-50%);
-  width: 6px; height: 16px;
-  background: #fff; border: 1px solid #8e8e93; border-radius: 3px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  content: ""; position: absolute; right: 0; top: 0;
+  width: 4px; height: 38px;
+  background: var(--ink); border-radius: 2px;
 }
-.frame-handle:hover::before { box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28); }
 .frame-cell:hover + .hold-gap .frame-handle,
 .hold-gap:hover .frame-handle,
 .frame-handle.dragging { opacity: 1; }

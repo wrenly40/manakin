@@ -180,14 +180,18 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
           line.className = "hold-line";
           gap.appendChild(line);
         }
-        // The hold handle: a knot on the hold line, OUTSIDE the cell.
-        // It sits at the gap's right end — the hold's endpoint —
-        // centred on the line, its visible box entirely outside the
-        // cell's border, so the cell interior is back to just the
-        // thumbnail and the hover-revealed ×. For a hold-1 frame the
-        // gap is only 6px, so the knot is 6px wide and fills the gap
-        // exactly. Visible only while its cell (or the gap) is
-        // hovered, or while dragging — nothing shows at rest.
+        // The hold handle: a vertical solid-ink bar on the hold
+        // line, OUTSIDE the cell. It sits at the gap's right end —
+        // the hold's endpoint — centred on the line, its visible box
+        // entirely outside the cell's border, so the cell interior
+        // is back to just the thumbnail and the hover-revealed ×.
+        // The bar spans the FULL HEIGHT of the frame cell (38px:
+        // 36px thumbnail + 2px border). It is 4px wide: in the 6px
+        // gap of a hold-1 frame it sits at the gap's right end with
+        // a 2px sliver of line between it and the cell. Solid ink,
+        // no border, no shadow — direction A, picked by the user.
+        // Visible only while its cell (or the gap) is hovered, or
+        // while dragging — nothing shows at rest.
         // Dragging it sets the hold — the only hold control. It is
         // its own pointer interaction and never selects the cell.
         const handle = document.createElement("div");
