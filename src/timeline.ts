@@ -180,6 +180,21 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
           line.className = "hold-line";
           gap.appendChild(line);
         }
+        // Double-clicking the hold line splits the frame at the
+        // clicked tick: the original keeps the hold up to the click,
+        // a new EMPTY frame takes the rest. The tick comes from the
+        // click's x within the gap — one 72px pitch per tick, the
+        // cell itself being tick 0, so the first 72px of the gap is
+        // tick 1. The trailing 6px of inter-cell space maps to the
+        // last tick. A hold-1 frame has no line, so there is nothing
+        // to double-click there; the handle is excluded (below) — it
+        // is for dragging, and a double-click on it must not split.
+        gap.addEventListener("dblclick", (e) => {
+          if (frame.hold <= 1) return;
+          const rect = gap.getBoundingClientRect();
+          const at = Math.min(frame.hold - 1, Math.max(1, Math.floor((e.clientX - rect.left) / PITCH) + 1));
+          store.splitFrame(layer.id, index, at);
+        });
         // The hold handle: a vertical solid-ink bar on the hold
         // line, OUTSIDE the cell. It sits at the gap's right end —
         // the hold's endpoint — centred on the line, its visible box
@@ -232,6 +247,9 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
           window.addEventListener("pointercancel", up);
         });
         handle.addEventListener("click", (e) => e.stopPropagation());
+        // A double-click on the handle must not split the frame —
+        // the handle is for dragging only.
+        handle.addEventListener("dblclick", (e) => e.stopPropagation());
         gap.appendChild(handle);
         frow.appendChild(gap);
       });
