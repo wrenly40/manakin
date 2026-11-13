@@ -132,9 +132,18 @@ export function renderStage(
     const layer = doc.layers[li];
     if (!layer.visible) continue;
     const { frame } = frameAt(layer, opts.pos);
+    // A layer draws at its own opacity, so lower layers show through.
+    c.save();
+    c.globalAlpha = (layer.opacity ?? 100) / 100;
     drawFrameItems(c, frame.items);
+    c.restore();
   }
-  if (opts.previewItems) drawFrameItems(c, opts.previewItems);
+  // The live preview belongs to the current layer, so it draws at that
+  // layer's opacity too.
+  if (opts.previewItems) {
+    const cur = doc.layers.find((l) => l.id === opts.currentLayerId);
+    drawFrameItems(c, opts.previewItems, (cur?.opacity ?? 100) / 100);
+  }
   c.restore();
   c.restore();
 }
@@ -143,7 +152,7 @@ export function renderStage(
 // Thumbnails — one small canvas per frame cell, drawn on demand.
 // ---------------------------------------------------------------------------
 
-export function renderThumbnail(canvas: HTMLCanvasElement, frame: Frame, stage: { w: number; h: number }): void {
+export function renderThumbnail(canvas: HTMLCanvasElement, frame: Frame, stage: { w: number; h: number }, opacity = 1): void {
   const w = 64;
   const h = Math.max(24, Math.round((64 * stage.h) / stage.w));
   const dpr = window.devicePixelRatio || 1;
@@ -158,6 +167,8 @@ export function renderThumbnail(canvas: HTMLCanvasElement, frame: Frame, stage: 
   c.fillRect(0, 0, w, h);
   c.save();
   c.scale(w / stage.w, h / stage.h);
-  drawFrameItems(c, frame.items);
+  // The thumbnail is drawn at the layer's opacity, like the stage, so
+  // the preview is truthful about what the frame looks like.
+  drawFrameItems(c, frame.items, opacity);
   c.restore();
 }
