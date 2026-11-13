@@ -61,28 +61,16 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
     thumbSigs.clear();
     for (const layer of store.doc.layers) {
       // ---- Layer row: an old .blayer card, two lines. ----
-      // The head holds the visibility toggle, the name, and the
-      // delete ×; the controls line holds the lock and the move
-      // chevrons; the selected card grows a third line, the opacity
-      // slider. At 250px a single-line row left only ~58px for the
-      // name — "Background" needs ~74px — so the controls moved to
-      // their own line and the name keeps the full head width.
+      // Line 1 is the name only, with the hover-revealed delete ×
+      // top-right. Line 2 holds ALL the controls on one line:
+      // visibility toggle, lock, opacity, move up/down. The
+      // opacity is a draggable % value (see below) — a slider
+      // would not fit the controls line at 250px.
       const row = document.createElement("div");
       row.className = "layer-row" + (layer.visible ? "" : " hidden") + (layer.locked ? " locked" : "");
       row.dataset.layerId = layer.id;
       const head = document.createElement("div");
       head.className = "layer-head";
-      // Visibility is the old pill toggle, not an eye icon.
-      const eye = document.createElement("button");
-      eye.className = "layer-toggle" + (layer.visible ? " on" : "");
-      eye.title = layer.visible ? "Hide layer" : "Show layer";
-      eye.setAttribute("aria-label", layer.visible ? "Hide layer" : "Show layer");
-      eye.innerHTML = `<span class="knob"></span>`;
-      eye.addEventListener("click", (e) => {
-        e.stopPropagation();
-        store.toggleLayerVisible(layer.id);
-      });
-      head.appendChild(eye);
       const name = document.createElement("span");
       name.className = "layer-name";
       name.textContent = layer.name;
@@ -119,9 +107,21 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
       });
       head.appendChild(del);
       row.appendChild(head);
-      // Controls line: lock + move up/down.
+      // Controls line: visibility toggle, lock, opacity, move
+      // up/down — all on this one line, under the name.
       const controls = document.createElement("div");
       controls.className = "layer-controls";
+      // Visibility is the old pill toggle, not an eye icon.
+      const eye = document.createElement("button");
+      eye.className = "layer-toggle" + (layer.visible ? " on" : "");
+      eye.title = layer.visible ? "Hide layer" : "Show layer";
+      eye.setAttribute("aria-label", layer.visible ? "Hide layer" : "Show layer");
+      eye.innerHTML = `<span class="knob"></span>`;
+      eye.addEventListener("click", (e) => {
+        e.stopPropagation();
+        store.toggleLayerVisible(layer.id);
+      });
+      controls.appendChild(eye);
       const lockBtn = document.createElement("button");
       lockBtn.className = "layer-lock";
       lockBtn.innerHTML = layer.locked ? LOCK_SVG : UNLOCK_SVG;
@@ -150,34 +150,52 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
       });
       controls.appendChild(up);
       controls.appendChild(down);
-      row.appendChild(controls);
-      // Opacity slider, in the old slider style. It is rendered in
-      // every card but shown only on the selected card (CSS) — the
-      // other rows stay compact. A drag commits as one undo step,
-      // the same pattern as a hold drag.
-      const opacityRow = document.createElement("div");
-      opacityRow.className = "layer-opacity";
-      const oLabel = document.createElement("span");
-      oLabel.className = "dctl-label";
-      oLabel.textContent = "Opacity";
-      opacityRow.appendChild(oLabel);
-      const slider = document.createElement("input");
-      slider.className = "pslider";
-      slider.type = "range";
-      slider.min = "0"; slider.max = "100"; slider.step = "1";
-      slider.value = String(layer.opacity ?? 100);
-      slider.setAttribute("aria-label", `Opacity of layer ${layer.name}`);
-      slider.addEventListener("pointerdown", () => store.beginLayerOpacity(layer.id));
-      slider.addEventListener("focus", () => store.beginLayerOpacity(layer.id));
-      slider.addEventListener("input", () => store.previewLayerOpacity(Number(slider.value)));
-      slider.addEventListener("change", () => store.endLayerOpacity());
-      slider.addEventListener("pointerup", () => store.endLayerOpacity());
-      opacityRow.appendChild(slider);
+      // Opacity is a draggable % value, like the brush-size drag
+      // pattern: drag horizontally, 1% per 2px, one undo step per
+      // drag (the same begin/preview/end pattern as a hold drag).
+      // A mini-slider would not fit the controls line at 250px;
+      // the % is compact, precise, and its live value is always
+      // visible. Arrow keys adjust by 1 (Shift: 10).
       const oValue = document.createElement("span");
-      oValue.className = "pslider-value";
+      oValue.className = "layer-opacity-value";
+      oValue.tabIndex = 0;
+      oValue.setAttribute("role", "slider");
+      oValue.setAttribute("aria-label", `Opacity of layer ${layer.name}`);
+      oValue.setAttribute("aria-valuemin", "0");
+      oValue.setAttribute("aria-valuemax", "100");
       oValue.textContent = `${layer.opacity ?? 100}%`;
-      opacityRow.appendChild(oValue);
-      row.appendChild(opacityRow);
+      oValue.title = "Opacity — drag to change";
+      oValue.addEventListener("pointerdown", (e) => {
+        const startX = e.clientX;
+        const startOpacity = layer.opacity ?? 100;
+        store.beginLayerOpacity(layer.id);
+        const move = (ev: PointerEvent) => {
+          store.previewLayerOpacity(startOpacity + Math.round((ev.clientX - startX) / 2));
+        };
+        const up = () => {
+          window.removeEventListener("pointermove", move);
+          window.removeEventListener("pointerup", up);
+          window.removeEventListener("pointercancel", up);
+          store.endLayerOpacity();
+        };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+        window.addEventListener("pointercancel", up);
+      });
+      oValue.addEventListener("keydown", (e) => {
+        const step = e.shiftKey ? 10 : 1;
+        let delta = 0;
+        if (e.key === "ArrowRight" || e.key === "ArrowUp") delta = step;
+        else if (e.key === "ArrowLeft" || e.key === "ArrowDown") delta = -step;
+        else return;
+        e.preventDefault();
+        e.stopPropagation();
+        store.beginLayerOpacity(layer.id);
+        store.previewLayerOpacity((layer.opacity ?? 100) + delta);
+        store.endLayerOpacity();
+      });
+      controls.insertBefore(oValue, up);
+      row.appendChild(controls);
       row.addEventListener("click", () => store.setCurrentLayer(layer.id));
       layerList.appendChild(row);
 
@@ -357,16 +375,16 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
       if (layer) {
         el.classList.toggle("hidden", !layer.visible);
         el.classList.toggle("locked", layer.locked);
-        // The opacity slider lives on the card; keep its position and
-        // label in step with the store (a drag previews through here).
-        const slider = el.querySelector<HTMLInputElement>(".pslider");
-        const value = el.querySelector<HTMLElement>(".pslider-value");
-        if (slider) slider.value = String(layer.opacity ?? 100);
-        if (value) value.textContent = `${layer.opacity ?? 100}%`;
+        // The draggable % value lives on the card; keep it in step
+        // with the store (a drag previews through here).
+        const value = el.querySelector<HTMLElement>(".layer-opacity-value");
+        if (value) {
+          value.textContent = `${layer.opacity ?? 100}%`;
+          value.setAttribute("aria-valuenow", String(layer.opacity ?? 100));
+        }
       }
       // A frame row matches its layer card's height, so the rows stay
-      // aligned when the selected card grows to show its opacity
-      // slider. Guarded to write only when changed.
+      // aligned. Guarded to write only when changed.
       const frow = framesRows.querySelector(`.frame-row[data-layer-id="${el.dataset.layerId}"]`) as HTMLElement | null;
       if (frow) {
         const h = `${Math.round(el.getBoundingClientRect().height)}px`;
