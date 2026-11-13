@@ -585,7 +585,13 @@ export function createCanvasView(wrapEl: HTMLElement, store: Store): CanvasView 
   editor.addEventListener("blur", () => closeTextEditor(true));
 
   new ResizeObserver(() => resize()).observe(wrapEl);
-  store.onChange(() => render());
+  // The cursor follows the active tool — updateCursor only ran at
+  // setup and on Space before, so switching tools (Pen, eraser, the
+  // armed eyedropper) left the cursor stuck on the previous tool's.
+  store.onChange(() => {
+    render();
+    updateCursor();
+  });
   updateCursor();
   resize();
 
