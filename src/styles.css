@@ -208,8 +208,17 @@ button:focus-visible, input:focus-visible {
 .pbtn:hover { background: var(--bg-system); }
 .pbtn:disabled { opacity: 0.35; cursor: default; }
 .head-spacer { flex: 1; }
-#frame-actions { display: flex; align-items: center; gap: 6px; }
-#hold-value { font-size: 12px; min-width: 16px; text-align: center; }
+/* Segmented control: quiet grey fill — the old panel language.
+   The hold stepper is one such bar. */
+.seg { display: flex; gap: 2px; background: var(--fill); border-radius: 9px; padding: 2px; }
+.seg button {
+  border: none; background: transparent; border-radius: 7px;
+  height: 28px; padding: 0 12px;
+  font-size: 13px; font-weight: 500; color: var(--ink); cursor: pointer;
+  white-space: nowrap;
+}
+.seg button:hover { background: rgba(0, 0, 0, 0.04); }
+#hold-value { font-size: 13px; font-weight: 500; min-width: 20px; text-align: center; align-self: center; }
 #timeline-body { flex: 1; display: flex; min-height: 0; }
 #layer-list {
   width: 180px; flex: none; border-right: 1px solid var(--hairline);
@@ -224,17 +233,15 @@ button:focus-visible, input:focus-visible {
   background: #fff;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
 }
-.layer-eye, .layer-mini {
-  border: none; background: transparent; width: 24px; height: 24px;
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; color: var(--ink); border-radius: 6px; flex: none;
-  font-size: 13px;
+/* Small quiet icon buttons, the old panel-button style: 28px,
+   7px radius, 16px ink glyphs at 1.8 stroke. */
+.icon-btn {
+  flex: none; width: 28px; height: 28px; border: none; border-radius: 7px;
+  background: transparent; color: var(--ink); padding: 0;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
 }
-.layer-eye:hover, .layer-mini:hover { background: var(--fill-2); }
-.layer-eye svg {
-  width: 16px; height: 16px; fill: none; stroke: currentColor;
-  stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
-}
+.icon-btn:hover { background: rgba(0, 0, 0, 0.05); }
+.icon-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .layer-name {
   flex: 1; min-width: 0; font-size: 13px; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis;
@@ -265,12 +272,6 @@ button:focus-visible, input:focus-visible {
   position: absolute; right: 3px; bottom: 2px; font-size: 11px; font-weight: 500;
   line-height: 1; background: transparent; color: var(--ink); padding: 0;
 }
-.frame-add {
-  flex: none; width: 32px; height: 36px; border: 1px dashed var(--hairline);
-  border-radius: 6px; background: transparent; color: var(--grey);
-  cursor: pointer; font-size: 16px;
-}
-.frame-add:hover { background: var(--fill-2); }
 
 /* Player */
 #player-bar {

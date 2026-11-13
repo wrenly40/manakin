@@ -10,10 +10,10 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
       <span class="panel-title">Layers</span>
       <button id="add-layer" class="pbtn" title="Add layer">+ Layer</button>
       <span class="head-spacer"></span>
-      <span id="frame-actions">
-        <button id="hold-minus" class="pbtn" title="Shorter hold">−</button>
+      <span id="frame-actions" class="seg">
+        <button id="hold-minus" title="Shorter hold">−</button>
         <span id="hold-value" title="Hold">1</span>
-        <button id="hold-plus" class="pbtn" title="Longer hold">+</button>
+        <button id="hold-plus" title="Longer hold">+</button>
       </span>
     </div>
     <div id="timeline-body">
@@ -65,7 +65,7 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
       row.className = "layer-row";
       row.dataset.layerId = layer.id;
       const eye = document.createElement("button");
-      eye.className = "layer-eye";
+      eye.className = "icon-btn";
       eye.title = layer.visible ? "Hide layer" : "Show layer";
       eye.setAttribute("aria-label", layer.visible ? "Hide layer" : "Show layer");
       eye.innerHTML = layer.visible
@@ -103,24 +103,24 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
       });
       row.appendChild(name);
       const up = document.createElement("button");
-      up.className = "layer-mini";
-      up.textContent = "↑";
+      up.className = "icon-btn";
+      up.innerHTML = `<svg viewBox="0 0 24 24"><path d="M6 14l6-6 6 6"/></svg>`;
       up.title = "Move layer up";
       up.addEventListener("click", (e) => {
         e.stopPropagation();
         store.moveLayer(layer.id, -1);
       });
       const down = document.createElement("button");
-      down.className = "layer-mini";
-      down.textContent = "↓";
+      down.className = "icon-btn";
+      down.innerHTML = `<svg viewBox="0 0 24 24"><path d="M6 10l6 6 6-6"/></svg>`;
       down.title = "Move layer down";
       down.addEventListener("click", (e) => {
         e.stopPropagation();
         store.moveLayer(layer.id, 1);
       });
       const del = document.createElement("button");
-      del.className = "layer-mini";
-      del.textContent = "×";
+      del.className = "icon-btn";
+      del.innerHTML = `<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>`;
       del.title = "Delete layer";
       del.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -153,8 +153,8 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
         frow.appendChild(cell);
       });
       const add = document.createElement("button");
-      add.className = "frame-add";
-      add.textContent = "+";
+      add.className = "icon-btn";
+      add.innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>`;
       add.title = "Add frame";
       add.addEventListener("click", () => store.addFrame(layer.id));
       frow.appendChild(add);
