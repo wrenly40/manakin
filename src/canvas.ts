@@ -86,6 +86,7 @@ export function createCanvasView(wrapEl: HTMLElement, store: Store): CanvasView 
       pos: store.displayPos(),
       currentLayerId: store.currentLayerId,
       previewItems: previewItems.length > 0 ? previewItems : undefined,
+      onionSkin: store.onionSkin,
     });
     // Selection outlines, in stage coordinates (rotated with the stage).
     for (const { item } of store.resolveSelection()) {
@@ -157,15 +158,36 @@ export function createCanvasView(wrapEl: HTMLElement, store: Store): CanvasView 
   // The eyedropper reads the rendered stage pixels, so the sample is
   // truthful about what is seen — layer opacity, overlapping items,
   // the stage background (an empty stage samples the stage colour).
-  // The canvas backing store is DPR-scaled, so the click's CSS
-  // pixels are scaled up before reading.
+  // It must NOT read the onion-skin ghosts, so the sample comes from
+  // a fresh offscreen render of the same stage with the ghost pass
+  // off, at the same size — never from the live canvas. The canvas
+  // backing store is DPR-scaled, so the click's CSS pixels are
+  // scaled up before reading.
+  let sampleCanvas: HTMLCanvasElement | null = null;
   function sampleColorAt(clientX: number, clientY: number): string | null {
     const rect = canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
     const x = Math.floor((clientX - rect.left) * dpr);
     const y = Math.floor((clientY - rect.top) * dpr);
     if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return null;
-    const d = ctx.getImageData(x, y, 1, 1).data;
+    if (!sampleCanvas) sampleCanvas = document.createElement("canvas");
+    if (sampleCanvas.width !== canvas.width || sampleCanvas.height !== canvas.height) {
+      sampleCanvas.width = canvas.width;
+      sampleCanvas.height = canvas.height;
+    }
+    const sctx = sampleCanvas.getContext("2d");
+    if (!sctx) return null;
+    const previewItems: Item[] = [];
+    if (previewStroke) previewItems.push(previewStroke);
+    if (previewShape) previewItems.push(previewShape);
+    sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    renderStage(sctx, layout(), store.doc, {
+      pos: store.displayPos(),
+      currentLayerId: store.currentLayerId,
+      previewItems: previewItems.length > 0 ? previewItems : undefined,
+      onionSkin: false,
+    });
+    const d = sctx.getImageData(x, y, 1, 1).data;
     const toHex = (v: number): string => v.toString(16).padStart(2, "0");
     return `#${toHex(d[0])}${toHex(d[1])}${toHex(d[2])}`;
   }
