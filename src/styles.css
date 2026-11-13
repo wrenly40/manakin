@@ -229,7 +229,7 @@ button:focus-visible, input:focus-visible {
    scroll container, so its inner strip follows the strip's
    scrollLeft by transform (syncRuler in timeline.ts). Numbers only
    — no labels, no descriptive text. */
-#frame-ruler { flex: 1; min-width: 0; overflow: hidden; position: relative; }
+#frame-ruler { flex: 1; min-width: 0; overflow: hidden; position: relative; cursor: ew-resize; touch-action: none; }
 #frame-ruler-inner { position: absolute; top: 0; bottom: 0; left: 0; }
 .frame-ruler-num {
   position: absolute; top: 50%; transform: translateY(-50%);

@@ -30,6 +30,7 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
   const layerList = panelEl.querySelector("#layer-list") as HTMLDivElement;
   const framesRows = panelEl.querySelector("#frames-rows") as HTMLDivElement;
   const framesScroll = panelEl.querySelector("#frames-scroll") as HTMLDivElement;
+  const rulerEl = panelEl.querySelector("#frame-ruler") as HTMLDivElement;
   const rulerInner = panelEl.querySelector("#frame-ruler-inner") as HTMLDivElement;
   const addLayerBtn = panelEl.querySelector("#add-layer") as HTMLButtonElement;
 
@@ -74,6 +75,37 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
   }
   framesScroll.addEventListener("scroll", () => {
     rulerInner.style.transform = `translateX(${-framesScroll.scrollLeft}px)`;
+  });
+  // Ruler scrubbing: pointerdown on the ruler moves the playhead to
+  // that tick and selects the frame whose span contains it; dragging
+  // scrubs live; release leaves the playhead where it is. The tick
+  // comes from the pointer's x against the ruler's own geometry —
+  // the inner strip's on-screen left (which already includes the
+  // scroll transform) minus the same 13px base offset, at the same
+  // 102px pitch — so a click on number N lands on tick N. Playback
+  // pauses on scrub start (store.seek), so it cannot fight the
+  // pointer. Clamps to 1..total.
+  function tickFromClientX(clientX: number): number {
+    const len = timelineLength(store.doc);
+    const rect = rulerInner.getBoundingClientRect();
+    const x = clientX - rect.left - RULER_OFFSET;
+    return Math.min(len, Math.max(1, Math.floor(x / PITCH) + 1));
+  }
+  rulerEl.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    rulerEl.setPointerCapture(e.pointerId);
+    store.seek(tickFromClientX(e.clientX) - 1);
+    const move = (ev: PointerEvent) => {
+      store.seek(tickFromClientX(ev.clientX) - 1);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
   });
   // Lock/unlock glyphs (Lucide, 16px, stroke 1.8, ink — the same
   // icon-button treatment as the move chevrons).
