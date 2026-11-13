@@ -40,6 +40,7 @@ export type Store = {
   setTool(t: ToolId): void;
   setShapeKind(k: "rect" | "ellipse"): void;
   setColor(c: string): void;
+  setColor2(c: string): void;
   swapColors(): void;
   setBrushSize(n: number): void;
   setView(v: Partial<ViewState>): void;
@@ -152,6 +153,11 @@ export function createStore(): Store {
 
     setColor(c: string): void {
       store.color = c;
+      store.emit();
+    },
+
+    setColor2(c: string): void {
+      store.color2 = c;
       store.emit();
     },
 

@@ -99,47 +99,62 @@ button:focus-visible, input:focus-visible {
   position: absolute; top: 50%; left: 12px; transform: translateY(-50%);
   display: flex; flex-direction: column; align-items: center;
   gap: 10px; padding: 12px 8px; width: 56px; z-index: 10;
+  max-height: calc(100% - 24px); overflow-y: auto; scrollbar-width: none;
   background: rgba(255, 255, 255, 0.72);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   border: 1px solid rgba(0, 0, 0, 0.08); border-radius: 16px;
   box-shadow: var(--shadow-md);
 }
-.tbtn {
+#toolbar::-webkit-scrollbar { display: none; }
+.tool {
   border: none; background: transparent; border-radius: 9px;
   width: 40px; height: 40px; display: flex; align-items: center;
-  justify-content: center; cursor: pointer; color: var(--ink);
+  justify-content: center; cursor: pointer; color: var(--ink); flex: none;
+  transition: background 0.15s ease, color 0.15s ease;
 }
-.tbtn:hover { background: rgba(0, 0, 0, 0.05); }
-.tbtn.active {
-  background: #fff;
+.tool:hover { background: rgba(0, 0, 0, 0.05); }
+.tool:active { background: rgba(0, 0, 0, 0.09); }
+.tool.active {
+  background: #fff; color: var(--ink);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
 }
-.tbtn svg {
+.tool svg {
   width: 20px; height: 20px; fill: none; stroke: currentColor;
   stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
 }
-.tdiv { width: 100%; height: 1px; background: var(--hairline); }
-.size-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.size-preview {
-  border: 2px solid var(--ink); border-radius: 50%; cursor: ns-resize;
-  background: transparent;
+.tdiv { width: 32px; height: 1px; border: none; background: var(--separator); margin: 2px 0; flex: none; }
+.size-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.brush-preview {
+  height: 40px; width: 40px;
+  display: flex; align-items: center; justify-content: center;
+  cursor: ew-resize; touch-action: none; border-radius: 8px;
 }
-.size-input {
-  width: 40px; border: none; background: transparent; text-align: center;
-  font-size: 12px; color: var(--ink); padding: 2px 0;
+.brush-preview:hover { background: rgba(0, 0, 0, 0.04); }
+.brush-dot { background: var(--ink); border-radius: 50%; pointer-events: none; }
+.brush-size-input {
+  width: 40px; height: 24px; padding: 0 4px;
+  border: 1px solid var(--hairline); border-radius: 7px; background: #fff;
+  font: inherit; font-size: 12px; color: var(--ink); text-align: center;
 }
-.size-input::-webkit-outer-spin-button, .size-input::-webkit-inner-spin-button {
-  -webkit-appearance: none; margin: 0;
+.double-swatches { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.double-swatches .pair { position: relative; width: 38px; height: 32px; }
+.dswatch {
+  position: absolute; width: 22px; height: 22px; border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.12); padding: 0; cursor: pointer;
 }
-.swatch-wrap { position: relative; width: 40px; height: 40px; }
-.swatch {
-  position: absolute; border-radius: 50%; cursor: pointer;
-  border: 2px solid #fff; box-shadow: var(--shadow-sm);
+.dswatch.back { top: 0; left: 0; }
+.dswatch.front { bottom: 0; right: 0; }
+.dswatch.active {
+  box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px rgba(29, 29, 31, 0.85), var(--shadow-sm);
 }
-.swatch.primary { width: 28px; height: 28px; right: 0; bottom: 0; }
-.swatch.secondary { width: 20px; height: 20px; left: 0; top: 0; }
-.palette-row { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+.swap-btn {
+  width: 22px; height: 22px; border: none; border-radius: 50%;
+  background: transparent; color: var(--grey);
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.swap-btn:hover { background: rgba(0, 0, 0, 0.05); color: var(--ink); }
+.swap-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .palette-dot {
   width: 16px; height: 16px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, 0.1);
   cursor: pointer; padding: 0;

@@ -1,15 +1,14 @@
 // Toolbar: the floating frosted pill (Bowerbird's shape), the tools, the
 // brush size, the colours and the colour panel flyout.
-import { PALETTE, hexToHsv, hsvToHex, normHex } from "./model";
+import { hexToHsv, hsvToHex, normHex } from "./model";
 import type { Store, ToolId } from "./store";
 
 const ICONS: Record<string, string> = {
-  select: `<svg viewBox="0 0 24 24"><path d="m4 4 7.07 16.97 2.51-7.39 7.39-2.51L4 4z"/><path d="m13 13 6 6"/></svg>`,
-  pen: `<svg viewBox="0 0 24 24"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>`,
+  select: `<svg viewBox="0 0 24 24"><path d="M5 3l14 7-6 2-3 6z"/></svg>`,
+  pen: `<svg viewBox="0 0 24 24"><path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M13 8l3 3"/></svg>`,
   eraser: `<svg viewBox="0 0 24 24"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>`,
-  rect: `<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>`,
-  ellipse: `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></svg>`,
-  text: `<svg viewBox="0 0 24 24"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>`,
+  rect: `<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>`,
+  text: `<svg viewBox="0 0 24 24"><path d="M5 6h14M12 6v13"/></svg>`,
   paint: `<svg viewBox="0 0 24 24"><path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11z"/><path d="m5 2 5 5"/><path d="M2 13h15"/><path d="M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4z"/></svg>`,
 };
 
@@ -53,7 +52,7 @@ export function createToolbar(wrapEl: HTMLElement, store: Store): void {
   const toolButtons = new Map<ToolId, HTMLButtonElement>();
   for (const t of TOOLS) {
     const b = document.createElement("button");
-    b.className = "tbtn";
+    b.className = "tool";
     b.title = t.label;
     b.setAttribute("aria-label", t.label);
     b.innerHTML = t.id === "shape" ? ICONS.rect : ICONS[t.id];
@@ -72,82 +71,118 @@ export function createToolbar(wrapEl: HTMLElement, store: Store): void {
   div.className = "tdiv";
   bar.appendChild(div);
 
-  // Brush size: a draggable preview circle plus a typed input.
+  // Brush size: no slider. A size preview dot (drag it to resize)
+  // with a text input below to type the size, kept in sync both ways.
   const sizeWrap = document.createElement("div");
   sizeWrap.className = "size-wrap";
   const preview = document.createElement("div");
-  preview.className = "size-preview";
-  preview.title = "Brush size — drag up or down";
+  preview.className = "brush-preview";
+  preview.title = "Brush size — drag to resize";
+  preview.setAttribute("aria-label", "Brush size preview, drag to resize");
+  const dot = document.createElement("span");
+  dot.className = "brush-dot";
+  preview.appendChild(dot);
+  const paintPreview = (): void => {
+    dot.style.width = `${store.brushSize}px`;
+    dot.style.height = `${store.brushSize}px`;
+  };
+  paintPreview();
   sizeWrap.appendChild(preview);
   const sizeInput = document.createElement("input");
-  sizeInput.className = "size-input";
-  sizeInput.type = "number";
-  sizeInput.min = "1";
-  sizeInput.max = "64";
+  sizeInput.className = "brush-size-input";
+  sizeInput.type = "text";
+  sizeInput.inputMode = "numeric";
+  sizeInput.value = String(store.brushSize);
   sizeInput.title = "Brush size";
-  sizeInput.setAttribute("aria-label", "Brush size");
-  sizeInput.addEventListener("change", () => {
+  sizeInput.setAttribute("aria-label", "Brush size in pixels");
+  const commitSize = (): void => {
     const n = parseInt(sizeInput.value, 10);
     if (Number.isFinite(n)) store.setBrushSize(n);
+    sizeInput.value = String(store.brushSize);
+    paintPreview();
+  };
+  sizeInput.addEventListener("change", commitSize);
+  sizeInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commitSize();
+      sizeInput.blur();
+    }
+    e.stopPropagation();
   });
+  sizeInput.addEventListener("blur", commitSize);
   sizeWrap.appendChild(sizeInput);
   bar.appendChild(sizeWrap);
 
-  let dragStartY = 0;
+  let dragStartX = 0;
   let dragStartSize = 0;
   preview.addEventListener("pointerdown", (e) => {
-    dragStartY = e.clientY;
+    e.preventDefault();
+    dragStartX = e.clientX;
     dragStartSize = store.brushSize;
     preview.setPointerCapture(e.pointerId);
     const move = (ev: PointerEvent): void => {
-      store.setBrushSize(dragStartSize + Math.round((dragStartY - ev.clientY) / 4));
+      store.setBrushSize(dragStartSize + Math.round((ev.clientX - dragStartX) / 3));
+      paintPreview();
     };
     const up = (): void => {
       preview.removeEventListener("pointermove", move);
       preview.removeEventListener("pointerup", up);
+      preview.removeEventListener("pointercancel", up);
     };
     preview.addEventListener("pointermove", move);
     preview.addEventListener("pointerup", up);
+    preview.addEventListener("pointercancel", up);
   });
 
   const div2 = document.createElement("div");
   div2.className = "tdiv";
   bar.appendChild(div2);
 
-  // Colours: primary + secondary, then the palette row.
-  const swatchWrap = document.createElement("div");
-  swatchWrap.className = "swatch-wrap";
-  const primary = document.createElement("button");
-  primary.className = "swatch primary";
-  primary.title = "Colour — click for the colour panel";
-  primary.setAttribute("aria-label", "Colour");
-  primary.addEventListener("click", () => {
-    panel.style.display = panel.style.display === "block" ? "none" : "block";
-  });
-  const secondary = document.createElement("button");
-  secondary.className = "swatch secondary";
-  secondary.title = "Swap colours (X)";
-  secondary.setAttribute("aria-label", "Swap colours");
-  secondary.addEventListener("click", () => store.swapColors());
-  swatchWrap.appendChild(secondary);
-  swatchWrap.appendChild(primary);
-  bar.appendChild(swatchWrap);
-
-  const paletteRow = document.createElement("div");
-  paletteRow.className = "palette-row";
-  for (const c of PALETTE) {
-    const b = document.createElement("button");
-    b.className = "palette-dot";
-    b.style.background = c;
-    b.title = c;
-    b.setAttribute("aria-label", `Colour ${c}`);
-    b.addEventListener("click", () => {
-      store.setColor(c);
-      noteRecent(c);
-    });
-    paletteRow.appendChild(b);
+  // Double swatches: front = foreground, back = background. Clicking
+  // one opens the Colour panel for that slot; clicking the open swatch
+  // again closes it.
+  let panelSlot: "fg" | "bg" = "fg";
+  function slotColor(): string {
+    return panelSlot === "fg" ? store.color : store.color2;
   }
-  bar.appendChild(paletteRow);
+  function setSlotColor(hex: string): void {
+    if (panelSlot === "fg") store.setColor(hex);
+    else store.setColor2(hex);
+  }
+  function openColourSlot(slot: "fg" | "bg"): void {
+    if (panel.style.display === "block" && panelSlot === slot) {
+      panel.style.display = "none";
+      return;
+    }
+    panelSlot = slot;
+    panel.style.display = "block";
+  }
+  const dbl = document.createElement("div");
+  dbl.className = "double-swatches";
+  const pair = document.createElement("div");
+  pair.className = "pair";
+  const back = document.createElement("button");
+  back.className = "dswatch back";
+  back.title = "Back colour";
+  back.setAttribute("aria-label", "Back colour");
+  back.addEventListener("click", () => openColourSlot("bg"));
+  const front = document.createElement("button");
+  front.className = "dswatch front";
+  front.title = "Front colour";
+  front.setAttribute("aria-label", "Front colour");
+  front.addEventListener("click", () => openColourSlot("fg"));
+  const swap = document.createElement("button");
+  swap.className = "swap-btn";
+  swap.title = "Swap colours (X)";
+  swap.setAttribute("aria-label", "Swap colours");
+  swap.innerHTML = `<svg viewBox="0 0 24 24"><path d="M7 8h11l-3-3M17 16H6l3 3"/></svg>`;
+  swap.addEventListener("click", () => store.swapColors());
+  pair.appendChild(back);
+  pair.appendChild(front);
+  dbl.appendChild(pair);
+  dbl.appendChild(swap);
+  bar.appendChild(dbl);
 
   // ---- Colour panel ----------------------------------------------------------
   // Hue bar style: a square colour field with a horizontal hue bar under it,
@@ -200,7 +235,7 @@ export function createToolbar(wrapEl: HTMLElement, store: Store): void {
 
   function applyColour(fromPanel: boolean): void {
     const hex = hsvToHex(hue, sat, val);
-    store.setColor(hex);
+    setSlotColor(hex);
     hexInput.value = hex;
     drawSv();
     if (fromPanel) noteRecent(hex);
@@ -221,7 +256,7 @@ export function createToolbar(wrapEl: HTMLElement, store: Store): void {
         b.style.background = c;
         b.title = c;
         b.addEventListener("click", () => {
-          store.setColor(c);
+          setSlotColor(c);
           const hsv = hexToHsv(c);
           if (hsv) {
             hue = hsv.h;
@@ -272,12 +307,12 @@ export function createToolbar(wrapEl: HTMLElement, store: Store): void {
       sat = hsv.s;
       val = hsv.v;
     }
-    store.setColor(n);
+    setSlotColor(n);
     noteRecent(n);
     drawSv();
   });
   saveBtn.addEventListener("click", () => {
-    const hex = store.color;
+    const hex = slotColor();
     if (!colours.saved.includes(hex)) {
       colours.saved.push(hex);
       saveColours();
@@ -285,32 +320,31 @@ export function createToolbar(wrapEl: HTMLElement, store: Store): void {
     }
   });
 
-  // Clicking outside the panel or the primary swatch closes it.
+  // Clicking outside the panel or the swatches closes it.
   document.addEventListener("pointerdown", (e) => {
     if (panel.style.display !== "block") return;
     const t = e.target as Node | null;
-    if (t && !panel.contains(t) && t !== primary) panel.style.display = "none";
+    if (t && !panel.contains(t) && !dbl.contains(t)) panel.style.display = "none";
   });
 
   function sync(): void {
     for (const [id, b] of toolButtons) {
       b.classList.toggle("active", store.tool === id);
     }
-    const shapeBtn = toolButtons.get("shape");
-    if (shapeBtn) shapeBtn.innerHTML = store.shapeKind === "rect" ? ICONS.rect : ICONS.ellipse;
-    const d = Math.max(4, store.brushSize * 1.5);
-    preview.style.width = `${d}px`;
-    preview.style.height = `${d}px`;
-    sizeInput.value = String(store.brushSize);
-    primary.style.background = store.color;
-    secondary.style.background = store.color2;
-    const hsv = hexToHsv(store.color);
+    paintPreview();
+    if (document.activeElement !== sizeInput) sizeInput.value = String(store.brushSize);
+    front.style.background = store.color;
+    back.style.background = store.color2;
+    const panelOpen = panel.style.display === "block";
+    front.classList.toggle("active", panelOpen && panelSlot === "fg");
+    back.classList.toggle("active", panelOpen && panelSlot === "bg");
+    const hsv = hexToHsv(slotColor());
     if (hsv && document.activeElement !== hexInput) {
       hue = hsv.h;
       sat = hsv.s;
       val = hsv.v;
       hueBar.value = String(Math.round(hue));
-      hexInput.value = store.color;
+      hexInput.value = slotColor();
       drawSv();
     }
   }
