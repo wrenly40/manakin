@@ -77,6 +77,10 @@ export type Store = {
   deleteLayer(id: string): void;
   moveLayer(id: string, dir: -1 | 1): void;
   toggleLayerVisible(id: string): void;
+  toggleLayerLocked(id: string): void;
+  beginLayerOpacity(id: string): void;
+  previewLayerOpacity(value: number): void;
+  endLayerOpacity(): void;
   addFrame(layerId: string): void;
   splitFrame(layerId: string, index: number, atTick: number): void;
   deleteFrame(layerId: string, index: number): void;
@@ -119,6 +123,10 @@ export function createStore(): Store {
   // A hold drag in progress: the frame being dragged and its hold at
   // drag start, so the drag commits as one undo step.
   let holdDragState: { layerId: string; index: number; startHold: number } | null = null;
+  // An opacity drag in progress: the same one-undo-step pattern as a
+  // hold drag — snapshot on drag start, live previews without further
+  // snapshots, snapshot dropped if the drag ends unchanged.
+  let opacityDragState: { layerId: string; startOpacity: number } | null = null;
 
   const store: Store = {
     doc: initial,
@@ -431,7 +439,7 @@ export function createStore(): Store {
       store.pushUndo();
       const n = store.doc.layers.length + 1;
       const layer: Layer = {
-        id: nid(), name: `Layer ${n}`, visible: true,
+        id: nid(), name: `Layer ${n}`, visible: true, locked: false, opacity: 100,
         frames: [{ id: nid(), items: [], hold: 1 }],
       };
       // Layers[0] is the top layer; a new layer goes on top.
@@ -481,6 +489,53 @@ export function createStore(): Store {
       layer.visible = !layer.visible;
       store.save();
       store.emit();
+    },
+
+    // The lock rule, documented where it is enforced: a locked layer's
+    // items are skipped by canvas hit-testing (they cannot be
+    // selected, moved, or edited on canvas) and drawing is blocked
+    // while a locked layer is the active layer. Everything else still
+    // works — visibility, opacity, lock itself, reorder, rename,
+    // delete layer, and all frame operations. Locking clears any
+    // selection, so no stale selection can point at locked items.
+    toggleLayerLocked(id: string): void {
+      const layer = store.doc.layers.find((l) => l.id === id);
+      if (!layer) return;
+      store.pushUndo();
+      layer.locked = !layer.locked;
+      if (layer.locked) store.selection = [];
+      store.save();
+      store.emit();
+    },
+
+    beginLayerOpacity(id: string): void {
+      if (opacityDragState) return;
+      const layer = store.doc.layers.find((l) => l.id === id);
+      if (!layer) return;
+      store.pushUndo();
+      opacityDragState = { layerId: id, startOpacity: layer.opacity ?? 100 };
+    },
+
+    previewLayerOpacity(value: number): void {
+      const drag = opacityDragState;
+      if (!drag) return;
+      const layer = store.doc.layers.find((l) => l.id === drag.layerId);
+      if (!layer) return;
+      const v = Math.min(100, Math.max(0, Math.round(value)));
+      if (v === layer.opacity) return;
+      layer.opacity = v;
+      store.save();
+      store.emit();
+    },
+
+    endLayerOpacity(): void {
+      const drag = opacityDragState;
+      if (!drag) return;
+      const layer = store.doc.layers.find((l) => l.id === drag.layerId);
+      const changed = layer ? layer.opacity !== drag.startOpacity : false;
+      if (!changed) store.popUndo();
+      opacityDragState = null;
+      if (changed) store.emit();
     },
 
     // The + button creates an EMPTY frame — no items — not a copy of

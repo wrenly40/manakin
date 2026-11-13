@@ -47,6 +47,8 @@ export type Layer = {
   id: string;
   name: string;
   visible: boolean;
+  locked: boolean;
+  opacity: number;
   frames: Frame[];
 };
 
@@ -430,6 +432,8 @@ function cleanLayer(v: unknown): Layer | null {
     id: v.id,
     name: typeof v.name === "string" && v.name.length > 0 ? v.name : "Layer",
     visible: v.visible !== false,
+    locked: v.locked === true,
+    opacity: clampNum(v.opacity, 0, 100, 100),
     frames,
   };
 }
@@ -467,14 +471,14 @@ export function sampleDocument(): Document {
     // Layers[0] is the top layer: the ball draws above the background.
     layers: [
       {
-        id: nid(), name: "Ball", visible: true,
+        id: nid(), name: "Ball", visible: true, locked: false, opacity: 100,
         frames: [
           { id: nid(), items: [ball(150)], hold: 2 },
           { id: nid(), items: [ball(300)], hold: 2 },
           { id: nid(), items: [ball(460)], hold: 2 },
         ],
       },
-      { id: nid(), name: "Background", visible: true, frames: [{ id: nid(), items: [sun, hill], hold: 1 }] },
+      { id: nid(), name: "Background", visible: true, locked: false, opacity: 100, frames: [{ id: nid(), items: [sun, hill], hold: 1 }] },
     ],
   };
 }
