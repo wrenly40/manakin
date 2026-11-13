@@ -221,7 +221,7 @@ button:focus-visible, input:focus-visible {
 #hold-value { font-size: 13px; font-weight: 500; min-width: 20px; text-align: center; align-self: center; }
 #timeline-body { flex: 1; display: flex; min-height: 0; }
 #layer-list {
-  width: 180px; flex: none; border-right: 1px solid var(--hairline);
+  width: 240px; flex: none; border-right: 1px solid var(--hairline);
   overflow-y: auto;
 }
 .layer-row {
