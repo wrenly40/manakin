@@ -10,8 +10,6 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
       <span class="panel-title">Layers</span>
       <button id="add-layer" class="pbtn" title="Add layer">+ Layer</button>
       <span class="head-spacer"></span>
-      <span class="head-label">Stage</span>
-      <span id="stage-seg" class="seg"></span>
       <button id="onion-toggle" class="pbtn" title="Onion skin">Onion skin</button>
       <span class="head-spacer"></span>
       <span id="frame-actions">
@@ -29,7 +27,6 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
 
   const layerList = panelEl.querySelector("#layer-list") as HTMLDivElement;
   const framesRows = panelEl.querySelector("#frames-rows") as HTMLDivElement;
-  const stageSeg = panelEl.querySelector("#stage-seg") as HTMLSpanElement;
   const onionBtn = panelEl.querySelector("#onion-toggle") as HTMLButtonElement;
   const addLayerBtn = panelEl.querySelector("#add-layer") as HTMLButtonElement;
   const dupFrameBtn = panelEl.querySelector("#dup-frame") as HTMLButtonElement;
@@ -37,15 +34,6 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
   const holdMinus = panelEl.querySelector("#hold-minus") as HTMLButtonElement;
   const holdPlus = panelEl.querySelector("#hold-plus") as HTMLButtonElement;
   const holdValue = panelEl.querySelector("#hold-value") as HTMLSpanElement;
-
-  for (const s of STAGES) {
-    const b = document.createElement("button");
-    b.className = "seg-btn";
-    b.textContent = s.label;
-    b.title = `Stage ${s.label}`;
-    b.addEventListener("click", () => store.setStageId(s.id));
-    stageSeg.appendChild(b);
-  }
 
   addLayerBtn.addEventListener("click", () => store.addLayer());
   onionBtn.addEventListener("click", () => store.setOnion(!store.onion));
@@ -213,9 +201,6 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
         "active",
         el.dataset.frameId === curLayer.frames[curIndex].id,
       );
-    }
-    for (const b of stageSeg.querySelectorAll(".seg-btn")) {
-      (b as HTMLElement).classList.toggle("active", (b as HTMLElement).textContent === STAGES.find((s) => s.id === store.doc.stageId)?.label);
     }
     onionBtn.classList.toggle("active", store.onion);
     holdValue.textContent = String(curLayer.frames[curIndex].hold);

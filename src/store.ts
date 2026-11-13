@@ -1,7 +1,7 @@
 // Store: the app state. The document, the tool, the view, the selection,
 // the playhead — and the undo stacks and the autosave. No DOM; the views
 // subscribe through onChange and re-render.
-import type { Document, Frame, Item, Layer, StageId, ViewState } from "./model";
+import type { Document, Frame, Item, Layer, ViewState } from "./model";
 import {
   SAVE_KEY,
   UNDO_LIMIT,
@@ -57,7 +57,6 @@ export type Store = {
   back(): void;
   forward(): void;
   setOnion(b: boolean): void;
-  setStageId(id: StageId): void;
   setName(n: string): void;
   canUndo(): boolean;
   canRedo(): boolean;
@@ -256,13 +255,6 @@ export function createStore(): Store {
 
     setOnion(b: boolean): void {
       store.onion = b;
-      store.emit();
-    },
-
-    setStageId(id: StageId): void {
-      store.pushUndo();
-      store.doc = { ...store.doc, stageId: id };
-      store.save();
       store.emit();
     },
 
