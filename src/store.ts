@@ -78,6 +78,7 @@ export type Store = {
   moveLayer(id: string, dir: -1 | 1): void;
   toggleLayerVisible(id: string): void;
   addFrame(layerId: string): void;
+  splitFrame(layerId: string, index: number, atTick: number): void;
   deleteFrame(layerId: string, index: number): void;
   beginHoldDrag(layerId: string, index: number): void;
   previewHold(hold: number): void;
@@ -494,12 +495,47 @@ export function createStore(): Store {
       store.save();
     },
 
+    // Splitting a held frame at a tick: the original keeps the hold
+    // up to the split point, a new EMPTY frame takes the rest, so the
+    // total timeline length is unchanged. One undo step; the new frame
+    // becomes the selected frame, so the user can draw into it right
+    // away. atTick is the tick offset within the frame (the cell
+    // itself is tick 0, the line covers the rest).
+    splitFrame(layerId: string, index: number, atTick: number): void {
+      const layer = store.doc.layers.find((l) => l.id === layerId);
+      if (!layer) return;
+      const frame = layer.frames[index];
+      if (!frame) return;
+      const hold = Math.max(1, frame.hold);
+      const at = Math.min(hold - 1, Math.max(1, Math.round(atTick)));
+      if (at >= hold) return;
+      store.pushUndo();
+      frame.hold = at;
+      const split: Frame = { id: nid(), items: [], hold: hold - at };
+      layer.frames.splice(index + 1, 0, split);
+      store.setCurrentFrame(layerId, index + 1);
+      store.save();
+    },
+
     // A layer keeps at least one frame — deleting the only frame is a no-op.
     deleteFrame(layerId: string, index: number): void {
       const layer = store.doc.layers.find((l) => l.id === layerId);
       if (!layer || layer.frames.length <= 1) return;
       const clamped = Math.min(layer.frames.length - 1, Math.max(0, index));
       store.pushUndo();
+      const deleted = layer.frames[clamped];
+      // The previous frame absorbs the deleted frame's hold, so the
+      // timeline length is preserved — deleting a split frame recovers
+      // the original hold exactly. The first frame has no previous
+      // frame, so the total simply shrinks by its hold. The hold cap
+      // is 24 everywhere else (drag, save), so the absorbed hold
+      // clamps there too.
+      if (clamped > 0) {
+        layer.frames[clamped - 1].hold = Math.min(
+          24,
+          Math.max(1, layer.frames[clamped - 1].hold) + Math.max(1, deleted.hold),
+        );
+      }
       layer.frames.splice(clamped, 1);
       const cur = store.currentByLayer.get(layerId) ?? 0;
       if (cur >= layer.frames.length) store.currentByLayer.set(layerId, layer.frames.length - 1);
