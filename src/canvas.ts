@@ -154,6 +154,22 @@ export function createCanvasView(wrapEl: HTMLElement, store: Store): CanvasView 
     return stagePointFor(layout(), e.clientX, e.clientY, rect.left, rect.top);
   }
 
+  // The eyedropper reads the rendered stage pixels, so the sample is
+  // truthful about what is seen — layer opacity, overlapping items,
+  // the stage background (an empty stage samples the stage colour).
+  // The canvas backing store is DPR-scaled, so the click's CSS
+  // pixels are scaled up before reading.
+  function sampleColorAt(clientX: number, clientY: number): string | null {
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const x = Math.floor((clientX - rect.left) * dpr);
+    const y = Math.floor((clientY - rect.top) * dpr);
+    if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) return null;
+    const d = ctx.getImageData(x, y, 1, 1).data;
+    const toHex = (v: number): string => v.toString(16).padStart(2, "0");
+    return `#${toHex(d[0])}${toHex(d[1])}${toHex(d[2])}`;
+  }
+
   function isTypingTarget(e: Event): boolean {
     const t = e.target as HTMLElement | null;
     return !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA");
@@ -227,6 +243,7 @@ export function createCanvasView(wrapEl: HTMLElement, store: Store): CanvasView 
       shape: "crosshair",
       text: "text",
       paint: "pointer",
+      eyedropper: "crosshair",
     };
     canvas.style.cursor = spaceDown ? "grab" : cursors[store.tool];
   }
@@ -265,6 +282,16 @@ export function createCanvasView(wrapEl: HTMLElement, store: Store): CanvasView 
     const p = stagePoint(e);
     canvas.setPointerCapture(e.pointerId);
     if (store.playing) store.setPlaying(false);
+    // The eyedropper is a one-shot read, not an edit: it samples
+    // the visible pixel, sets it as the active colour, and returns
+    // to the tool that was active before it. It works on a locked
+    // layer too — it changes no document state.
+    if (store.tool === "eyedropper") {
+      const hex = sampleColorAt(e.clientX, e.clientY);
+      if (hex) store.setColor(hex);
+      store.restorePreviousTool();
+      return;
+    }
     // A locked active layer takes no canvas edits at all — pen, shape,
     // text, paint, eraser all stop here. The select tool still works
     // (hit-testing skips the locked layer's items but can select items

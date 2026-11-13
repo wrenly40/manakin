@@ -10,6 +10,7 @@ const ICONS: Record<string, string> = {
   rect: `<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>`,
   text: `<svg viewBox="0 0 24 24"><path d="M5 6h14M12 6v13"/></svg>`,
   paint: `<svg viewBox="0 0 24 24"><path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11z"/><path d="m5 2 5 5"/><path d="M2 13h15"/><path d="M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4z"/></svg>`,
+  eyedropper: `<svg viewBox="0 0 24 24"><path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/></svg>`,
 };
 
 const TOOLS: { id: ToolId; label: string; key: string }[] = [
@@ -19,6 +20,7 @@ const TOOLS: { id: ToolId; label: string; key: string }[] = [
   { id: "shape", label: "Geometry (E)", key: "e" },
   { id: "text", label: "Text (T)", key: "t" },
   { id: "paint", label: "Paint bucket (B)", key: "b" },
+  { id: "eyedropper", label: "Eyedropper (I)", key: "i" },
 ];
 
 const COLOURS_KEY = "manakin-v2-colours";

@@ -170,6 +170,7 @@ window.addEventListener("keydown", (e) => {
   else if (k === "d") store.setTool("eraser");
   else if (k === "t") store.setTool("text");
   else if (k === "b") store.setTool("paint");
+  else if (k === "i") store.setTool("eyedropper");
   else if (k === "x") store.swapColors();
   else if (k === "e") {
     if (store.tool === "shape") {

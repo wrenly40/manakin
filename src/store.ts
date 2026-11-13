@@ -13,7 +13,7 @@ import {
   timelineLength,
 } from "./model";
 
-export type ToolId = "select" | "pen" | "eraser" | "shape" | "text" | "paint";
+export type ToolId = "select" | "pen" | "eraser" | "shape" | "text" | "paint" | "eyedropper";
 
 export type SelectionRef = { layerId: string; frameId: string; itemId: string };
 
@@ -39,6 +39,7 @@ export type Store = {
   onChange(cb: () => void): () => void;
   emit(): void;
   setTool(t: ToolId): void;
+  restorePreviousTool(): void;
   setShapeKind(k: "rect" | "ellipse"): void;
   setColor(c: string): void;
   setColor2(c: string): void;
@@ -80,6 +81,7 @@ export type Store = {
   addLayer(): void;
   renameLayer(id: string, name: string): void;
   deleteLayer(id: string): void;
+  duplicateLayer(id: string): void;
   moveLayer(id: string, dir: -1 | 1): void;
   toggleLayerVisible(id: string): void;
   toggleLayerLocked(id: string): void;
@@ -89,6 +91,7 @@ export type Store = {
   addFrame(layerId: string): void;
   splitFrame(layerId: string, index: number, atTick: number): void;
   duplicateFrame(layerId: string, index: number): void;
+  moveFrame(layerId: string, from: number, to: number): void;
   deleteFrame(layerId: string, index: number): void;
   beginHoldDrag(layerId: string, index: number): void;
   previewHold(hold: number): void;
@@ -137,6 +140,10 @@ export function createStore(): Store {
   // hold drag — snapshot on drag start, live previews without further
   // snapshots, snapshot dropped if the drag ends unchanged.
   let opacityDragState: { layerId: string; startOpacity: number } | null = null;
+  // The tool active before the eyedropper was picked: a colour pick
+  // returns to it, so the eyedropper is a one-shot tool. Null when
+  // the eyedropper is not the active tool.
+  let toolBeforeEyedropper: ToolId | null = null;
 
   const store: Store = {
     doc: initial,
@@ -164,9 +171,27 @@ export function createStore(): Store {
     },
 
     setTool(t: ToolId): void {
+      // Entering the eyedropper remembers the tool being left, so a
+      // pick can return to it; leaving for any other tool forgets it.
+      // Pressing the eyedropper key twice does not overwrite the
+      // recorded tool.
+      if (t === "eyedropper") {
+        if (store.tool !== "eyedropper") toolBeforeEyedropper = store.tool;
+      } else {
+        toolBeforeEyedropper = null;
+      }
       store.tool = t;
       store.clearSelection();
       store.emit();
+    },
+
+    // After an eyedropper pick: back to the tool that was active
+    // before it (Pen by default). A colour pick is tool state, not
+    // a document change — no undo step for it.
+    restorePreviousTool(): void {
+      const prev = toolBeforeEyedropper ?? "pen";
+      toolBeforeEyedropper = null;
+      store.setTool(prev);
     },
 
     setShapeKind(k: "rect" | "ellipse"): void {
@@ -534,6 +559,30 @@ export function createStore(): Store {
       store.emit();
     },
 
+    // Duplicating a layer copies it right BELOW the original in the
+    // list — same visibility, lock, opacity, frames and holds, with
+    // fresh ids for the layer and for all its frames and items, so
+    // editing the copy never touches the original. The copy's name
+    // gets a " copy" suffix, macOS-style. The copy becomes the
+    // selected layer; the timeline total is unchanged (the copy is
+    // the same length as the original). One undo step.
+    duplicateLayer(id: string): void {
+      const index = store.doc.layers.findIndex((l) => l.id === id);
+      if (index < 0) return;
+      store.pushUndo();
+      const copy: Layer = structuredClone(store.doc.layers[index]);
+      copy.id = nid();
+      for (const frame of copy.frames) {
+        frame.id = nid();
+        for (const it of frame.items) it.id = nid();
+      }
+      copy.name = `${store.doc.layers[index].name} copy`;
+      store.doc.layers.splice(index + 1, 0, copy);
+      store.currentByLayer.set(copy.id, 0);
+      store.setCurrentLayer(copy.id);
+      store.save();
+    },
+
     moveLayer(id: string, dir: -1 | 1): void {
       const i = store.doc.layers.findIndex((l) => l.id === id);
       const j = i + dir;
@@ -651,6 +700,28 @@ export function createStore(): Store {
       for (const it of copy.items) it.id = nid();
       layer.frames.splice(index + 1, 0, copy);
       store.setCurrentFrame(layerId, index + 1);
+      store.save();
+    },
+
+    // Moving a frame within its own layer: the frame (hold included)
+    // is spliced out and re-inserted at the target index. `to` is the
+    // insertion index in the ORIGINAL list — insert before the frame
+    // currently at `to` — so when the target is past the source, the
+    // removal shifts it down by one and the insert goes one earlier.
+    // The selection follows the moved frame, so the stage shows it;
+    // the total is unchanged (holds only reorder). Dropping on its
+    // own position is a no-op: no undo step, no emit.
+    moveFrame(layerId: string, from: number, to: number): void {
+      const layer = store.doc.layers.find((l) => l.id === layerId);
+      if (!layer) return;
+      const clampedFrom = Math.min(layer.frames.length - 1, Math.max(0, from));
+      const target = to > clampedFrom ? to - 1 : to;
+      const clampedTo = Math.min(layer.frames.length - 1, Math.max(0, target));
+      if (clampedTo === clampedFrom) return;
+      store.pushUndo();
+      const [frame] = layer.frames.splice(clampedFrom, 1);
+      layer.frames.splice(clampedTo, 0, frame);
+      store.setCurrentFrame(layerId, clampedTo);
       store.save();
     },
 
