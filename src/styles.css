@@ -216,10 +216,8 @@ button:focus-visible, input:focus-visible {
 .pbtn:disabled { opacity: 0.35; cursor: default; }
 #timeline-body { flex: 1; display: flex; min-height: 0; }
 /* The list column: 250px — narrower than the old 300px — with the
-   scrollable card stack above and a compact Add button pinned below
-   it. The button lives in the column footer, not in the scroll flow
-   — the strip is only 135px tall, so an in-flow button would sit
-   below the fold even with the two sample layers. */
+   compact Add button on top and the scrollable card stack below
+   it. */
 #layer-col {
   width: 250px; flex: none; border-right: 1px solid var(--hairline);
   display: flex; flex-direction: column; min-height: 0;
@@ -316,10 +314,10 @@ button:focus-visible, input:focus-visible {
 .layer-remove:hover { background: rgba(0, 0, 0, 0.05); color: var(--ink); }
 .layer-remove svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 /* Add layer is a compact .pbtn hugging its "+ Layer" label — not
-   the old full-width pill. It sits left-aligned in the column
-   footer, under the cards. */
+   the old full-width pill. It sits left-aligned at the TOP of the
+   column, above the first card. */
 #add-layer {
-  align-self: flex-start; margin: 8px;
+  align-self: flex-start; margin: 8px 8px 4px;
   display: inline-flex; align-items: center; gap: 6px;
 }
 #add-layer svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }

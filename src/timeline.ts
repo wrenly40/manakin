@@ -9,8 +9,8 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
   panelEl.innerHTML = `
     <div id="timeline-body">
       <div id="layer-col">
-        <div id="layer-list"></div>
         <button id="add-layer" class="pbtn" title="Add layer"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Layer</span></button>
+        <div id="layer-list"></div>
       </div>
       <div id="frames-scroll"><div id="frames-rows"></div></div>
     </div>`;
