@@ -365,7 +365,9 @@ export function createStore(): Store {
       const out: ResolvedSelection[] = [];
       for (const ref of store.selection) {
         const layer = store.doc.layers.find((l) => l.id === ref.layerId);
-        if (!layer || !layer.visible) continue;
+        // Locked layers resolve to nothing: a selection left over from
+        // before a lock cannot move, duplicate, or delete their items.
+        if (!layer || !layer.visible || layer.locked) continue;
         const frame = layer.frames.find((f) => f.id === ref.frameId);
         if (!frame) continue;
         const item = frame.items.find((it) => it.id === ref.itemId);

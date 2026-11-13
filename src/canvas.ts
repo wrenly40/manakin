@@ -131,7 +131,9 @@ export function createCanvasView(wrapEl: HTMLElement, store: Store): CanvasView 
     const pos = store.displayPos();
     const out: { layerId: string; frameId: string; items: Item[] }[] = [];
     for (const layer of store.doc.layers) {
-      if (!layer.visible) continue;
+      // A locked layer's items are skipped by hit-testing: they cannot
+      // be selected, moved, or edited on canvas. Marquee uses this too.
+      if (!layer.visible || layer.locked) continue;
       const { frame } = frameAt(layer, pos);
       out.push({ layerId: layer.id, frameId: frame.id, items: frame.items });
     }
@@ -185,6 +187,13 @@ export function createCanvasView(wrapEl: HTMLElement, store: Store): CanvasView 
     editingText = null;
     editor.style.display = "none";
     if (!commit || text.trim().length === 0) {
+      render();
+      return;
+    }
+    // The layer may have been locked while the editor was open — a
+    // locked layer takes no edits, so the text is dropped, not saved.
+    const targetLayer = store.doc.layers.find((l) => l.id === target.layerId);
+    if (!targetLayer || targetLayer.locked) {
       render();
       return;
     }
@@ -256,6 +265,11 @@ export function createCanvasView(wrapEl: HTMLElement, store: Store): CanvasView 
     const p = stagePoint(e);
     canvas.setPointerCapture(e.pointerId);
     if (store.playing) store.setPlaying(false);
+    // A locked active layer takes no canvas edits at all — pen, shape,
+    // text, paint, eraser all stop here. The select tool still works
+    // (hit-testing skips the locked layer's items but can select items
+    // on other layers), and pan/rotate already returned above.
+    if (store.tool !== "select" && store.currentFrame().layer.locked) return;
 
     if (store.tool === "pen") {
       const { frame } = store.currentFrame();
@@ -320,7 +334,7 @@ export function createCanvasView(wrapEl: HTMLElement, store: Store): CanvasView 
     if (drag.kind !== "erase") return;
     let any = false;
     for (const layer of store.doc.layers) {
-      if (!layer.visible) continue;
+      if (!layer.visible || layer.locked) continue;
       const { frame } = frameAt(layer, store.displayPos());
       const r = eraseFromItems(frame.items, p, store.brushSize);
       if (r.changed) {
