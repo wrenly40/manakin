@@ -357,9 +357,17 @@ button:focus-visible, input:focus-visible {
    with a 2px sliver of line between it and the cell, and the line
    runs through to it. Solid ink, no border, no shadow — the app's
    ink language (direction A, picked by the user), not a borrowed
-   resize handle. Visible only while its cell (or the gap) is
-   hovered, or while dragging — nothing shows on a cell at rest.
-   The hit area is 14px wide for grabbability and may extend over
+   resize handle. It has the FORM OF THE FRAME'S RIGHT SIDE: the left
+   side is flat and the right corners are rounded at the cell's 9px
+   radius language (border-radius: 0 9px 9px 0), so it reads as the
+   frame's own right edge, pulled out to the hold's endpoint. The
+   browser clamps the 9px radius to the bar's 4px width, so the right
+   side is as round as the bar allows — the width and the 6px gap stay
+   as they are, because growing the gap to fit a wider bar would
+   re-space the whole timeline (the 72px pitch) for a radius the eye
+   cannot distinguish at this size. Visible only while its cell (or
+   the gap) is hovered, or while dragging — nothing shows on a cell at
+   rest. The hit area is 14px wide for grabbability and may extend over
    the cell's edge; the cell stacks above the gap, so the delete ×
    still wins clicks where the two cross. Dragging it sets the hold
    — the only hold control. It is its own pointer interaction and
@@ -372,7 +380,7 @@ button:focus-visible, input:focus-visible {
 .frame-handle::before {
   content: ""; position: absolute; right: 0; top: 0;
   width: 4px; height: 38px;
-  background: var(--ink); border-radius: 2px;
+  background: var(--ink); border-radius: 0 9px 9px 0;
 }
 .frame-cell:hover + .hold-gap .frame-handle,
 .hold-gap:hover .frame-handle,

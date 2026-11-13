@@ -190,8 +190,12 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
         // gap of a hold-1 frame it sits at the gap's right end with
         // a 2px sliver of line between it and the cell. Solid ink,
         // no border, no shadow — direction A, picked by the user.
-        // Visible only while its cell (or the gap) is hovered, or
-        // while dragging — nothing shows at rest.
+        // It has the form of the frame's right side: flat on the
+        // left, right corners rounded at the cell's 9px radius
+        // language (clamped to the bar's 4px width), so it reads as
+        // the frame's own right edge, pulled out to the hold's
+        // endpoint. Visible only while its cell (or the gap) is
+        // hovered, or while dragging — nothing shows at rest.
         // Dragging it sets the hold — the only hold control. It is
         // its own pointer interaction and never selects the cell.
         const handle = document.createElement("div");
