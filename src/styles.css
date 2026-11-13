@@ -266,14 +266,14 @@ button:focus-visible, input:focus-visible {
 
 /* Player */
 #player-bar {
-  flex: none; height: 76px; background: #fff;
+  flex: none; height: 56px; background: #fff;
   border-top: 1px solid var(--separator);
   display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
   padding: 0 16px;
 }
 #player-left { display: flex; }
 #angle-readout { font-size: 13px; color: var(--ink); font-variant-numeric: tabular-nums; }
-#player-centre { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+#player-centre { display: flex; align-items: center; }
 #transport { display: flex; align-items: center; gap: 12px; }
 .pctl {
   border: none; background: transparent; border-radius: 9px;
@@ -292,7 +292,7 @@ button:focus-visible, input:focus-visible {
 }
 #play-btn:hover { background: #fff; }
 #play-btn svg { width: 16px; height: 16px; fill: currentColor; stroke: none; }
-#clock { font-size: 12px; color: var(--grey); min-width: 84px; text-align: center; }
+#clock { font-size: 13px; color: var(--ink); margin-left: 4px; min-width: 128px; font-variant-numeric: tabular-nums; }
 #player-right { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
 .zctl {
   border: none; background: transparent; border-radius: 9px;

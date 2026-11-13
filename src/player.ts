@@ -12,8 +12,8 @@ export function createPlayer(barEl: HTMLElement, store: Store): void {
         <button id="play-btn" class="pctl play" title="Play" aria-label="Play"><svg viewBox="0 0 12 12"><path d="M3 1.5 10 6l-7 4.5z"/></svg></button>
         <button id="stop-btn" class="pctl solid" title="Stop" aria-label="Stop"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
         <button id="forward-btn" class="pctl solid" title="Forward" aria-label="Forward to end"><svg viewBox="0 0 24 24"><path d="M15.5 5h2.5v14h-2.5z"/><path d="M4 5v14l9.5-7z"/></svg></button>
+        <span id="clock">1/1 · 0.0s · 12 fps</span>
       </div>
-      <span id="clock">1/1 · 0.0s</span>
     </div>
     <div id="player-right">
       <button id="zoom-out" class="zctl" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
@@ -81,7 +81,7 @@ export function createPlayer(barEl: HTMLElement, store: Store): void {
     playBtn.innerHTML = store.playing
       ? `<svg viewBox="0 0 12 12"><rect x="2" y="1.5" width="3" height="9" rx="0.5"/><rect x="7" y="1.5" width="3" height="9" rx="0.5"/></svg>`
       : `<svg viewBox="0 0 12 12"><path d="M3 1.5 10 6l-7 4.5z"/></svg>`;
-    clockEl.textContent = `${pos + 1}/${len} · ${(pos / FPS).toFixed(1)}s`;
+    clockEl.textContent = `${pos + 1}/${len} · ${(pos / FPS).toFixed(1)}s · ${FPS} fps`;
     angleEl.textContent = store.view.rotateDeg !== 0 ? `${Math.round(store.view.rotateDeg)}°` : "";
     zoomLabel.textContent = `${Math.round(store.view.zoom * 100)}%`;
   }
