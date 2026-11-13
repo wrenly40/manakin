@@ -6,10 +6,19 @@ import { renderThumbnail } from "./render";
 import type { Store } from "./store";
 
 export function createTimeline(panelEl: HTMLElement, store: Store): void {
+  // The + Layer button lives in a header row spanning BOTH columns,
+  // above the body — not inside the layer column. When it sat in the
+  // column it shifted every card down by its 44px block (32px button
+  // + 8px top + 4px bottom margin) while the frame rows started at
+  // the panel top, so every row sat 44px higher than its card. With
+  // the button in the header, both columns start below it and their
+  // tops match by construction.
   panelEl.innerHTML = `
+    <div id="timeline-header">
+      <button id="add-layer" class="pbtn" title="Add layer"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Layer</span></button>
+    </div>
     <div id="timeline-body">
       <div id="layer-col">
-        <button id="add-layer" class="pbtn" title="Add layer"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Layer</span></button>
         <div id="layer-list"></div>
       </div>
       <div id="frames-scroll"><div id="frames-rows"></div></div>

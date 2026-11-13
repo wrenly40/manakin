@@ -214,6 +214,11 @@ button:focus-visible, input:focus-visible {
 }
 .pbtn:hover { background: var(--bg-system); }
 .pbtn:disabled { opacity: 0.35; cursor: default; }
+/* The timeline header spans both columns: the + Layer button sits
+   here, above the body, so it cannot shift the cards relative to
+   the frame rows. Its height is the button's own block (32px +
+   8px top + 4px bottom margin = 44px). */
+#timeline-header { flex: none; display: flex; }
 #timeline-body { flex: 1; display: flex; min-height: 0; }
 /* The list column: 250px — narrower than the old 300px — with the
    compact Add button on top and the scrollable card stack below
