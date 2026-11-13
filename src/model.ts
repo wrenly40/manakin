@@ -50,7 +50,7 @@ export type Layer = {
   locked: boolean;
   opacity: number;
   // Onion skin is per-layer: whether this layer's neighbouring
-  // frames show ghosted under the live frame. Default ON; old saves
+  // frames show tinted under the live frame. Default ON; old saves
   // without the field load as ON (see cleanLayer).
   onionSkin: boolean;
   frames: Frame[];

@@ -86,7 +86,9 @@ export function createCanvasView(wrapEl: HTMLElement, store: Store): CanvasView 
       pos: store.displayPos(),
       currentLayerId: store.currentLayerId,
       previewItems: previewItems.length > 0 ? previewItems : undefined,
-      onionSkin: store.onionSkin,
+      // The live render always allows onion skin; each layer's own
+      // toggle gates its neighbours in renderStage.
+      onionSkin: true,
     });
     // Selection outlines, in stage coordinates (rotated with the stage).
     for (const { item } of store.resolveSelection()) {
@@ -158,11 +160,11 @@ export function createCanvasView(wrapEl: HTMLElement, store: Store): CanvasView 
   // The eyedropper reads the rendered stage pixels, so the sample is
   // truthful about what is seen — layer opacity, overlapping items,
   // the stage background (an empty stage samples the stage colour).
-  // It must NOT read the onion-skin ghosts, so the sample comes from
-  // a fresh offscreen render of the same stage with the ghost pass
-  // off, at the same size — never from the live canvas. The canvas
-  // backing store is DPR-scaled, so the click's CSS pixels are
-  // scaled up before reading.
+  // It must NOT read the onion-skin neighbour tints, so the sample
+  // comes from a fresh offscreen render of the same stage with the
+  // onion-skin pass off, at the same size — never from the live
+  // canvas. The canvas backing store is DPR-scaled, so the click's
+  // CSS pixels are scaled up before reading.
   let sampleCanvas: HTMLCanvasElement | null = null;
   function sampleColorAt(clientX: number, clientY: number): string | null {
     const rect = canvas.getBoundingClientRect();

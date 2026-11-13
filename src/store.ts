@@ -40,10 +40,6 @@ export type Store = {
   pos: number;
   playing: boolean;
   loop: boolean;
-  // Onion skin is view state, not a document change: whether the
-  // neighbours of the current frame show ghosted on the stage.
-  // Default ON, persisted in its own key; toggling it is no undo step.
-  onionSkin: boolean;
   selection: SelectionRef[];
   onChange(cb: () => void): () => void;
   emit(): void;
@@ -64,7 +60,6 @@ export type Store = {
   setPos(p: number): void;
   setPlaying(b: boolean): void;
   toggleLoop(): void;
-  toggleOnionSkin(): void;
   playToggle(): void;
   stop(): void;
   back(): void;
@@ -155,17 +150,6 @@ export function createStore(): Store {
   // returns to it, so the eyedropper is a one-shot tool. Null when
   // the eyedropper is not the active tool.
   let toolBeforeEyedropper: ToolId | null = null;
-  // Onion skin persists in its own key, separate from the document
-  // save — it is view state, so it is never part of the doc or undo.
-  const ONION_KEY = "manakin-v2-onion-skin";
-  let onionSkin = true;
-  try {
-    const raw = localStorage.getItem(ONION_KEY);
-    if (raw !== null) onionSkin = raw === "true";
-  } catch {
-    // Storage unavailable — the session keeps working, default ON.
-  }
-
   const store: Store = {
     doc: initial,
     name: initialName,
@@ -181,7 +165,6 @@ export function createStore(): Store {
     pos: 0,
     playing: false,
     loop: false,
-    onionSkin,
     selection: [],
 
     onChange(cb: () => void): () => void {
@@ -303,16 +286,6 @@ export function createStore(): Store {
 
     toggleLoop(): void {
       store.loop = !store.loop;
-      store.emit();
-    },
-
-    toggleOnionSkin(): void {
-      store.onionSkin = !store.onionSkin;
-      try {
-        localStorage.setItem(ONION_KEY, String(store.onionSkin));
-      } catch {
-        // Storage unavailable — the session keeps working.
-      }
       store.emit();
     },
 

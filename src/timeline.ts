@@ -119,7 +119,7 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
   const UNLOCK_SVG = `<svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/></svg>`;
   // Onion skin glyph (Lucide "layers", 16px, stroke 1.8): stacked
   // frames — the neighbouring frames stacked under the live one.
-  // The ghost glyph is gone; this is the per-layer toggle's icon.
+  // This is the per-layer toggle's icon.
   const ONION_SVG = `<svg viewBox="0 0 24 24"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg>`;
   const thumbSigs = new Map<string, string>();
 
