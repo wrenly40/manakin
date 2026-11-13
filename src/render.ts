@@ -123,6 +123,10 @@ export function renderStage(
   c.clip();
   c.fillStyle = doc.stageBg;
   c.fillRect(layout.ox, layout.oy, stage.w * layout.s, stage.h * layout.s);
+  c.restore();
+  // Items are NOT clipped to the card: drawings outside the stage show on
+  // the pasteboard around it.
+  c.save();
   c.translate(layout.ox, layout.oy);
   c.scale(layout.s, layout.s);
   for (let li = doc.layers.length - 1; li >= 0; li--) {
