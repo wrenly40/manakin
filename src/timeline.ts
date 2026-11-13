@@ -135,12 +135,6 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
         cell.title = `Frame ${index + 1}${frame.hold > 1 ? `, hold ${frame.hold}` : ""}`;
         const thumb = document.createElement("canvas");
         cell.appendChild(thumb);
-        if (frame.hold > 1) {
-          const badge = document.createElement("span");
-          badge.className = "hold-badge";
-          badge.textContent = `×${frame.hold}`;
-          cell.appendChild(badge);
-        }
         // Delete is the layer row's hover-revealed ×, same size and
         // treatment. A layer keeps at least one frame, so the × only
         // appears when the layer has more than one.
@@ -161,8 +155,8 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
         // cell is the selected frame. The cell is 66px wide, so a
         // − value + stepper and the 24px delete × cannot both be
         // clickable there — on the selected cell the stepper takes
-        // the cell (badge and × hidden; the stepper's value states
-        // the hold), and the × stays on every other cell. To delete
+        // the cell (× hidden; the stepper's value states the hold),
+        // and the × stays on every other cell. To delete
         // the selected frame, select another frame first.
         const holdCtl = document.createElement("span");
         holdCtl.className = "cell-hold seg";

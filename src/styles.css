@@ -341,8 +341,7 @@ button:focus-visible, input:focus-visible {
 .frame-cell canvas { display: block; border-radius: 8px; }
 /* Delete is the layer row's hover-revealed ×, same size and treatment
    (24px, grey 14px glyph at stroke 2, hidden until the cell is
-   hovered or the button is keyboard-focused) — top-right of the cell,
-   opposite the hold badge. */
+   hovered or the button is keyboard-focused) — top-right of the cell. */
 .frame-remove {
   position: absolute; top: 2px; right: 2px;
   width: 24px; height: 24px; border: none; border-radius: 7px;
@@ -353,15 +352,11 @@ button:focus-visible, input:focus-visible {
 .frame-cell:hover .frame-remove, .frame-remove:focus-visible { opacity: 1; }
 .frame-remove:hover { background: rgba(0, 0, 0, 0.05); color: var(--ink); }
 .frame-remove svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
-.hold-badge {
-  position: absolute; right: 3px; bottom: 2px; font-size: 11px; font-weight: 500;
-  line-height: 1; background: transparent; color: var(--ink); padding: 0;
-}
 /* Hold editing lives on the selected cell: a compact .seg stepper
    overlaying the thumbnail, centred, shown only on the selected
    frame's cell. Compact buttons (24px, tight padding) so it fits a
    66px hold-1 cell. On the selected cell the stepper is the hold
-   display, so the ×N badge hides; the delete × hides too — a
+   display, so the delete × hides too — a
    − value + stepper and a 24px × cannot both be clickable in 66px.
    The × stays on every other cell. */
 .cell-hold {
@@ -369,7 +364,6 @@ button:focus-visible, input:focus-visible {
   display: none; z-index: 2; line-height: 1;
 }
 .frame-cell.selected .cell-hold { display: flex; }
-.frame-cell.selected .hold-badge { display: none; }
 .frame-cell.selected .frame-remove { display: none; }
 .cell-hold button { height: 24px; padding: 0 6px; }
 .cell-hold-value {
