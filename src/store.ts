@@ -471,14 +471,14 @@ export function createStore(): Store {
       store.emit();
     },
 
+    // The + button creates an EMPTY frame — no items — not a copy of
+    // the current frame. (Duplicate stays removed; this is not it.)
     addFrame(layerId: string): void {
       const layer = store.doc.layers.find((l) => l.id === layerId);
       if (!layer) return;
       store.pushUndo();
-      const src = layer.frames[Math.min(store.currentByLayer.get(layerId) ?? 0, layer.frames.length - 1)];
-      const copy: Frame = { id: nid(), items: structuredClone(src.items), hold: 1 };
-      for (const it of copy.items) it.id = nid();
-      layer.frames.push(copy);
+      const frame: Frame = { id: nid(), items: [], hold: 1 };
+      layer.frames.push(frame);
       store.setCurrentFrame(layerId, layer.frames.length - 1);
       store.save();
     },
