@@ -1,6 +1,6 @@
 // Timeline: the layers list and the frame cells. Layers[0] is the top
 // layer. A cell is a thumbnail of its frame; clicking a cell edits it.
-import { STAGES } from "./model";
+import { STAGES, frameAt } from "./model";
 import { renderThumbnail } from "./render";
 import type { Store } from "./store";
 
@@ -177,12 +177,17 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
       const layer = store.doc.layers.find((l) => l.id === el.dataset.layerId);
       if (layer) el.classList.toggle("hidden", !layer.visible);
     }
+    // The highlighted cell follows the playhead while playing — each
+    // layer's frame at the playing position — and returns to the
+    // selected frame when playback stops or pauses.
     for (const cell of framesRows.querySelectorAll(".frame-cell")) {
       const el = cell as HTMLElement;
-      el.classList.toggle(
-        "active",
-        el.dataset.frameId === curLayer.frames[curIndex].id,
-      );
+      const row = el.closest(".frame-row") as HTMLElement | null;
+      const layer = store.doc.layers.find((l) => l.id === row?.dataset.layerId);
+      const activeId = store.playing && layer
+        ? frameAt(layer, store.pos).frame.id
+        : curLayer.frames[curIndex].id;
+      el.classList.toggle("active", el.dataset.frameId === activeId);
     }
     holdValue.textContent = String(curLayer.frames[curIndex].hold);
     // Thumbnails, redrawn when a frame's items change.
