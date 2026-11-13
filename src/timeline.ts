@@ -292,17 +292,19 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
         // the hold's endpoint — centred on the line, its visible box
         // entirely outside the cell's border, so the cell interior
         // is back to just the thumbnail and the hover-revealed ×.
-        // The bar spans the FULL HEIGHT of the frame cell (38px:
-        // 36px thumbnail + 2px border). It is 4px wide: in the 6px
-        // gap of a hold-1 frame it sits at the gap's right end with
-        // a 2px sliver of line between it and the cell. Solid ink,
-        // no border, no shadow — direction A, picked by the user.
-        // It has the form of the frame's right side: flat on the
-        // left, right corners rounded at the cell's 9px radius
-        // language (clamped to the bar's 4px width), so it reads as
-        // the frame's own right edge, pulled out to the hold's
-        // endpoint. Visible only while its cell (or the gap) is
-        // hovered, or while dragging — nothing shows at rest.
+        // The bar spans the FULL HEIGHT of the frame cell: it fills
+        // the gap, which is the row's full height (set from the
+        // card), so bar and cell share their top and bottom edges.
+        // It is 4px wide: in the 6px gap of a hold-1 frame it sits
+        // at the gap's right end with a 2px sliver of line between
+        // it and the cell. Solid ink, no border, no shadow —
+        // direction A, picked by the user. It has the form of the
+        // frame's right side: flat on the left, right corners
+        // rounded at the cell's 9px radius language (clamped to the
+        // bar's 4px width), so it reads as the frame's own right
+        // edge, pulled out to the hold's endpoint. Visible only
+        // while its cell (or the gap) is hovered, or while dragging
+        // — nothing shows at rest.
         // Dragging it sets the hold — the only hold control. It is
         // its own pointer interaction and never selects the cell.
         const handle = document.createElement("div");
