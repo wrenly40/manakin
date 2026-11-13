@@ -178,6 +178,20 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
         });
       });
       head.appendChild(name);
+      // Duplicate is the same hover-revealed 24px button as the
+      // delete ×, sitting immediately left of it on the name line —
+      // the two row actions grouped together, both hidden until the
+      // row is hovered.
+      const dupLayer = document.createElement("button");
+      dupLayer.className = "layer-duplicate";
+      dupLayer.innerHTML = `<svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+      dupLayer.title = "Duplicate layer";
+      dupLayer.setAttribute("aria-label", `Duplicate layer ${layer.name}`);
+      dupLayer.addEventListener("click", (e) => {
+        e.stopPropagation();
+        store.duplicateLayer(layer.id);
+      });
+      head.appendChild(dupLayer);
       const del = document.createElement("button");
       del.className = "layer-remove";
       del.innerHTML = `<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>`;

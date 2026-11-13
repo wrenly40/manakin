@@ -347,6 +347,19 @@ button:focus-visible, input:focus-visible {
 }
 .layer-row:hover .layer-remove, .layer-remove:focus-visible { opacity: 1; }
 .layer-remove:hover { background: rgba(0, 0, 0, 0.05); color: var(--ink); }
+/* The duplicate button is the same hover-revealed 24px treatment
+   as the delete × — same size, same icon stroke, same grey until
+   hovered — sitting immediately left of the × on the name line. */
+.layer-duplicate {
+  width: 24px; height: 24px; flex: none; border: none;
+  background: transparent; border-radius: 6px; cursor: pointer;
+  padding: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--grey); opacity: 0; transition: opacity 0.15s;
+}
+.layer-row:hover .layer-duplicate { opacity: 1; }
+.layer-duplicate:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 1px; }
+.layer-duplicate svg { width: 16px; height: 16px; stroke: currentColor; stroke-width: 1.8; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.layer-duplicate:hover { background: rgba(0, 0, 0, 0.05); color: var(--ink); }
 .layer-remove svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 /* Add layer is a compact .pbtn hugging its "+ Layer" label — not
    the old full-width pill. It sits left-aligned at the TOP of the
