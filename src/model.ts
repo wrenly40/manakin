@@ -58,6 +58,7 @@ export type Document = {
   layers: Layer[];
   stageId: StageId;
   stageBg: string;
+  fps: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -72,7 +73,6 @@ export function nid(): string {
 }
 
 export const SAVE_KEY = "manakin-v2";
-export const FPS = 12;
 export const UNDO_LIMIT = 50;
 
 export const STAGES: { id: StageId; label: string; w: number; h: number }[] = [
@@ -168,7 +168,7 @@ export function clampAxis(pan: number, base: number, size: number, view: number)
 }
 
 // ---------------------------------------------------------------------------
-// Timeline — positions are in frames at FPS; a frame covers `hold` frames.
+// Timeline — positions are in frames at the document's fps; a frame covers `hold` frames.
 // ---------------------------------------------------------------------------
 
 export function frameTotalHold(layer: Layer): number {
@@ -444,7 +444,7 @@ export function parseSave(raw: unknown): Document | null {
   if (layers.length === 0) return null;
   const stageId = raw.stageId === "square" || raw.stageId === "portrait" ? raw.stageId : "wide";
   const stageBg = typeof raw.stageBg === "string" && normHex(raw.stageBg) ? (raw.stageBg as string) : "#ffffff";
-  return { layers, stageId, stageBg };
+  return { layers, stageId, stageBg, fps: clampNum(raw.fps, 1, 60, 12) };
 }
 
 // ---------------------------------------------------------------------------
@@ -468,6 +468,7 @@ export function sampleDocument(): Document {
   return {
     stageId: "wide",
     stageBg: "#ffffff",
+    fps: 12,
     // Layers[0] is the top layer: the ball draws above the background.
     layers: [
       {

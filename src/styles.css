@@ -506,6 +506,14 @@ button:focus-visible, input:focus-visible {
    #time-state and the angle/zoom readouts — 13px ink, tabular
    numerals, bare text with no container and no chip. */
 #clock { font-size: 13px; font-weight: 400; color: var(--ink); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; white-space: nowrap; margin-left: 4px; }
+/* The frame rate is a draggable value inside the clock readout — 13px
+   ink like the clock, with an ew-resize cursor and a quiet hover wash
+   so it reads as interactive without becoming a chip. Drag
+   horizontally (1 fps per 2px); arrow keys adjust by 1 (Shift: 10).
+   The padding is cancelled by the negative margin, so the text sits
+   exactly where the plain-text readout sat. */
+#fps-value { cursor: ew-resize; padding: 2px 4px; margin: 0 -4px; border-radius: 6px; }
+#fps-value:hover { background: var(--fill-2); }
 #player-right { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
 .zctl {
   border: none; background: transparent; border-radius: 9px;

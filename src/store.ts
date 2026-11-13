@@ -58,6 +58,11 @@ export type Store = {
   stop(): void;
   back(): void;
   forward(): void;
+  seek(pos: number): void;
+  setFps(n: number): void;
+  beginFpsDrag(): void;
+  previewFps(value: number): void;
+  endFps(): void;
   setName(n: string): void;
   canUndo(): boolean;
   canRedo(): boolean;
@@ -83,6 +88,7 @@ export type Store = {
   endLayerOpacity(): void;
   addFrame(layerId: string): void;
   splitFrame(layerId: string, index: number, atTick: number): void;
+  duplicateFrame(layerId: string, index: number): void;
   deleteFrame(layerId: string, index: number): void;
   beginHoldDrag(layerId: string, index: number): void;
   previewHold(hold: number): void;
@@ -123,6 +129,10 @@ export function createStore(): Store {
   // A hold drag in progress: the frame being dragged and its hold at
   // drag start, so the drag commits as one undo step.
   let holdDragState: { layerId: string; index: number; startHold: number } | null = null;
+  // An fps drag in progress: the same one-undo-step pattern as an
+  // opacity drag — snapshot on drag start, live previews without
+  // further snapshots, snapshot dropped if the drag ends unchanged.
+  let fpsDragState: { startFps: number } | null = null;
   // An opacity drag in progress: the same one-undo-step pattern as a
   // hold drag — snapshot on drag start, live previews without further
   // snapshots, snapshot dropped if the drag ends unchanged.
@@ -287,6 +297,57 @@ export function createStore(): Store {
       const layer = store.doc.layers.find((l) => l.id === store.currentLayerId) ?? store.doc.layers[0];
       store.currentByLayer.set(layer.id, frameAt(layer, next).index);
       store.emit();
+    },
+
+    // Scrubbing the ruler: the playhead goes to the exact tick, the
+    // current layer's selected frame becomes the frame containing
+    // that tick, and playback pauses so it does not fight the
+    // pointer. The stage shows the scrubbed frame through
+    // displayPos (the selected frame, while paused).
+    seek(pos: number): void {
+      store.playing = false;
+      store.pos = Math.min(timelineLength(store.doc) - 1, Math.max(0, Math.round(pos)));
+      const layer = store.doc.layers.find((l) => l.id === store.currentLayerId) ?? store.doc.layers[0];
+      store.currentByLayer.set(layer.id, frameAt(layer, store.pos).index);
+      store.clearSelection();
+      store.emit();
+    },
+
+    // The frame rate lives in the document (per-document, 1–60,
+    // default 12), so it persists in the save and is undoable via
+    // the doc snapshot — same as any other doc mutation.
+    setFps(n: number): void {
+      const v = Math.min(60, Math.max(1, Math.round(n)));
+      if (v === store.doc.fps) return;
+      store.pushUndo();
+      store.doc.fps = v;
+      store.save();
+      store.emit();
+    },
+
+    beginFpsDrag(): void {
+      if (fpsDragState) return;
+      store.pushUndo();
+      fpsDragState = { startFps: store.doc.fps ?? 12 };
+    },
+
+    previewFps(value: number): void {
+      const drag = fpsDragState;
+      if (!drag) return;
+      const v = Math.min(60, Math.max(1, Math.round(value)));
+      if (v === store.doc.fps) return;
+      store.doc.fps = v;
+      store.save();
+      store.emit();
+    },
+
+    endFps(): void {
+      const drag = fpsDragState;
+      if (!drag) return;
+      const changed = store.doc.fps !== drag.startFps;
+      if (!changed) store.popUndo();
+      fpsDragState = null;
+      if (changed) store.emit();
     },
 
     setName(n: string): void {
@@ -570,6 +631,25 @@ export function createStore(): Store {
       frame.hold = at;
       const split: Frame = { id: nid(), items: [], hold: hold - at };
       layer.frames.splice(index + 1, 0, split);
+      store.setCurrentFrame(layerId, index + 1);
+      store.save();
+    },
+
+    // Duplicating a frame copies it right after the original — same
+    // items (deep-copied with fresh ids, so editing the copy never
+    // touches the original) and the same hold. The copy becomes the
+    // selected frame, so the user can see it right away; the total
+    // grows by the duplicated frame's hold. One undo step.
+    duplicateFrame(layerId: string, index: number): void {
+      const layer = store.doc.layers.find((l) => l.id === layerId);
+      if (!layer) return;
+      const frame = layer.frames[index];
+      if (!frame) return;
+      store.pushUndo();
+      const copy: Frame = structuredClone(frame);
+      copy.id = nid();
+      for (const it of copy.items) it.id = nid();
+      layer.frames.splice(index + 1, 0, copy);
       store.setCurrentFrame(layerId, index + 1);
       store.save();
     },
