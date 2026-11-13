@@ -166,8 +166,14 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
       oValue.textContent = `${layer.opacity ?? 100}%`;
       oValue.title = "Opacity — drag to change";
       oValue.addEventListener("pointerdown", (e) => {
+        // Read the opacity from the store, not the closure: undo
+        // replaces store.doc with a clone, and opacity is not in
+        // the structural signature, so no rebuild refreshes this
+        // closure — the closed-over layer would be stale after an
+        // undo of an opacity change.
+        const layerNow = store.doc.layers.find((l) => l.id === layer.id);
         const startX = e.clientX;
-        const startOpacity = layer.opacity ?? 100;
+        const startOpacity = layerNow?.opacity ?? 100;
         store.beginLayerOpacity(layer.id);
         const move = (ev: PointerEvent) => {
           store.previewLayerOpacity(startOpacity + Math.round((ev.clientX - startX) / 2));
@@ -191,7 +197,10 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
         e.preventDefault();
         e.stopPropagation();
         store.beginLayerOpacity(layer.id);
-        store.previewLayerOpacity((layer.opacity ?? 100) + delta);
+        // Same staleness as the drag above: read the current
+        // opacity from the store, not the closure.
+        const layerNow = store.doc.layers.find((l) => l.id === layer.id);
+        store.previewLayerOpacity((layerNow?.opacity ?? 100) + delta);
         store.endLayerOpacity();
       });
       controls.insertBefore(oValue, up);
@@ -296,7 +305,10 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
           handle.setPointerCapture(e.pointerId);
           handle.classList.add("dragging");
           const startX = e.clientX;
-          const startHold = frame.hold;
+          // Same staleness rule as the opacity drag: read the hold
+          // from the store, not the closure.
+          const frameNow = store.doc.layers.find((l) => l.id === layer.id)?.frames[index];
+          const startHold = frameNow?.hold ?? frame.hold;
           let curHold = startHold;
           holdDrag = { frameId: frame.id };
           store.beginHoldDrag(layer.id, index);
