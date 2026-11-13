@@ -32,21 +32,27 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
   // left edge.
   const PITCH = 72;
   const gapWidth = (hold: number): number => (hold > 1 ? (hold - 1) * PITCH + 6 : 6);
+  // Lock/unlock glyphs (Lucide, 16px, stroke 1.8, ink — the same
+  // icon-button treatment as the move chevrons).
+  const LOCK_SVG = `<svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>`;
+  const UNLOCK_SVG = `<svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/></svg>`;
   const thumbSigs = new Map<string, string>();
 
   function structuralSig(): string {
     return store.doc.layers
-      .map((l) => `${l.id}:${l.name}:${l.visible ? 1 : 0}:${l.frames.map((f) => `${f.id}x${f.hold}`).join(",")}`)
+      .map((l) => `${l.id}:${l.name}:${l.visible ? 1 : 0}:${l.locked ? 1 : 0}:${l.frames.map((f) => `${f.id}x${f.hold}`).join(",")}`)
       .join("|");
   }
 
   // The thumbnail signature is the frame's full content — every item's
-  // geometry, colour and size — plus the layer's visibility. The old
-  // signature only listed item ids and types, so moving a stroke,
-  // resizing a shape, editing text, or undoing a change left the
-  // thumbnail stale: the signature never changed, so it never redrew.
-  function thumbSig(frame: Frame, visible: boolean): string {
-    return `${visible ? 1 : 0}:${JSON.stringify(frame.items)}`;
+  // geometry, colour and size — plus the layer's visibility and
+  // opacity. The old signature only listed item ids and types, so
+  // moving a stroke, resizing a shape, editing text, or undoing a
+  // change left the thumbnail stale: the signature never changed, so
+  // it never redrew. Opacity is in the signature so a slider drag
+  // redraws the thumbnail at the new opacity.
+  function thumbSig(frame: Frame, visible: boolean, opacity: number): string {
+    return `${visible ? 1 : 0}:${opacity}:${JSON.stringify(frame.items)}`;
   }
 
   function rebuild(): void {
@@ -54,10 +60,18 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
     framesRows.innerHTML = "";
     thumbSigs.clear();
     for (const layer of store.doc.layers) {
-      // ---- Layer row: an old .blayer card. ----
+      // ---- Layer row: an old .blayer card, two lines. ----
+      // The head holds the visibility toggle, the name, and the
+      // delete ×; the controls line holds the lock and the move
+      // chevrons; the selected card grows a third line, the opacity
+      // slider. At 250px a single-line row left only ~58px for the
+      // name — "Background" needs ~74px — so the controls moved to
+      // their own line and the name keeps the full head width.
       const row = document.createElement("div");
-      row.className = "layer-row" + (layer.visible ? "" : " hidden");
+      row.className = "layer-row" + (layer.visible ? "" : " hidden") + (layer.locked ? " locked" : "");
       row.dataset.layerId = layer.id;
+      const head = document.createElement("div");
+      head.className = "layer-head";
       // Visibility is the old pill toggle, not an eye icon.
       const eye = document.createElement("button");
       eye.className = "layer-toggle" + (layer.visible ? " on" : "");
@@ -68,7 +82,7 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
         e.stopPropagation();
         store.toggleLayerVisible(layer.id);
       });
-      row.appendChild(eye);
+      head.appendChild(eye);
       const name = document.createElement("span");
       name.className = "layer-name";
       name.textContent = layer.name;
@@ -94,7 +108,30 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
           e.stopPropagation();
         });
       });
-      row.appendChild(name);
+      head.appendChild(name);
+      const del = document.createElement("button");
+      del.className = "layer-remove";
+      del.innerHTML = `<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>`;
+      del.title = "Delete layer";
+      del.addEventListener("click", (e) => {
+        e.stopPropagation();
+        store.deleteLayer(layer.id);
+      });
+      head.appendChild(del);
+      row.appendChild(head);
+      // Controls line: lock + move up/down.
+      const controls = document.createElement("div");
+      controls.className = "layer-controls";
+      const lockBtn = document.createElement("button");
+      lockBtn.className = "layer-lock";
+      lockBtn.innerHTML = layer.locked ? LOCK_SVG : UNLOCK_SVG;
+      lockBtn.title = layer.locked ? "Unlock layer" : "Lock layer";
+      lockBtn.setAttribute("aria-label", layer.locked ? `Unlock layer ${layer.name}` : `Lock layer ${layer.name}`);
+      lockBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        store.toggleLayerLocked(layer.id);
+      });
+      controls.appendChild(lockBtn);
       const up = document.createElement("button");
       up.className = "layer-chev";
       up.innerHTML = `<svg viewBox="0 0 24 24"><path d="M6 14l6-6 6 6"/></svg>`;
@@ -111,17 +148,36 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
         e.stopPropagation();
         store.moveLayer(layer.id, 1);
       });
-      const del = document.createElement("button");
-      del.className = "layer-remove";
-      del.innerHTML = `<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>`;
-      del.title = "Delete layer";
-      del.addEventListener("click", (e) => {
-        e.stopPropagation();
-        store.deleteLayer(layer.id);
-      });
-      row.appendChild(up);
-      row.appendChild(down);
-      row.appendChild(del);
+      controls.appendChild(up);
+      controls.appendChild(down);
+      row.appendChild(controls);
+      // Opacity slider, in the old slider style. It is rendered in
+      // every card but shown only on the selected card (CSS) — the
+      // other rows stay compact. A drag commits as one undo step,
+      // the same pattern as a hold drag.
+      const opacityRow = document.createElement("div");
+      opacityRow.className = "layer-opacity";
+      const oLabel = document.createElement("span");
+      oLabel.className = "dctl-label";
+      oLabel.textContent = "Opacity";
+      opacityRow.appendChild(oLabel);
+      const slider = document.createElement("input");
+      slider.className = "pslider";
+      slider.type = "range";
+      slider.min = "0"; slider.max = "100"; slider.step = "1";
+      slider.value = String(layer.opacity ?? 100);
+      slider.setAttribute("aria-label", `Opacity of layer ${layer.name}`);
+      slider.addEventListener("pointerdown", () => store.beginLayerOpacity(layer.id));
+      slider.addEventListener("focus", () => store.beginLayerOpacity(layer.id));
+      slider.addEventListener("input", () => store.previewLayerOpacity(Number(slider.value)));
+      slider.addEventListener("change", () => store.endLayerOpacity());
+      slider.addEventListener("pointerup", () => store.endLayerOpacity());
+      opacityRow.appendChild(slider);
+      const oValue = document.createElement("span");
+      oValue.className = "pslider-value";
+      oValue.textContent = `${layer.opacity ?? 100}%`;
+      opacityRow.appendChild(oValue);
+      row.appendChild(opacityRow);
       row.addEventListener("click", () => store.setCurrentLayer(layer.id));
       layerList.appendChild(row);
 
@@ -298,7 +354,24 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
         el.dataset.layerId === store.currentLayerId,
       );
       const layer = store.doc.layers.find((l) => l.id === el.dataset.layerId);
-      if (layer) el.classList.toggle("hidden", !layer.visible);
+      if (layer) {
+        el.classList.toggle("hidden", !layer.visible);
+        el.classList.toggle("locked", layer.locked);
+        // The opacity slider lives on the card; keep its position and
+        // label in step with the store (a drag previews through here).
+        const slider = el.querySelector<HTMLInputElement>(".pslider");
+        const value = el.querySelector<HTMLElement>(".pslider-value");
+        if (slider) slider.value = String(layer.opacity ?? 100);
+        if (value) value.textContent = `${layer.opacity ?? 100}%`;
+      }
+      // A frame row matches its layer card's height, so the rows stay
+      // aligned when the selected card grows to show its opacity
+      // slider. Guarded to write only when changed.
+      const frow = framesRows.querySelector(`.frame-row[data-layer-id="${el.dataset.layerId}"]`) as HTMLElement | null;
+      if (frow) {
+        const h = `${Math.round(el.getBoundingClientRect().height)}px`;
+        if (frow.style.height !== h) frow.style.height = h;
+      }
     }
     // The highlighted cell follows the playhead while playing — each
     // layer's frame at the playing position — and returns to the
@@ -315,13 +388,13 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
     // Thumbnails, redrawn when a frame's content changes.
     for (const layer of store.doc.layers) {
       for (const frame of layer.frames) {
-        const sig = thumbSig(frame, layer.visible);
+        const sig = thumbSig(frame, layer.visible, layer.opacity ?? 100);
         if (thumbSigs.get(frame.id) === sig) continue;
         thumbSigs.set(frame.id, sig);
         const cell = framesRows.querySelector(`.frame-cell[data-frame-id="${frame.id}"] canvas`) as HTMLCanvasElement | null;
         if (cell) {
           const stage = STAGES.find((s) => s.id === store.doc.stageId) ?? STAGES[0];
-          renderThumbnail(cell, frame, { w: stage.w, h: stage.h });
+          renderThumbnail(cell, frame, { w: stage.w, h: stage.h }, (layer.opacity ?? 100) / 100);
         }
       }
     }
