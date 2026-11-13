@@ -41,6 +41,12 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
   // set, sync updates the gap in place instead of rebuilding — a
   // rebuild would destroy the handle mid-drag (pointer capture lost).
   let holdDrag: { frameId: string } | null = null;
+  // Swallow the click that follows a reorder drop: the drop already
+  // selected the moved frame, and the click would re-select the
+  // frame at its OLD index. Cleared by the click handler, or by a
+  // 0ms timer if the click never fires (a rebuild in between can
+  // disconnect the cell before the click is dispatched).
+  let suppressCellClick = false;
   // The frame pitch: a 96px cell plus the 6px between cells. A hold
   // gap is (hold − 1) pitches plus the 6px inter-cell space, so the
   // line spans exactly from one cell's right edge to the next cell's
@@ -332,7 +338,85 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
           store.duplicateFrame(layer.id, index);
         });
         cell.appendChild(dup);
-        cell.addEventListener("click", () => store.setCurrentFrame(layer.id, index));
+        cell.addEventListener("click", () => {
+          if (suppressCellClick) {
+            suppressCellClick = false;
+            return;
+          }
+          store.setCurrentFrame(layer.id, index);
+        });
+        // Dragging a cell horizontally reorders the frame within its
+        // own layer — its hold moves with it. A plain click still
+        // selects (below); the hold handle still drags the hold
+        // (its own pointerdown stops propagation, so this never
+        // fires from the handle); the delete and duplicate buttons
+        // are excluded by the closest("button") check. A drag starts
+        // only after the pointer moves past a 5px threshold, so a
+        // click is never mistaken for a drag. While dragging, an ink
+        // vertical line marks the insertion point; on drop the frame
+        // moves there in one undo step and the selection follows it.
+        // Same layer only — the drag never leaves its row, so there
+        // is no cross-layer move and no auto-scroll.
+        cell.addEventListener("pointerdown", (e) => {
+          if (e.button !== 0) return;
+          if ((e.target as HTMLElement).closest("button")) return;
+          const startX = e.clientX;
+          const startY = e.clientY;
+          let dragging = false;
+          let insertIndex = index;
+          let indicator: HTMLDivElement | null = null;
+          cell.setPointerCapture(e.pointerId);
+          const cells = (): HTMLElement[] => [...frow.querySelectorAll(".frame-cell")] as HTMLElement[];
+          // The insertion point from the pointer's x: the first cell
+          // whose centre is right of the pointer, or past the last
+          // cell — at the end of its hold gap, just before the +
+          // button. The gap after a held frame is wide, but the
+          // cell-centre rule still lands right: a pointer anywhere
+          // in it is between the two cells' centres.
+          const insertionFromX = (clientX: number): { at: number; x: number } => {
+            const frowRect = frow.getBoundingClientRect();
+            const cs = cells();
+            for (let i = 0; i < cs.length; i++) {
+              const r = cs[i].getBoundingClientRect();
+              if (clientX < r.left + r.width / 2) {
+                return { at: i, x: r.left - frowRect.left };
+              }
+            }
+            const gaps = frow.querySelectorAll(".hold-gap");
+            const lastGap = gaps[gaps.length - 1];
+            const x = lastGap
+              ? lastGap.getBoundingClientRect().right - frowRect.left
+              : (cs[cs.length - 1]?.getBoundingClientRect().right ?? 0) - frowRect.left;
+            return { at: cs.length, x };
+          };
+          const move = (ev: PointerEvent) => {
+            if (!dragging) {
+              if (Math.hypot(ev.clientX - startX, ev.clientY - startY) <= 5) return;
+              dragging = true;
+              indicator = document.createElement("div");
+              indicator.className = "frame-drop-indicator";
+              frow.appendChild(indicator);
+              cell.classList.add("reordering");
+            }
+            const { at, x } = insertionFromX(ev.clientX);
+            insertIndex = at;
+            if (indicator) indicator.style.left = `${Math.round(x - 1)}px`;
+          };
+          const up = () => {
+            window.removeEventListener("pointermove", move);
+            window.removeEventListener("pointerup", up);
+            window.removeEventListener("pointercancel", up);
+            if (!dragging) return;
+            indicator?.remove();
+            cell.classList.remove("reordering");
+            suppressCellClick = true;
+            setTimeout(() => { suppressCellClick = false; }, 0);
+            store.moveFrame(layer.id, index, insertIndex);
+          };
+          window.addEventListener("pointermove", move);
+          window.addEventListener("pointerup", up);
+          window.addEventListener("pointercancel", up);
+        });
         cell.addEventListener("keydown", (e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();

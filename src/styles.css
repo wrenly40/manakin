@@ -375,6 +375,8 @@ button:focus-visible, input:focus-visible {
 .frame-row {
   display: flex; align-items: center; gap: 0; height: 44px;
   padding: 0; margin: 0 0 8px; border-radius: 9px;
+  /* Relative so the reorder drop indicator positions against the row. */
+  position: relative;
 }
 .frame-row .icon-btn { margin-left: 6px; }
 .frame-cell {
@@ -392,11 +394,24 @@ button:focus-visible, input:focus-visible {
      the cell's size. */
   width: 96px; height: 54px;
   display: flex; align-items: center; justify-content: center;
+  /* touch-action: none keeps the browser from claiming a horizontal
+     drag on the cell (scroll, swipe) — the drag is a frame reorder. */
+  touch-action: none;
   /* The cell stacks above the gap that follows it: the hold
      handle's hit area extends a few px over the cell's right edge,
      and the delete × must still win clicks where the two cross. */
   z-index: 1;
 }
+/* The reorder drop indicator: a 2px solid-ink vertical line at the
+   insertion point in the row, shown only while a frame is being
+   dragged to a new position. It spans the row height. */
+.frame-drop-indicator {
+  position: absolute; top: 0; bottom: 0; width: 2px;
+  background: var(--ink); pointer-events: none; z-index: 2;
+}
+/* A frame mid-reorder reads ghosted, so the move is visible even
+   before the drop indicator's position is read. */
+.frame-cell.reordering { opacity: 0.5; }
 /* The gap after a cell: 6px of plain space for a hold-1 frame, or
    (hold − 1) cell-widths holding a thin line for a held frame. The
    line runs from the held cell's right edge to the next cell's left
