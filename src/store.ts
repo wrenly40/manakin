@@ -240,9 +240,15 @@ export function createStore(): Store {
       store.emit();
     },
 
+    // Stop returns to the start: the playhead AND the displayed frame.
+    // displayPos shows the selected frame while paused, so leaving the
+    // selection where it was would show frame 3 while the clock says 1/6.
     stop(): void {
       store.playing = false;
       store.pos = 0;
+      const layer = store.doc.layers.find((l) => l.id === store.currentLayerId) ?? store.doc.layers[0];
+      store.currentByLayer.set(layer.id, 0);
+      store.clearSelection();
       store.emit();
     },
 
