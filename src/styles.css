@@ -467,6 +467,21 @@ button:focus-visible, input:focus-visible {
 .frame-cell:hover .frame-remove, .frame-remove:focus-visible { opacity: 1; }
 .frame-remove:hover { background: rgba(0, 0, 0, 0.05); color: var(--ink); }
 .frame-remove svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+/* Duplicate is the same hover-revealed 20px button as the delete ×,
+   mirrored top-LEFT (the × is top-right) — same size, same grey 14px
+   glyph at stroke 2, hidden until the cell is hovered or the button
+   is keyboard-focused. The two are disjoint by construction, and the
+   hold handle lives outside the cell, so nothing overlaps. */
+.frame-duplicate {
+  position: absolute; top: 2px; left: 2px;
+  width: 20px; height: 20px; border: none; border-radius: 7px;
+  background: transparent; color: var(--grey); padding: 0;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+  opacity: 0;
+}
+.frame-cell:hover .frame-duplicate, .frame-duplicate:focus-visible { opacity: 1; }
+.frame-duplicate:hover { background: rgba(0, 0, 0, 0.05); color: var(--ink); }
+.frame-duplicate svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 /* Player */
 #player-bar {

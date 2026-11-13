@@ -283,6 +283,23 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
           });
           cell.appendChild(del);
         }
+        // Duplicate is the same hover-revealed 20px button as the
+        // delete ×, mirrored top-LEFT (the × is top-right), so the
+        // two are disjoint by construction — 20px buttons at the
+        // cell's two top corners, 54px apart on a 96px cell. The
+        // Lucide copy glyph is two overlapping squares. Unlike
+        // delete, it appears on every cell: duplicating a layer's
+        // only frame is fine.
+        const dup = document.createElement("button");
+        dup.className = "frame-duplicate";
+        dup.innerHTML = `<svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+        dup.title = "Duplicate frame";
+        dup.setAttribute("aria-label", "Duplicate frame");
+        dup.addEventListener("click", (e) => {
+          e.stopPropagation();
+          store.duplicateFrame(layer.id, index);
+        });
+        cell.appendChild(dup);
         cell.addEventListener("click", () => store.setCurrentFrame(layer.id, index));
         cell.addEventListener("keydown", (e) => {
           if (e.key === "Enter" || e.key === " ") {
