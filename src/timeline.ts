@@ -125,6 +125,11 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
         const cell = document.createElement("div");
         cell.className = "frame-cell";
         cell.dataset.frameId = frame.id;
+        // The cell spans its hold: hold N renders N × the 66px base
+        // cell, so a held frame visibly stretches across the strip.
+        // The thumbnail stays 64px at the left; the extra width is
+        // the frame's span, not a stretched image.
+        cell.style.setProperty("--hold", String(frame.hold));
         cell.tabIndex = 0;
         cell.setAttribute("role", "button");
         cell.title = `Frame ${index + 1}${frame.hold > 1 ? `, hold ${frame.hold}` : ""}`;

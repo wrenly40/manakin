@@ -333,6 +333,9 @@ button:focus-visible, input:focus-visible {
   position: relative; padding: 0; border: 1px solid var(--hairline);
   border-radius: 9px; background: #fff; cursor: pointer; flex: none;
   line-height: 0;
+  /* A held frame spans its hold: N × the 66px base cell (64px
+     thumbnail + 2px border, border-box). Hold 1 stays base width. */
+  width: calc(var(--hold, 1) * 66px);
 }
 .frame-cell.active { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
 .frame-cell canvas { display: block; border-radius: 8px; }
