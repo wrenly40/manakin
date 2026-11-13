@@ -157,46 +157,6 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
           });
           cell.appendChild(del);
         }
-        // The hold handle: a small tab in the cell's bottom-right
-        // corner, visible only while the cell is hovered or dragged.
-        // Dragging it sets the hold — the only hold control. It is
-        // its own pointer interaction and never selects the cell.
-        const handle = document.createElement("div");
-        handle.className = "frame-handle";
-        handle.title = "Drag to change hold";
-        handle.innerHTML = `<span></span><span></span>`;
-        handle.addEventListener("pointerdown", (e) => {
-          e.stopPropagation();
-          e.preventDefault();
-          handle.setPointerCapture(e.pointerId);
-          cell.classList.add("dragging");
-          const startX = e.clientX;
-          const startHold = frame.hold;
-          let curHold = startHold;
-          holdDrag = { frameId: frame.id };
-          store.beginHoldDrag(layer.id, index);
-          const move = (ev: PointerEvent) => {
-            const delta = Math.round((ev.clientX - startX) / PITCH);
-            const next = Math.min(24, Math.max(1, startHold + delta));
-            if (next !== curHold) {
-              curHold = next;
-              store.previewHold(next);
-            }
-          };
-          const up = () => {
-            window.removeEventListener("pointermove", move);
-            window.removeEventListener("pointerup", up);
-            window.removeEventListener("pointercancel", up);
-            holdDrag = null;
-            cell.classList.remove("dragging");
-            store.endHoldDrag();
-          };
-          window.addEventListener("pointermove", move);
-          window.addEventListener("pointerup", up);
-          window.addEventListener("pointercancel", up);
-        });
-        handle.addEventListener("click", (e) => e.stopPropagation());
-        cell.appendChild(handle);
         cell.addEventListener("click", () => store.setCurrentFrame(layer.id, index));
         cell.addEventListener("keydown", (e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -220,6 +180,51 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
           line.className = "hold-line";
           gap.appendChild(line);
         }
+        // The hold handle: a knot on the hold line, OUTSIDE the cell.
+        // It sits at the gap's right end — the hold's endpoint —
+        // centred on the line, its visible box entirely outside the
+        // cell's border, so the cell interior is back to just the
+        // thumbnail and the hover-revealed ×. For a hold-1 frame the
+        // gap is only 6px, so the knot is 6px wide and fills the gap
+        // exactly. Visible only while its cell (or the gap) is
+        // hovered, or while dragging — nothing shows at rest.
+        // Dragging it sets the hold — the only hold control. It is
+        // its own pointer interaction and never selects the cell.
+        const handle = document.createElement("div");
+        handle.className = "frame-handle";
+        handle.title = "Drag to change hold";
+        handle.addEventListener("pointerdown", (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          handle.setPointerCapture(e.pointerId);
+          handle.classList.add("dragging");
+          const startX = e.clientX;
+          const startHold = frame.hold;
+          let curHold = startHold;
+          holdDrag = { frameId: frame.id };
+          store.beginHoldDrag(layer.id, index);
+          const move = (ev: PointerEvent) => {
+            const delta = Math.round((ev.clientX - startX) / PITCH);
+            const next = Math.min(24, Math.max(1, startHold + delta));
+            if (next !== curHold) {
+              curHold = next;
+              store.previewHold(next);
+            }
+          };
+          const up = () => {
+            window.removeEventListener("pointermove", move);
+            window.removeEventListener("pointerup", up);
+            window.removeEventListener("pointercancel", up);
+            holdDrag = null;
+            handle.classList.remove("dragging");
+            store.endHoldDrag();
+          };
+          window.addEventListener("pointermove", move);
+          window.addEventListener("pointerup", up);
+          window.addEventListener("pointercancel", up);
+        });
+        handle.addEventListener("click", (e) => e.stopPropagation());
+        gap.appendChild(handle);
         frow.appendChild(gap);
       });
       const add = document.createElement("button");

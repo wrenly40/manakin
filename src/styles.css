@@ -328,6 +328,10 @@ button:focus-visible, input:focus-visible {
      border). The hold is shown by the line in the gap after the
      cell, not by the cell's width. */
   width: 66px;
+  /* The cell stacks above the gap that follows it: the hold
+     handle's hit area extends a few px over the cell's right edge,
+     and the delete × must still win clicks where the two cross. */
+  z-index: 1;
 }
 /* The gap after a cell: 6px of plain space for a hold-1 frame, or
    (hold − 1) cell-widths holding a thin line for a held frame. The
@@ -343,35 +347,44 @@ button:focus-visible, input:focus-visible {
   height: 1px; transform: translateY(-50%);
   background: var(--separator);
 }
-/* The hold handle: a small rounded tab in the cell's bottom-right
-   corner, visible only while the cell is hovered (or being dragged) —
-   nothing shows on a cell at rest. It never overlaps the delete ×:
-   the × is 22px at the top-right, the tab is 12px at the bottom-right,
-   with 2px between them. Dragging it sets the hold — the only hold
-   control. It is its own pointer interaction and never selects the
-   cell. */
+/* The hold handle: a knot on the hold line, OUTSIDE the cell — at
+   the gap's right end (the hold's endpoint), centred on the line,
+   its visible box entirely outside the cell's border. The cell
+   interior is back to just the thumbnail and the hover-revealed ×.
+   Visible only while its cell (or the gap) is hovered, or while
+   dragging — nothing shows on a cell at rest. The knot copies
+   Bowerbird's resize handle exactly: white, 1px solid #8e8e93,
+   3px radius, 0 1px 3px rgba(0,0,0,0.2) shadow — adapted from a
+   14px square to a 6px-wide vertical knot so it fits the 6px gap
+   of a hold-1 frame, where it fills the gap exactly. The hit area
+   is 14px wide for grabbability and may extend over the cell's
+   edge; the cell stacks above the gap, so the delete × still wins
+   clicks where the two cross. Dragging it sets the hold — the only
+   hold control. It is its own pointer interaction and never selects
+   the cell. */
 .frame-handle {
-  position: absolute; right: 0; bottom: 0;
-  width: 12px; height: 12px; z-index: 3; cursor: ew-resize;
-  display: flex; align-items: center; justify-content: center; gap: 2px;
-  border-radius: 6px 0 8px 0;
-  background: rgba(120, 120, 128, 0.12);
+  position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+  width: 14px; height: 24px; cursor: ew-resize;
   opacity: 0; transition: opacity 0.15s;
 }
-.frame-cell:hover .frame-handle, .frame-cell.dragging .frame-handle { opacity: 1; }
-.frame-handle span {
-  width: 2px; height: 8px; border-radius: 1px;
-  background: rgba(29, 29, 31, 0.45);
+.frame-handle::before {
+  content: ""; position: absolute; right: 0; top: 50%; transform: translateY(-50%);
+  width: 6px; height: 16px;
+  background: #fff; border: 1px solid #8e8e93; border-radius: 3px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
-.frame-handle:hover { background: rgba(120, 120, 128, 0.2); }
-.frame-handle:hover span { background: rgba(29, 29, 31, 0.65); }
+.frame-handle:hover::before { box-shadow: 0 1px 4px rgba(0, 0, 0, 0.28); }
+.frame-cell:hover + .hold-gap .frame-handle,
+.hold-gap:hover .frame-handle,
+.frame-handle.dragging { opacity: 1; }
 .frame-cell.active { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
 .frame-cell canvas { display: block; border-radius: 8px; }
 /* Delete is the layer row's hover-revealed ×, same size and treatment
    (20px, grey 14px glyph at stroke 2, hidden until the cell is
    hovered or the button is keyboard-focused) — top-right of the cell.
-   20px, not 22px: the handle tab sits at the bottom-right with its
-   top edge 2px below the ×, so the two boxes never touch. */
+   The hold handle now lives outside the cell, so the two can never
+   overlap; the cell also stacks above the gap, so the × wins clicks
+   where the handle's hit area crosses it. */
 .frame-remove {
   position: absolute; top: 2px; right: 2px;
   width: 20px; height: 20px; border: none; border-radius: 7px;
