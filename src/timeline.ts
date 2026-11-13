@@ -1,6 +1,7 @@
 // Timeline: the layers list and the frame cells. Layers[0] is the top
 // layer. A cell is a thumbnail of its frame; clicking a cell edits it.
 import { STAGES, frameAt } from "./model";
+import type { Frame } from "./model";
 import { renderThumbnail } from "./render";
 import type { Store } from "./store";
 
@@ -49,12 +50,13 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
       .join("|");
   }
 
-  function thumbSig(frameId: string): string {
-    for (const layer of store.doc.layers) {
-      const f = layer.frames.find((fr) => fr.id === frameId);
-      if (f) return f.items.map((it) => `${it.id}:${it.type}`).join(",");
-    }
-    return "";
+  // The thumbnail signature is the frame's full content — every item's
+  // geometry, colour and size — plus the layer's visibility. The old
+  // signature only listed item ids and types, so moving a stroke,
+  // resizing a shape, editing text, or undoing a change left the
+  // thumbnail stale: the signature never changed, so it never redrew.
+  function thumbSig(frame: Frame, visible: boolean): string {
+    return `${visible ? 1 : 0}:${JSON.stringify(frame.items)}`;
   }
 
   function rebuild(): void {
@@ -215,10 +217,10 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
       el.classList.toggle("active", el.dataset.frameId === activeId);
     }
     holdValue.textContent = String(curLayer.frames[curIndex].hold);
-    // Thumbnails, redrawn when a frame's items change.
+    // Thumbnails, redrawn when a frame's content changes.
     for (const layer of store.doc.layers) {
       for (const frame of layer.frames) {
-        const sig = thumbSig(frame.id);
+        const sig = thumbSig(frame, layer.visible);
         if (thumbSigs.get(frame.id) === sig) continue;
         thumbSigs.set(frame.id, sig);
         const cell = framesRows.querySelector(`.frame-cell[data-frame-id="${frame.id}"] canvas`) as HTMLCanvasElement | null;
