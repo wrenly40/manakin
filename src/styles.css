@@ -360,14 +360,15 @@ button:focus-visible, input:focus-visible {
   position: relative; padding: 0; border: 1px solid var(--hairline);
   border-radius: 9px; background: #fff; cursor: pointer; flex: none;
   line-height: 0;
-  /* Every cell is 66px wide (64px thumbnail + 2px border) and as
-     tall as its layer's card: it stretches to fill the row, whose
-     height sync() sets from the card height, so the two stay linked
-     with no second hard-coded number. The hold is shown by the line
-     in the gap after the cell, not by the cell's size. The 64×36
-     thumbnail keeps its 16:9 aspect and is centred in the taller
-     cell — no distortion, no stretching. */
-  width: 66px; align-self: stretch;
+  /* Every cell is 128px wide (124px thumbnail + 2px border, 1px inset
+     each side) and as tall as its layer's card: it stretches to fill
+     the row, whose height sync() sets from the card height, so the
+     two stay linked with no second hard-coded number. The cell keeps
+     the canvas's 16:9 aspect ratio (128×72), and the 124×70
+     thumbnail fills it at the same ratio — no letterbox space, no
+     distortion. The hold is shown by the line in the gap after the
+     cell, not by the cell's size. */
+  width: 128px; align-self: stretch;
   display: flex; align-items: center; justify-content: center;
   /* The cell stacks above the gap that follows it: the hold
      handle's hit area extends a few px over the cell's right edge,
@@ -405,7 +406,7 @@ button:focus-visible, input:focus-visible {
    browser clamps the 9px radius to the bar's 4px width, so the right
    side is as round as the bar allows — the width and the 6px gap stay
    as they are, because growing the gap to fit a wider bar would
-   re-space the whole timeline (the 72px pitch) for a radius the eye
+   re-space the whole timeline (the 134px pitch) for a radius the eye
    cannot distinguish at this size. Visible only while its cell (or
    the gap) is hovered, or while dragging — nothing shows on a cell at
    rest. The hit area is 14px wide for grabbability and may extend over
