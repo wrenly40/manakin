@@ -156,6 +156,37 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
           });
           cell.appendChild(del);
         }
+        // Hold editing lives on the selected cell: a compact .seg
+        // stepper overlaying the thumbnail, shown only while this
+        // cell is the selected frame. The cell is 66px wide, so a
+        // − value + stepper and the 24px delete × cannot both be
+        // clickable there — on the selected cell the stepper takes
+        // the cell (badge and × hidden; the stepper's value states
+        // the hold), and the × stays on every other cell. To delete
+        // the selected frame, select another frame first.
+        const holdCtl = document.createElement("span");
+        holdCtl.className = "cell-hold seg";
+        const minus = document.createElement("button");
+        minus.textContent = "−";
+        minus.title = "Shorter hold";
+        minus.setAttribute("aria-label", "Shorter hold");
+        minus.addEventListener("click", (e) => {
+          e.stopPropagation();
+          store.setHold(layer.id, index, frame.hold - 1);
+        });
+        const val = document.createElement("span");
+        val.className = "cell-hold-value";
+        val.textContent = String(frame.hold);
+        const plus = document.createElement("button");
+        plus.textContent = "+";
+        plus.title = "Longer hold";
+        plus.setAttribute("aria-label", "Longer hold");
+        plus.addEventListener("click", (e) => {
+          e.stopPropagation();
+          store.setHold(layer.id, index, frame.hold + 1);
+        });
+        holdCtl.append(minus, val, plus);
+        cell.appendChild(holdCtl);
         cell.addEventListener("click", () => store.setCurrentFrame(layer.id, index));
         cell.addEventListener("keydown", (e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -200,6 +231,12 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
         ? frameAt(layer, store.pos).frame.id
         : curLayer.frames[curIndex].id;
       el.classList.toggle("active", el.dataset.frameId === activeId);
+      // The stepper shows on the selected frame's cell only — the
+      // frame being edited, whether or not it is the one playing.
+      el.classList.toggle("selected", el.dataset.frameId === curLayer.frames[curIndex].id);
+      const hv = el.querySelector(".cell-hold-value") as HTMLElement | null;
+      const f = layer?.frames.find((fr) => fr.id === el.dataset.frameId);
+      if (hv && f) hv.textContent = String(f.hold);
     }
     // Thumbnails, redrawn when a frame's content changes.
     for (const layer of store.doc.layers) {

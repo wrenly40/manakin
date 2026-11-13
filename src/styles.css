@@ -357,6 +357,25 @@ button:focus-visible, input:focus-visible {
   position: absolute; right: 3px; bottom: 2px; font-size: 11px; font-weight: 500;
   line-height: 1; background: transparent; color: var(--ink); padding: 0;
 }
+/* Hold editing lives on the selected cell: a compact .seg stepper
+   overlaying the thumbnail, centred, shown only on the selected
+   frame's cell. Compact buttons (24px, tight padding) so it fits a
+   66px hold-1 cell. On the selected cell the stepper is the hold
+   display, so the ×N badge hides; the delete × hides too — a
+   − value + stepper and a 24px × cannot both be clickable in 66px.
+   The × stays on every other cell. */
+.cell-hold {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  display: none; z-index: 2; line-height: 1;
+}
+.frame-cell.selected .cell-hold { display: flex; }
+.frame-cell.selected .hold-badge { display: none; }
+.frame-cell.selected .frame-remove { display: none; }
+.cell-hold button { height: 24px; padding: 0 6px; }
+.cell-hold-value {
+  font-size: 13px; font-weight: 500; min-width: 16px; text-align: center;
+  align-self: center; line-height: 1;
+}
 
 /* Player */
 #player-bar {
