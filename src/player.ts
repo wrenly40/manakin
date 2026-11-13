@@ -13,10 +13,7 @@ export function createPlayer(barEl: HTMLElement, store: Store): void {
         <button id="stop-btn" class="pctl solid" title="Stop" aria-label="Stop"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
         <button id="forward-btn" class="pctl solid" title="Forward" aria-label="Forward to end"><svg viewBox="0 0 24 24"><path d="M15.5 5h2.5v14h-2.5z"/><path d="M4 5v14l9.5-7z"/></svg></button>
       </div>
-      <div id="scrub-row">
-        <div id="scrub-track"><div id="scrub-fill"></div></div>
-        <span id="clock">1/1 · 0.0s</span>
-      </div>
+      <span id="clock">1/1 · 0.0s</span>
     </div>
     <div id="player-right">
       <button id="zoom-out" class="zctl" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
@@ -28,8 +25,6 @@ export function createPlayer(barEl: HTMLElement, store: Store): void {
   const backBtn = barEl.querySelector("#back-btn") as HTMLButtonElement;
   const stopBtn = barEl.querySelector("#stop-btn") as HTMLButtonElement;
   const forwardBtn = barEl.querySelector("#forward-btn") as HTMLButtonElement;
-  const scrubTrack = barEl.querySelector("#scrub-track") as HTMLDivElement;
-  const scrubFill = barEl.querySelector("#scrub-fill") as HTMLDivElement;
   const clockEl = barEl.querySelector("#clock") as HTMLSpanElement;
   const angleEl = barEl.querySelector("#angle-readout") as HTMLSpanElement;
   const zoomOut = barEl.querySelector("#zoom-out") as HTMLButtonElement;
@@ -49,26 +44,6 @@ export function createPlayer(barEl: HTMLElement, store: Store): void {
     const at = i < 0 ? ZOOM_STOPS.indexOf(1) : i;
     store.setView({ zoom: ZOOM_STOPS[Math.min(ZOOM_STOPS.length - 1, Math.max(0, at + dir))] });
   }
-
-  // Scrubbing: click or drag on the track seeks by frame.
-  let scrubbing = false;
-  const seekFromEvent = (e: PointerEvent): void => {
-    const rect = scrubTrack.getBoundingClientRect();
-    const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-    store.setPlaying(false);
-    store.setPos(Math.round(frac * (timelineLength(store.doc) - 1)));
-  };
-  scrubTrack.addEventListener("pointerdown", (e) => {
-    scrubbing = true;
-    scrubTrack.setPointerCapture(e.pointerId);
-    seekFromEvent(e);
-  });
-  scrubTrack.addEventListener("pointermove", (e) => {
-    if (scrubbing) seekFromEvent(e);
-  });
-  scrubTrack.addEventListener("pointerup", () => {
-    scrubbing = false;
-  });
 
   // Playback: an accumulator advances the playhead at FPS; the end stops.
   let lastTs = 0;
@@ -106,7 +81,6 @@ export function createPlayer(barEl: HTMLElement, store: Store): void {
     playBtn.innerHTML = store.playing
       ? `<svg viewBox="0 0 12 12"><rect x="2" y="1.5" width="3" height="9" rx="0.5"/><rect x="7" y="1.5" width="3" height="9" rx="0.5"/></svg>`
       : `<svg viewBox="0 0 12 12"><path d="M3 1.5 10 6l-7 4.5z"/></svg>`;
-    scrubFill.style.width = `${len <= 1 ? 0 : (pos / (len - 1)) * 100}%`;
     clockEl.textContent = `${pos + 1}/${len} · ${(pos / FPS).toFixed(1)}s`;
     angleEl.textContent = store.view.rotateDeg !== 0 ? `${Math.round(store.view.rotateDeg)}°` : "";
     zoomLabel.textContent = `${Math.round(store.view.zoom * 100)}%`;
