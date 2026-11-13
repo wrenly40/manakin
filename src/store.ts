@@ -77,6 +77,7 @@ export type Store = {
   moveLayer(id: string, dir: -1 | 1): void;
   toggleLayerVisible(id: string): void;
   addFrame(layerId: string): void;
+  deleteFrame(layerId: string, index: number): void;
   setHold(layerId: string, index: number, hold: number): void;
   save(): void;
 };
@@ -468,6 +469,25 @@ export function createStore(): Store {
       layer.frames.push(copy);
       store.setCurrentFrame(layerId, layer.frames.length - 1);
       store.save();
+    },
+
+    // A layer keeps at least one frame — deleting the only frame is a no-op.
+    deleteFrame(layerId: string, index: number): void {
+      const layer = store.doc.layers.find((l) => l.id === layerId);
+      if (!layer || layer.frames.length <= 1) return;
+      const clamped = Math.min(layer.frames.length - 1, Math.max(0, index));
+      store.pushUndo();
+      layer.frames.splice(clamped, 1);
+      const cur = store.currentByLayer.get(layerId) ?? 0;
+      if (cur >= layer.frames.length) store.currentByLayer.set(layerId, layer.frames.length - 1);
+      else if (cur > clamped) store.currentByLayer.set(layerId, cur - 1);
+      if (store.currentLayerId === layerId) {
+        store.pos = frameStartPos(layer, store.currentByLayer.get(layerId) ?? 0);
+      }
+      store.pos = Math.min(store.pos, timelineLength(store.doc) - 1);
+      store.selection = [];
+      store.save();
+      store.emit();
     },
 
     setHold(layerId: string, index: number, hold: number): void {

@@ -343,6 +343,20 @@ button:focus-visible, input:focus-visible {
 }
 .frame-cell.active { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
 .frame-cell canvas { display: block; border-radius: 8px; }
+/* Delete is the layer row's hover-revealed ×, same size and treatment
+   (24px, grey 14px glyph at stroke 2, hidden until the cell is
+   hovered or the button is keyboard-focused) — top-right of the cell,
+   opposite the hold badge. */
+.frame-remove {
+  position: absolute; top: 2px; right: 2px;
+  width: 24px; height: 24px; border: none; border-radius: 7px;
+  background: transparent; color: var(--grey); padding: 0;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+  opacity: 0;
+}
+.frame-cell:hover .frame-remove, .frame-remove:focus-visible { opacity: 1; }
+.frame-remove:hover { background: rgba(0, 0, 0, 0.05); color: var(--ink); }
+.frame-remove svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 .hold-badge {
   position: absolute; right: 3px; bottom: 2px; font-size: 11px; font-weight: 500;
   line-height: 1; background: transparent; color: var(--ink); padding: 0;

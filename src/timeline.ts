@@ -138,9 +138,13 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
       frow.className = "frame-row";
       frow.dataset.layerId = layer.id;
       layer.frames.forEach((frame, index) => {
-        const cell = document.createElement("button");
+        // A cell is a div, not a button, so it can hold its own delete
+        // button — a button inside a button is invalid HTML.
+        const cell = document.createElement("div");
         cell.className = "frame-cell";
         cell.dataset.frameId = frame.id;
+        cell.tabIndex = 0;
+        cell.setAttribute("role", "button");
         cell.title = `Frame ${index + 1}${frame.hold > 1 ? `, hold ${frame.hold}` : ""}`;
         const thumb = document.createElement("canvas");
         cell.appendChild(thumb);
@@ -150,7 +154,28 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
           badge.textContent = `×${frame.hold}`;
           cell.appendChild(badge);
         }
+        // Delete is the layer row's hover-revealed ×, same size and
+        // treatment. A layer keeps at least one frame, so the × only
+        // appears when the layer has more than one.
+        if (layer.frames.length > 1) {
+          const del = document.createElement("button");
+          del.className = "frame-remove";
+          del.innerHTML = `<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>`;
+          del.title = "Delete frame";
+          del.setAttribute("aria-label", "Delete frame");
+          del.addEventListener("click", (e) => {
+            e.stopPropagation();
+            store.deleteFrame(layer.id, index);
+          });
+          cell.appendChild(del);
+        }
         cell.addEventListener("click", () => store.setCurrentFrame(layer.id, index));
+        cell.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            store.setCurrentFrame(layer.id, index);
+          }
+        });
         frow.appendChild(cell);
       });
       const add = document.createElement("button");
