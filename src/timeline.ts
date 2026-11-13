@@ -22,6 +22,10 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
   addLayerBtn.addEventListener("click", () => store.addLayer());
 
   let lastStructural = "";
+  // A hold drag in progress: the frame being dragged. While it is
+  // set, sync updates the gap in place instead of rebuilding — a
+  // rebuild would destroy the handle mid-drag (pointer capture lost).
+  let holdDrag: { frameId: string } | null = null;
   // The frame pitch: a 66px cell plus the 6px between cells. A hold
   // gap is (hold − 1) pitches plus the 6px inter-cell space, so the
   // line spans exactly from one cell's right edge to the next cell's
@@ -153,6 +157,43 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
           });
           cell.appendChild(del);
         }
+        // The hold handle: a subtle grip on the cell's right edge.
+        // Dragging it sets the hold — the only hold control. It is
+        // its own pointer interaction and never selects the cell.
+        const handle = document.createElement("div");
+        handle.className = "frame-handle";
+        handle.title = "Drag to change hold";
+        handle.innerHTML = `<span></span>`;
+        handle.addEventListener("pointerdown", (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          handle.setPointerCapture(e.pointerId);
+          const startX = e.clientX;
+          const startHold = frame.hold;
+          let curHold = startHold;
+          holdDrag = { frameId: frame.id };
+          store.beginHoldDrag(layer.id, index);
+          const move = (ev: PointerEvent) => {
+            const delta = Math.round((ev.clientX - startX) / PITCH);
+            const next = Math.min(24, Math.max(1, startHold + delta));
+            if (next !== curHold) {
+              curHold = next;
+              store.previewHold(next);
+            }
+          };
+          const up = () => {
+            window.removeEventListener("pointermove", move);
+            window.removeEventListener("pointerup", up);
+            window.removeEventListener("pointercancel", up);
+            holdDrag = null;
+            store.endHoldDrag();
+          };
+          window.addEventListener("pointermove", move);
+          window.addEventListener("pointerup", up);
+          window.addEventListener("pointercancel", up);
+        });
+        handle.addEventListener("click", (e) => e.stopPropagation());
+        cell.appendChild(handle);
         cell.addEventListener("click", () => store.setCurrentFrame(layer.id, index));
         cell.addEventListener("keydown", (e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -190,6 +231,29 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
   }
 
   function sync(): void {
+    if (holdDrag) {
+      // A hold drag updates the gap in place: the line grows or
+      // shrinks live and the next cells shift by flex reflow, while
+      // the clock updates live on the store emit. The full rebuild
+      // happens on release (endHoldDrag emits with holdDrag clear).
+      const layer = store.doc.layers.find((l) => l.frames.some((f) => f.id === holdDrag!.frameId));
+      const frame = layer?.frames.find((f) => f.id === holdDrag!.frameId);
+      if (frame) {
+        const gap = framesRows.querySelector(`.hold-gap[data-frame-id="${frame.id}"]`) as HTMLElement | null;
+        if (gap) {
+          gap.style.width = `${gapWidth(frame.hold)}px`;
+          const hasLine = !!gap.querySelector(".hold-line");
+          if (frame.hold > 1 && !hasLine) {
+            const line = document.createElement("div");
+            line.className = "hold-line";
+            gap.appendChild(line);
+          } else if (frame.hold <= 1 && hasLine) {
+            gap.querySelector(".hold-line")?.remove();
+          }
+        }
+      }
+      return;
+    }
     if (structuralSig() !== lastStructural) rebuild();
     const { layer: curLayer, index: curIndex } = store.currentFrame();
     // Active states.

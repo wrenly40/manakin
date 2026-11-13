@@ -79,6 +79,9 @@ export type Store = {
   toggleLayerVisible(id: string): void;
   addFrame(layerId: string): void;
   deleteFrame(layerId: string, index: number): void;
+  beginHoldDrag(layerId: string, index: number): void;
+  previewHold(hold: number): void;
+  endHoldDrag(): void;
   save(): void;
 };
 
@@ -112,6 +115,9 @@ export function createStore(): Store {
   const undoStack: Snapshot[] = [];
   const redoStack: Snapshot[] = [];
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  // A hold drag in progress: the frame being dragged and its hold at
+  // drag start, so the drag commits as one undo step.
+  let holdDragState: { layerId: string; index: number; startHold: number } | null = null;
 
   const store: Store = {
     doc: initial,
@@ -505,6 +511,41 @@ export function createStore(): Store {
       store.selection = [];
       store.save();
       store.emit();
+    },
+
+    // A hold drag is one undo step: the snapshot is taken on drag
+    // start, the hold is previewed live without further snapshots,
+    // and if the drag ends unchanged the snapshot is dropped.
+    beginHoldDrag(layerId: string, index: number): void {
+      const layer = store.doc.layers.find((l) => l.id === layerId);
+      const frame = layer?.frames[index];
+      if (!frame) return;
+      store.pushUndo();
+      holdDragState = { layerId, index, startHold: frame.hold };
+    },
+
+    previewHold(hold: number): void {
+      const drag = holdDragState;
+      if (!drag) return;
+      const layer = store.doc.layers.find((l) => l.id === drag.layerId);
+      const frame = layer?.frames[drag.index];
+      if (!frame) return;
+      const h = Math.min(24, Math.max(1, Math.round(hold)));
+      if (h === frame.hold) return;
+      frame.hold = h;
+      store.save();
+      store.emit();
+    },
+
+    endHoldDrag(): void {
+      const drag = holdDragState;
+      if (!drag) return;
+      const layer = store.doc.layers.find((l) => l.id === drag.layerId);
+      const frame = layer?.frames[drag.index];
+      const changed = frame ? frame.hold !== drag.startHold : false;
+      if (!changed) store.popUndo();
+      holdDragState = null;
+      if (changed) store.emit();
     },
 
     save(): void {

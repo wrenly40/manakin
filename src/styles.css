@@ -340,6 +340,21 @@ button:focus-visible, input:focus-visible {
   height: 2px; transform: translateY(-50%); border-radius: 1px;
   background: rgba(29, 29, 31, 0.28);
 }
+/* The hold handle: a subtle grip on the cell's right edge, always
+   visible, more prominent on hover. Dragging it sets the hold — the
+   only hold control. It is its own pointer interaction and never
+   selects the cell. */
+.frame-handle {
+  position: absolute; top: 50%; right: -4px; transform: translateY(-50%);
+  width: 8px; height: 24px; z-index: 3; cursor: ew-resize;
+  display: flex; align-items: center; justify-content: center;
+}
+.frame-handle span {
+  width: 3px; height: 16px; border-radius: 2px;
+  background: rgba(29, 29, 31, 0.25);
+}
+.frame-cell:hover .frame-handle span { background: rgba(29, 29, 31, 0.45); }
+.frame-handle:hover span { background: rgba(29, 29, 31, 0.65); }
 .frame-cell.active { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
 .frame-cell canvas { display: block; border-radius: 8px; }
 /* Delete is the layer row's hover-revealed ×, same size and treatment
