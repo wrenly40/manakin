@@ -8,18 +8,18 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
   panelEl.innerHTML = `
     <div id="timeline-head">
       <span class="panel-title">Layers</span>
-      <button id="add-layer" title="Add layer">+ Layer</button>
+      <button id="add-layer" class="pbtn" title="Add layer">+ Layer</button>
       <span class="head-spacer"></span>
       <span class="head-label">Stage</span>
       <span id="stage-seg" class="seg"></span>
-      <button id="onion-toggle" title="Onion skin">Onion skin</button>
+      <button id="onion-toggle" class="pbtn" title="Onion skin">Onion skin</button>
       <span class="head-spacer"></span>
       <span id="frame-actions">
-        <button id="dup-frame" title="Duplicate frame">Duplicate</button>
-        <button id="del-frame" title="Delete frame">Delete</button>
-        <button id="hold-minus" title="Shorter hold">−</button>
+        <button id="dup-frame" class="pbtn" title="Duplicate frame">Duplicate</button>
+        <button id="del-frame" class="pbtn" title="Delete frame">Delete</button>
+        <button id="hold-minus" class="pbtn" title="Shorter hold">−</button>
         <span id="hold-value" title="Hold">1</span>
-        <button id="hold-plus" title="Longer hold">+</button>
+        <button id="hold-plus" class="pbtn" title="Longer hold">+</button>
       </span>
     </div>
     <div id="timeline-body">
