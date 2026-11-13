@@ -219,20 +219,29 @@ button:focus-visible, input:focus-visible {
    the frame rows. Its height is the button's own block (32px +
    8px top + 4px bottom margin = 44px). */
 #timeline-header { flex: none; display: flex; }
-#timeline-body { flex: 1; display: flex; min-height: 0; }
+/* The body is the ONE vertical scroller for both columns: the
+   layer list and the frame strip scroll together by construction,
+   so a row can never drift away from its card. The two columns
+   used to scroll independently — wheeling over the list moved the
+   cards 37px while the rows stayed put. The frame strip keeps its
+   own horizontal scroll only. */
+#timeline-body {
+  flex: 1; display: flex; min-height: 0;
+  overflow-y: auto; align-items: flex-start; scrollbar-width: none;
+}
+#timeline-body::-webkit-scrollbar { display: none; }
 /* The list column: 250px — narrower than the old 300px — with the
-   compact Add button on top and the scrollable card stack below
-   it. */
+   scrollable card stack below the header. min-height: 100% keeps
+   the divider running the full panel height when the stack is
+   shorter than the panel; it grows with the stack when longer. */
 #layer-col {
   width: 250px; flex: none; border-right: 1px solid var(--hairline);
-  display: flex; flex-direction: column; min-height: 0;
+  display: flex; flex-direction: column; min-height: 100%;
 }
 #layer-list {
-  flex: 1; min-height: 0;
-  overflow-y: auto; padding: 4px 8px 0;
-  scrollbar-width: none;
+  flex: none;
+  padding: 4px 8px 0;
 }
-#layer-list::-webkit-scrollbar { display: none; }
 /* A layer row is an old .blayer card: white, hairline border all
    round, 9px radius, 8px gap to the next card. It is two lines:
    line 1 is the name only, with the hover-revealed delete ×
@@ -334,7 +343,7 @@ button:focus-visible, input:focus-visible {
   flex: 1; min-width: 0; font-size: 13px; border: 1px solid var(--accent);
   border-radius: 9px; height: 28px; padding: 2px 6px;
 }
-#frames-scroll { flex: 1; overflow: auto; scrollbar-width: none; }
+#frames-scroll { flex: 1; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
 #frames-scroll::-webkit-scrollbar { display: none; }
 /* Frame rows keep the same 44px + 8px rhythm as the layer cards so
    the two columns stay aligned — but a frame row is a quiet strip of
