@@ -340,29 +340,36 @@ button:focus-visible, input:focus-visible {
   height: 2px; transform: translateY(-50%); border-radius: 1px;
   background: rgba(29, 29, 31, 0.28);
 }
-/* The hold handle: a subtle grip on the cell's right edge, always
-   visible, more prominent on hover. Dragging it sets the hold — the
-   only hold control. It is its own pointer interaction and never
-   selects the cell. */
+/* The hold handle: a small rounded tab in the cell's bottom-right
+   corner, visible only while the cell is hovered (or being dragged) —
+   nothing shows on a cell at rest. It never overlaps the delete ×:
+   the × is 22px at the top-right, the tab is 12px at the bottom-right,
+   with 2px between them. Dragging it sets the hold — the only hold
+   control. It is its own pointer interaction and never selects the
+   cell. */
 .frame-handle {
-  position: absolute; top: 50%; right: -4px; transform: translateY(-50%);
-  width: 8px; height: 24px; z-index: 3; cursor: ew-resize;
-  display: flex; align-items: center; justify-content: center;
+  position: absolute; right: 0; bottom: 0;
+  width: 12px; height: 12px; z-index: 3; cursor: ew-resize;
+  display: flex; align-items: center; justify-content: center; gap: 2px;
+  border-radius: 6px 0 8px 0;
+  background: rgba(120, 120, 128, 0.12);
+  opacity: 0; transition: opacity 0.15s;
 }
+.frame-cell:hover .frame-handle, .frame-cell.dragging .frame-handle { opacity: 1; }
 .frame-handle span {
-  width: 3px; height: 16px; border-radius: 2px;
-  background: rgba(29, 29, 31, 0.25);
+  width: 2px; height: 8px; border-radius: 1px;
+  background: rgba(29, 29, 31, 0.45);
 }
-.frame-cell:hover .frame-handle span { background: rgba(29, 29, 31, 0.45); }
+.frame-handle:hover { background: rgba(120, 120, 128, 0.2); }
 .frame-handle:hover span { background: rgba(29, 29, 31, 0.65); }
 .frame-cell.active { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
 .frame-cell canvas { display: block; border-radius: 8px; }
 /* Delete is the layer row's hover-revealed ×, same size and treatment
-   (24px, grey 14px glyph at stroke 2, hidden until the cell is
+   (22px, grey 14px glyph at stroke 2, hidden until the cell is
    hovered or the button is keyboard-focused) — top-right of the cell. */
 .frame-remove {
   position: absolute; top: 2px; right: 2px;
-  width: 24px; height: 24px; border: none; border-radius: 7px;
+  width: 22px; height: 22px; border: none; border-radius: 7px;
   background: transparent; color: var(--grey); padding: 0;
   display: flex; align-items: center; justify-content: center; cursor: pointer;
   opacity: 0;

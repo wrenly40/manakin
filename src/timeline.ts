@@ -157,17 +157,19 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
           });
           cell.appendChild(del);
         }
-        // The hold handle: a subtle grip on the cell's right edge.
+        // The hold handle: a small tab in the cell's bottom-right
+        // corner, visible only while the cell is hovered or dragged.
         // Dragging it sets the hold — the only hold control. It is
         // its own pointer interaction and never selects the cell.
         const handle = document.createElement("div");
         handle.className = "frame-handle";
         handle.title = "Drag to change hold";
-        handle.innerHTML = `<span></span>`;
+        handle.innerHTML = `<span></span><span></span>`;
         handle.addEventListener("pointerdown", (e) => {
           e.stopPropagation();
           e.preventDefault();
           handle.setPointerCapture(e.pointerId);
+          cell.classList.add("dragging");
           const startX = e.clientX;
           const startHold = frame.hold;
           let curHold = startHold;
@@ -186,6 +188,7 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
             window.removeEventListener("pointerup", up);
             window.removeEventListener("pointercancel", up);
             holdDrag = null;
+            cell.classList.remove("dragging");
             store.endHoldDrag();
           };
           window.addEventListener("pointermove", move);
