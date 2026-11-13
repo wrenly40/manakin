@@ -365,11 +365,13 @@ button:focus-visible, input:focus-visible {
 .frame-cell.active { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
 .frame-cell canvas { display: block; border-radius: 8px; }
 /* Delete is the layer row's hover-revealed ×, same size and treatment
-   (22px, grey 14px glyph at stroke 2, hidden until the cell is
-   hovered or the button is keyboard-focused) — top-right of the cell. */
+   (20px, grey 14px glyph at stroke 2, hidden until the cell is
+   hovered or the button is keyboard-focused) — top-right of the cell.
+   20px, not 22px: the handle tab sits at the bottom-right with its
+   top edge 2px below the ×, so the two boxes never touch. */
 .frame-remove {
   position: absolute; top: 2px; right: 2px;
-  width: 22px; height: 22px; border: none; border-radius: 7px;
+  width: 20px; height: 20px; border: none; border-radius: 7px;
   background: transparent; color: var(--grey); padding: 0;
   display: flex; align-items: center; justify-content: center; cursor: pointer;
   opacity: 0;
