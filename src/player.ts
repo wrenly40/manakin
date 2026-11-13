@@ -8,10 +8,10 @@ export function createPlayer(barEl: HTMLElement, store: Store): void {
     <div id="player-left"><span id="angle-readout"></span></div>
     <div id="player-centre">
       <div id="transport">
-        <button id="back-btn" class="pctl solid" title="Back" aria-label="Back to start"><svg viewBox="0 0 24 24"><path d="M6 5h2.5v14H6z"/><path d="M20 5v14l-9.5-7z"/></svg></button>
+        <button id="back-btn" class="pctl solid" title="Previous frame" aria-label="Previous frame"><svg viewBox="0 0 24 24"><path d="M6 5h2.5v14H6z"/><path d="M20 5v14l-9.5-7z"/></svg></button>
         <button id="play-btn" class="pctl play" title="Play" aria-label="Play"><svg viewBox="0 0 12 12"><path d="M3 1.5 10 6l-7 4.5z"/></svg></button>
         <button id="stop-btn" class="pctl solid" title="Stop" aria-label="Stop"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
-        <button id="forward-btn" class="pctl solid" title="Forward" aria-label="Forward to end"><svg viewBox="0 0 24 24"><path d="M15.5 5h2.5v14h-2.5z"/><path d="M4 5v14l9.5-7z"/></svg></button>
+        <button id="forward-btn" class="pctl solid" title="Next frame" aria-label="Next frame"><svg viewBox="0 0 24 24"><path d="M15.5 5h2.5v14h-2.5z"/><path d="M4 5v14l9.5-7z"/></svg></button>
         <button id="loop-btn" class="pctl" title="Loop" aria-label="Loop" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg></button>
         <span id="clock">1/1 · 0.0s · 12 fps</span>
       </div>

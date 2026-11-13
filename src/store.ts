@@ -5,6 +5,7 @@ import type { Document, Frame, Item, Layer, ViewState } from "./model";
 import {
   SAVE_KEY,
   UNDO_LIMIT,
+  frameAt,
   frameStartPos,
   nid,
   parseSave,
@@ -245,15 +246,26 @@ export function createStore(): Store {
       store.emit();
     },
 
+    // Back / Forward step ONE timeline frame at a time, clamped at the
+    // ends — no wrapping (wrapping is the Loop button's job, during
+    // playback). Stepping also moves the current layer's selected frame
+    // to the frame at the new playhead, so the canvas follows while
+    // paused: displayPos shows the selected frame, not the raw pos.
     back(): void {
       store.playing = false;
-      store.pos = 0;
+      const next = Math.max(0, store.pos - 1);
+      store.pos = next;
+      const layer = store.doc.layers.find((l) => l.id === store.currentLayerId) ?? store.doc.layers[0];
+      store.currentByLayer.set(layer.id, frameAt(layer, next).index);
       store.emit();
     },
 
     forward(): void {
       store.playing = false;
-      store.pos = timelineLength(store.doc) - 1;
+      const next = Math.min(timelineLength(store.doc) - 1, store.pos + 1);
+      store.pos = next;
+      const layer = store.doc.layers.find((l) => l.id === store.currentLayerId) ?? store.doc.layers[0];
+      store.currentByLayer.set(layer.id, frameAt(layer, next).index);
       store.emit();
     },
 
