@@ -264,11 +264,13 @@ button:focus-visible, input:focus-visible {
    round, 9px radius, 8px gap to the next card. It is two lines:
    line 1 is the name only, with the hover-revealed delete ×
    top-right; line 2 holds ALL the controls on one line —
-   visibility toggle, lock, opacity %, move up/down. The frame
-   row's height is set from the card's height, so the rows stay
-   aligned. */
+   visibility toggle, lock, opacity %, move up/down. The card is
+   63px tall (5px + 4px padding, 1px border, 28px name line, 24px
+   controls line) so the 112×63 cell still equals the card height.
+   The frame row's height is set from the card's height, so the rows
+   stay aligned. */
 .layer-row {
-  display: block; padding: 5px 4px 5px 10px; margin: 0 0 8px; border-radius: 9px;
+  display: block; padding: 5px 4px 4px 10px; margin: 0 0 8px; border-radius: 9px;
   background: #fff; border: 1px solid var(--hairline);
   cursor: pointer;
 }
@@ -279,8 +281,8 @@ button:focus-visible, input:focus-visible {
 /* A locked layer dims the whole row, like an off plugin row in
    Bowerbird, so the locked state reads at a glance. */
 .layer-row.locked { opacity: 0.55; }
-.layer-head { display: flex; align-items: center; gap: 8px; height: 32px; }
-.layer-controls { display: flex; align-items: center; gap: 8px; height: 28px; }
+.layer-head { display: flex; align-items: center; gap: 8px; height: 28px; }
+.layer-controls { display: flex; align-items: center; gap: 8px; height: 24px; }
 /* A hidden layer dims its name, like an off plugin row in Bowerbird. */
 .layer-row.hidden .layer-name { color: var(--grey); }
 /* Small quiet icon buttons, the old panel-button style: 28px,
@@ -307,19 +309,19 @@ button:focus-visible, input:focus-visible {
 }
 .layer-toggle.on { background: rgba(29, 29, 31, 0.88); }
 .layer-toggle.on .knob { left: 18px; }
-/* Reorder chevrons are the old .layer-chev: 28px, grey 16px glyphs
+/* Reorder chevrons are the old .layer-chev: 24px, grey 16px glyphs
    at stroke 2, ink on hover. */
 .layer-chev {
-  flex: none; width: 28px; height: 28px; border: none; border-radius: 7px;
+  flex: none; width: 24px; height: 24px; border: none; border-radius: 7px;
   background: transparent; color: var(--grey); padding: 0;
   display: flex; align-items: center; justify-content: center; cursor: pointer;
 }
 .layer-chev:hover { background: rgba(0, 0, 0, 0.05); color: var(--ink); }
 .layer-chev svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-/* The lock is the old icon-button treatment: 28px, 7px radius, 16px
+/* The lock is the old icon-button treatment: 24px, 7px radius, 16px
    ink glyph at 1.8 stroke — the same size as the move chevrons. */
 .layer-lock {
-  flex: none; width: 28px; height: 28px; border: none; border-radius: 7px;
+  flex: none; width: 24px; height: 24px; border: none; border-radius: 7px;
   background: transparent; color: var(--ink); padding: 0;
   display: flex; align-items: center; justify-content: center; cursor: pointer;
 }
