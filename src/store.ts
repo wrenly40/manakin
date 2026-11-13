@@ -95,6 +95,7 @@ export type Store = {
   moveLayer(id: string, dir: -1 | 1): void;
   toggleLayerVisible(id: string): void;
   toggleLayerLocked(id: string): void;
+  toggleLayerOnionSkin(id: string): void;
   beginLayerOpacity(id: string): void;
   previewLayerOpacity(value: number): void;
   endLayerOpacity(): void;
@@ -648,6 +649,18 @@ export function createStore(): Store {
       store.pushUndo();
       layer.locked = !layer.locked;
       if (layer.locked) store.selection = [];
+      store.save();
+      store.emit();
+    },
+
+    // Onion skin is a per-layer document flag, like visibility and
+    // lock: flipping it is one undo step and it persists in the save.
+    // A layer with it off shows no before/after neighbours.
+    toggleLayerOnionSkin(id: string): void {
+      const layer = store.doc.layers.find((l) => l.id === id);
+      if (!layer) return;
+      store.pushUndo();
+      layer.onionSkin = !(layer.onionSkin ?? true);
       store.save();
       store.emit();
     },
