@@ -12,7 +12,7 @@ Four components, nothing else:
   workspace. Pan, zoom and rotate are view-only. Draw strokes, shapes
   and text; erase like a pen; select, move, duplicate and delete. Full
   undo and redo.
-- **Player** — Back, Play, Stop, Forward, a scrubber and a clock.
+- **Player** — Back, Play, Stop, Forward and a clock.
   Playback runs at 12 frames per second.
 - **Timeline** — layers with frames. Each layer has its own frames; click
   a cell to edit that frame on the canvas. Add frames; set a hold.
