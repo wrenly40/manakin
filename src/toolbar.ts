@@ -10,6 +10,8 @@ const ICONS: Record<string, string> = {
   rect: `<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>`,
   text: `<svg viewBox="0 0 24 24"><path d="M5 6h14M12 6v13"/></svg>`,
   paint: `<svg viewBox="0 0 24 24"><path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11z"/><path d="m5 2 5 5"/><path d="M2 13h15"/><path d="M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4z"/></svg>`,
+  // The eyedropper glyph lives here even though the tool has no
+  // toolbar button any more — the colour panel's pick button reuses it.
   eyedropper: `<svg viewBox="0 0 24 24"><path d="m2 22 1-1h3l9-9"/><path d="M3 21v-3l9-9"/><path d="m15 6 3.4-3.4a2.1 2.1 0 1 1 3 3L18 9l.4.4a2.1 2.1 0 1 1-3 3l-3.8-3.8a2.1 2.1 0 1 1 3-3l.4.4Z"/></svg>`,
 };
 
@@ -20,7 +22,6 @@ const TOOLS: { id: ToolId; label: string; key: string }[] = [
   { id: "shape", label: "Geometry (E)", key: "e" },
   { id: "text", label: "Text (T)", key: "t" },
   { id: "paint", label: "Paint bucket (B)", key: "b" },
-  { id: "eyedropper", label: "Eyedropper (I)", key: "i" },
 ];
 
 const COLOURS_KEY = "manakin-v2-colours";
@@ -197,6 +198,7 @@ export function createToolbar(wrapEl: HTMLElement, store: Store): void {
     <input id="hue-bar" type="range" min="0" max="360" step="1" aria-label="Hue" />
     <div class="colour-row">
       <input id="hex-input" type="text" spellcheck="false" aria-label="Hex colour" />
+      <button id="pick-colour" title="Eyedropper (I)" aria-label="Eyedropper">${ICONS.eyedropper}</button>
       <button id="save-colour">Save</button>
     </div>
     <div class="colour-label">Recent</div>
@@ -209,6 +211,7 @@ export function createToolbar(wrapEl: HTMLElement, store: Store): void {
   const svCtx = sv.getContext("2d") as CanvasRenderingContext2D;
   const hueBar = panel.querySelector("#hue-bar") as HTMLInputElement;
   const hexInput = panel.querySelector("#hex-input") as HTMLInputElement;
+  const pickBtn = panel.querySelector("#pick-colour") as HTMLButtonElement;
   const saveBtn = panel.querySelector("#save-colour") as HTMLButtonElement;
   const recentRow = panel.querySelector("#recent-row") as HTMLDivElement;
   const savedRow = panel.querySelector("#saved-row") as HTMLDivElement;
@@ -320,6 +323,18 @@ export function createToolbar(wrapEl: HTMLElement, store: Store): void {
       saveColours();
       renderRows();
     }
+  });
+
+  // The eyedropper lives in the colour panel, not the toolbar: it
+  // picks a colour for the panel's current slot (fg or bg). Clicking
+  // it closes the panel and arms the one-shot tool; the pick is
+  // applied to the slot on the next change, the tool returns to the
+  // previous one, and the panel does not reopen. The I shortcut
+  // arms the same tool — a keyboard shortcut is not a second
+  // visible control.
+  pickBtn.addEventListener("click", () => {
+    panel.style.display = "none";
+    store.setTool("eyedropper");
   });
 
   // Clicking outside the panel or the swatches closes it.

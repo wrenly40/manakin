@@ -189,6 +189,16 @@ button:focus-visible, input:focus-visible {
   border: 1px solid var(--hairline); background: var(--fill-2); border-radius: 6px;
   padding: 5px 10px; font-size: 12px; cursor: pointer; color: var(--ink);
 }
+#save-colour:hover, #pick-colour:hover { background: var(--fill); }
+/* The eyedropper in the colour panel: the same treatment as Save —
+   hairline border, fill-2 background, 6px radius — icon-sized, so
+   the hex row keeps its width and the panel stays 204px. */
+#pick-colour {
+  border: 1px solid var(--hairline); background: var(--fill-2); border-radius: 6px;
+  padding: 5px 8px; cursor: pointer; color: var(--ink); flex: none;
+  display: flex; align-items: center; justify-content: center;
+}
+#pick-colour svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .colour-label { font-size: 11px; color: var(--grey); margin-top: 8px; }
 
 /* Timeline */
