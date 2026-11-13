@@ -16,16 +16,21 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
       </span>
     </div>
     <div id="timeline-body">
-      <div id="layer-list"></div>
+      <div id="layer-col">
+        <div id="layer-list"></div>
+        <button id="add-layer" class="add-btn" title="Add layer"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Add layer</span></button>
+      </div>
       <div id="frames-scroll"><div id="frames-rows"></div></div>
     </div>`;
 
   const layerList = panelEl.querySelector("#layer-list") as HTMLDivElement;
   const framesRows = panelEl.querySelector("#frames-rows") as HTMLDivElement;
+  const addLayerBtn = panelEl.querySelector("#add-layer") as HTMLButtonElement;
   const holdMinus = panelEl.querySelector("#hold-minus") as HTMLButtonElement;
   const holdPlus = panelEl.querySelector("#hold-plus") as HTMLButtonElement;
   const holdValue = panelEl.querySelector("#hold-value") as HTMLSpanElement;
 
+  addLayerBtn.addEventListener("click", () => store.addLayer());
   holdMinus.addEventListener("click", () => {
     const { layer, index, frame } = store.currentFrame();
     store.setHold(layer.id, index, frame.hold - 1);
@@ -156,14 +161,6 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
       frow.appendChild(add);
       framesRows.appendChild(frow);
     }
-    // Add layer is the old full-width pill at the bottom of the stack.
-    const add = document.createElement("button");
-    add.id = "add-layer";
-    add.className = "add-btn";
-    add.innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Add layer</span>`;
-    add.title = "Add layer";
-    add.addEventListener("click", () => store.addLayer());
-    layerList.appendChild(add);
     lastStructural = structuralSig();
   }
 
