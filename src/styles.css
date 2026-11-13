@@ -333,12 +333,15 @@ button:focus-visible, input:focus-visible {
    (hold − 1) cell-widths holding a thin line for a held frame. The
    line runs from the held cell's right edge to the next cell's left
    edge — the frame is held until the next one. The last frame's gap
-   extends the same distance into empty space. */
+   extends the same distance into empty space. The line is the app's
+   divider: 1px, var(--separator) — the same hairline as the toolbar
+   divider, the .vdiv and the player border-top, not an invented
+   weight. */
 .hold-gap { position: relative; flex: none; height: 100%; }
 .hold-line {
   position: absolute; left: 0; right: 0; top: 50%;
-  height: 2px; transform: translateY(-50%); border-radius: 1px;
-  background: rgba(29, 29, 31, 0.28);
+  height: 1px; transform: translateY(-50%);
+  background: var(--separator);
 }
 /* The hold handle: a small rounded tab in the cell's bottom-right
    corner, visible only while the cell is hovered (or being dragged) —
