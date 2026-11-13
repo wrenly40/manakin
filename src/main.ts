@@ -36,8 +36,11 @@ app.innerHTML = `
     </div>
   </div>
   <div id="middle"><div id="workspace-wrap"></div></div>
-  <div id="player-bar"></div>
-  <div id="timeline-panel"></div>`;
+  <div id="bottom-bar">
+    <div id="resize-handle" title="Drag to resize" aria-label="Resize bottom bar"></div>
+    <div id="player-bar"></div>
+    <div id="timeline-panel"></div>
+  </div>`;
 
 const store = createStore();
 const wrap = document.getElementById("workspace-wrap") as HTMLDivElement;
@@ -61,6 +64,61 @@ const undoBtn = document.getElementById("undo-btn") as HTMLButtonElement;
 const redoBtn = document.getElementById("redo-btn") as HTMLButtonElement;
 undoBtn.addEventListener("click", () => store.undo());
 redoBtn.addEventListener("click", () => store.redo());
+
+// ---- Bottom bar: resizable ---------------------------------------------
+// The bottom bar (player + layers) drags from its top edge. Min still
+// shows the player plus one layer row; max is 60% of the window. The
+// height persists in its own key, next to the document save.
+
+const BOTTOM_HEIGHT_KEY = "manakin-v2-bottom-height";
+const BOTTOM_MIN = 150;
+const BOTTOM_DEFAULT = 228;
+const bottomBar = document.getElementById("bottom-bar") as HTMLDivElement;
+const resizeHandle = document.getElementById("resize-handle") as HTMLDivElement;
+
+function bottomMax(): number {
+  return Math.round(window.innerHeight * 0.6);
+}
+function clampBottom(h: number): number {
+  return Math.min(bottomMax(), Math.max(BOTTOM_MIN, Math.round(h)));
+}
+function loadBottomHeight(): number {
+  try {
+    const raw = localStorage.getItem(BOTTOM_HEIGHT_KEY);
+    const n = raw === null ? NaN : Number(raw);
+    if (Number.isFinite(n) && n > 0) return clampBottom(n);
+  } catch {
+    // Storage unavailable — the default height stands.
+  }
+  return clampBottom(BOTTOM_DEFAULT);
+}
+bottomBar.style.height = `${loadBottomHeight()}px`;
+
+resizeHandle.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  const startY = e.clientY;
+  const startH = bottomBar.getBoundingClientRect().height;
+  resizeHandle.setPointerCapture(e.pointerId);
+  const move = (ev: PointerEvent): void => {
+    bottomBar.style.height = `${clampBottom(startH + (startY - ev.clientY))}px`;
+  };
+  const up = (): void => {
+    resizeHandle.removeEventListener("pointermove", move);
+    resizeHandle.removeEventListener("pointerup", up);
+    try {
+      localStorage.setItem(BOTTOM_HEIGHT_KEY, String(Math.round(bottomBar.getBoundingClientRect().height)));
+    } catch {
+      // Storage unavailable — the height just doesn't persist.
+    }
+  };
+  resizeHandle.addEventListener("pointermove", move);
+  resizeHandle.addEventListener("pointerup", up);
+});
+window.addEventListener("resize", () => {
+  const h = bottomBar.getBoundingClientRect().height;
+  const c = clampBottom(h);
+  if (c !== h) bottomBar.style.height = `${c}px`;
+});
 
 function syncTopBar(): void {
   undoBtn.disabled = !store.canUndo();

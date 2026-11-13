@@ -192,8 +192,18 @@ button:focus-visible, input:focus-visible {
 .colour-label { font-size: 11px; color: var(--grey); margin-top: 8px; }
 
 /* Timeline */
+#bottom-bar {
+  flex: none; display: flex; flex-direction: column;
+  position: relative; height: 228px;
+}
+/* The resize handle is an invisible 9px strip straddling the top edge
+   of the bottom bar — the player bar's own hairline is its visual. */
+#resize-handle {
+  position: absolute; top: -4px; left: 0; right: 0; height: 9px;
+  cursor: ns-resize; z-index: 30; touch-action: none;
+}
 #timeline-panel {
-  flex: none; height: 172px; background: #fff;
+  flex: 1 1 auto; min-height: 0; background: #fff;
   border-top: 1px solid var(--separator);
   display: flex; flex-direction: column;
 }
