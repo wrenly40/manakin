@@ -216,9 +216,27 @@ button:focus-visible, input:focus-visible {
 .pbtn:disabled { opacity: 0.35; cursor: default; }
 /* The timeline header spans both columns: the + Layer button sits
    here, above the body, so it cannot shift the cards relative to
-   the frame rows. Its height is the button's own block (32px +
-   8px top + 4px bottom margin = 44px). */
+   the frame rows, and the frame-number ruler sits beside it, over
+   the strip, on the same level. Its height is the button's own
+   block (32px + 8px top + 4px bottom margin = 44px). */
 #timeline-header { flex: none; display: flex; }
+/* The header's left section is exactly the layer column's 250px,
+   so the ruler starts at the strip's left edge. */
+#timeline-header-left { width: 250px; flex: none; display: flex; }
+/* Frame-number ruler: one small grey number per timeline frame,
+   centred over its cell at the 134px pitch, vertically centred in
+   the header row. It lives in the header, outside the strip's
+   scroll container, so its inner strip follows the strip's
+   scrollLeft by transform (syncRuler in timeline.ts). Numbers only
+   — no labels, no descriptive text. */
+#frame-ruler { flex: 1; min-width: 0; overflow: hidden; position: relative; }
+#frame-ruler-inner { position: absolute; top: 0; bottom: 0; left: 0; }
+.frame-ruler-num {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 128px; text-align: center;
+  font-size: 12px; color: var(--grey); font-variant-numeric: tabular-nums;
+  user-select: none; -webkit-user-select: none;
+}
 /* The body is the ONE vertical scroller for both columns: the
    layer list and the frame strip scroll together by construction,
    so a row can never drift away from its card. The two columns

@@ -1,6 +1,6 @@
 // Timeline: the layers list and the frame cells. Layers[0] is the top
 // layer. A cell is a thumbnail of its frame; clicking a cell edits it.
-import { STAGES, frameAt } from "./model";
+import { STAGES, frameAt, timelineLength } from "./model";
 import type { Frame } from "./model";
 import { renderThumbnail } from "./render";
 import type { Store } from "./store";
@@ -15,7 +15,10 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
   // tops match by construction.
   panelEl.innerHTML = `
     <div id="timeline-header">
-      <button id="add-layer" class="pbtn" title="Add layer"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Layer</span></button>
+      <div id="timeline-header-left">
+        <button id="add-layer" class="pbtn" title="Add layer"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Layer</span></button>
+      </div>
+      <div id="frame-ruler"><div id="frame-ruler-inner"></div></div>
     </div>
     <div id="timeline-body">
       <div id="layer-col">
@@ -26,6 +29,8 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
 
   const layerList = panelEl.querySelector("#layer-list") as HTMLDivElement;
   const framesRows = panelEl.querySelector("#frames-rows") as HTMLDivElement;
+  const framesScroll = panelEl.querySelector("#frames-scroll") as HTMLDivElement;
+  const rulerInner = panelEl.querySelector("#frame-ruler-inner") as HTMLDivElement;
   const addLayerBtn = panelEl.querySelector("#add-layer") as HTMLButtonElement;
 
   addLayerBtn.addEventListener("click", () => store.addLayer());
@@ -41,6 +46,35 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
   // left edge.
   const PITCH = 134;
   const gapWidth = (hold: number): number => (hold > 1 ? (hold - 1) * PITCH + 6 : 6);
+  // The frame-number ruler: one number per timeline frame, centred
+  // over its cell at the pitch. The total is the same one the clock
+  // uses — timelineLength, the longest layer's summed holds. The
+  // ruler lives in the header, outside the strip's scroll container,
+  // so its inner strip follows the strip's scrollLeft by transform.
+  // The numbers' base offset is the 1px layer-column divider plus
+  // the 12px left padding of #frames-rows: the first cell's left
+  // edge sits 13px right of the ruler's left edge.
+  const RULER_OFFSET = 13;
+  let lastRulerTotal = 0;
+  function syncRuler(): void {
+    const len = timelineLength(store.doc);
+    if (len !== lastRulerTotal) {
+      lastRulerTotal = len;
+      rulerInner.innerHTML = "";
+      rulerInner.style.width = `${RULER_OFFSET + len * PITCH}px`;
+      for (let i = 1; i <= len; i++) {
+        const num = document.createElement("span");
+        num.className = "frame-ruler-num";
+        num.textContent = String(i);
+        num.style.left = `${RULER_OFFSET + (i - 1) * PITCH}px`;
+        rulerInner.appendChild(num);
+      }
+    }
+    rulerInner.style.transform = `translateX(${-framesScroll.scrollLeft}px)`;
+  }
+  framesScroll.addEventListener("scroll", () => {
+    rulerInner.style.transform = `translateX(${-framesScroll.scrollLeft}px)`;
+  });
   // Lock/unlock glyphs (Lucide, 16px, stroke 1.8, ink — the same
   // icon-button treatment as the move chevrons).
   const LOCK_SVG = `<svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>`;
@@ -383,6 +417,9 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
           }
         }
       }
+      // The ruler follows the same live total, so its numbers grow
+      // or shrink with the drag.
+      syncRuler();
       return;
     }
     if (structuralSig() !== lastStructural) rebuild();
@@ -439,6 +476,10 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
         }
       }
     }
+    // The ruler re-renders when the total changes (frame add/delete,
+    // hold change, split) and its inner strip follows the strip's
+    // scrollLeft, so each number stays above its cell.
+    syncRuler();
   }
 
   store.onChange(sync);
