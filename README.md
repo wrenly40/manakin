@@ -15,8 +15,7 @@ Four components, nothing else:
 - **Player** — Back, Play, Stop, Forward, a scrubber and a clock.
   Playback runs at 12 frames per second.
 - **Timeline** — layers with frames. Each layer has its own frames; click
-  a cell to edit that frame on the canvas. Add, duplicate and delete
-  frames; set a hold.
+  a cell to edit that frame on the canvas. Add frames; set a hold.
 
 ## Run
 

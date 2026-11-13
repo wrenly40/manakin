@@ -75,8 +75,6 @@ export type Store = {
   moveLayer(id: string, dir: -1 | 1): void;
   toggleLayerVisible(id: string): void;
   addFrame(layerId: string): void;
-  duplicateFrame(layerId: string, index: number): void;
-  deleteFrame(layerId: string, index: number): void;
   setHold(layerId: string, index: number, hold: number): void;
   save(): void;
 };
@@ -461,28 +459,6 @@ export function createStore(): Store {
       for (const it of copy.items) it.id = nid();
       layer.frames.push(copy);
       store.setCurrentFrame(layerId, layer.frames.length - 1);
-      store.save();
-    },
-
-    duplicateFrame(layerId: string, index: number): void {
-      const layer = store.doc.layers.find((l) => l.id === layerId);
-      if (!layer || !layer.frames[index]) return;
-      store.pushUndo();
-      const src = layer.frames[index];
-      const copy: Frame = { id: nid(), items: structuredClone(src.items), hold: src.hold };
-      for (const it of copy.items) it.id = nid();
-      layer.frames.splice(index + 1, 0, copy);
-      store.setCurrentFrame(layerId, index + 1);
-      store.save();
-    },
-
-    deleteFrame(layerId: string, index: number): void {
-      const layer = store.doc.layers.find((l) => l.id === layerId);
-      if (!layer || layer.frames.length <= 1) return;
-      store.pushUndo();
-      layer.frames.splice(index, 1);
-      const cur = Math.min(store.currentByLayer.get(layerId) ?? 0, layer.frames.length - 1);
-      store.setCurrentFrame(layerId, cur);
       store.save();
     },
 

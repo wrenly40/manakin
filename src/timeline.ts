@@ -11,8 +11,6 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
       <button id="add-layer" class="pbtn" title="Add layer">+ Layer</button>
       <span class="head-spacer"></span>
       <span id="frame-actions">
-        <button id="dup-frame" class="pbtn" title="Duplicate frame">Duplicate</button>
-        <button id="del-frame" class="pbtn" title="Delete frame">Delete</button>
         <button id="hold-minus" class="pbtn" title="Shorter hold">−</button>
         <span id="hold-value" title="Hold">1</span>
         <button id="hold-plus" class="pbtn" title="Longer hold">+</button>
@@ -26,21 +24,11 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
   const layerList = panelEl.querySelector("#layer-list") as HTMLDivElement;
   const framesRows = panelEl.querySelector("#frames-rows") as HTMLDivElement;
   const addLayerBtn = panelEl.querySelector("#add-layer") as HTMLButtonElement;
-  const dupFrameBtn = panelEl.querySelector("#dup-frame") as HTMLButtonElement;
-  const delFrameBtn = panelEl.querySelector("#del-frame") as HTMLButtonElement;
   const holdMinus = panelEl.querySelector("#hold-minus") as HTMLButtonElement;
   const holdPlus = panelEl.querySelector("#hold-plus") as HTMLButtonElement;
   const holdValue = panelEl.querySelector("#hold-value") as HTMLSpanElement;
 
   addLayerBtn.addEventListener("click", () => store.addLayer());
-  dupFrameBtn.addEventListener("click", () => {
-    const { layer, index } = store.currentFrame();
-    store.duplicateFrame(layer.id, index);
-  });
-  delFrameBtn.addEventListener("click", () => {
-    const { layer, index } = store.currentFrame();
-    store.deleteFrame(layer.id, index);
-  });
   holdMinus.addEventListener("click", () => {
     const { layer, index, frame } = store.currentFrame();
     store.setHold(layer.id, index, frame.hold - 1);
