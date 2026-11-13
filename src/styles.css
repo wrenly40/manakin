@@ -214,16 +214,6 @@ button:focus-visible, input:focus-visible {
 }
 .pbtn:hover { background: var(--bg-system); }
 .pbtn:disabled { opacity: 0.35; cursor: default; }
-/* Segmented control: quiet grey fill — the old panel language.
-   The hold stepper is one such bar. */
-.seg { display: flex; gap: 2px; background: var(--fill); border-radius: 9px; padding: 2px; }
-.seg button {
-  border: none; background: transparent; border-radius: 7px;
-  height: 28px; padding: 0 12px;
-  font-size: 13px; font-weight: 500; color: var(--ink); cursor: pointer;
-  white-space: nowrap;
-}
-.seg button:hover { background: rgba(0, 0, 0, 0.04); }
 #timeline-body { flex: 1; display: flex; min-height: 0; }
 /* The list column: the scrollable card stack above, the Add pill
    pinned below it. The pill lives in the column footer, not in the
@@ -326,16 +316,29 @@ button:focus-visible, input:focus-visible {
    The current frame is marked by its cell's ink ring, not the row. */
 #frames-rows { display: flex; flex-direction: column; min-width: max-content; padding: 4px 12px 12px; }
 .frame-row {
-  display: flex; align-items: center; gap: 6px; height: 44px;
+  display: flex; align-items: center; gap: 0; height: 44px;
   padding: 0; margin: 0 0 8px; border-radius: 9px;
 }
+.frame-row .icon-btn { margin-left: 6px; }
 .frame-cell {
   position: relative; padding: 0; border: 1px solid var(--hairline);
   border-radius: 9px; background: #fff; cursor: pointer; flex: none;
   line-height: 0;
-  /* A held frame spans its hold: N × the 66px base cell (64px
-     thumbnail + 2px border, border-box). Hold 1 stays base width. */
-  width: calc(var(--hold, 1) * 66px);
+  /* Every cell is the same size — 66px (64px thumbnail + 2px
+     border). The hold is shown by the line in the gap after the
+     cell, not by the cell's width. */
+  width: 66px;
+}
+/* The gap after a cell: 6px of plain space for a hold-1 frame, or
+   (hold − 1) cell-widths holding a thin line for a held frame. The
+   line runs from the held cell's right edge to the next cell's left
+   edge — the frame is held until the next one. The last frame's gap
+   extends the same distance into empty space. */
+.hold-gap { position: relative; flex: none; height: 100%; }
+.hold-line {
+  position: absolute; left: 0; right: 0; top: 50%;
+  height: 2px; transform: translateY(-50%); border-radius: 1px;
+  background: rgba(29, 29, 31, 0.28);
 }
 .frame-cell.active { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
 .frame-cell canvas { display: block; border-radius: 8px; }
@@ -352,24 +355,6 @@ button:focus-visible, input:focus-visible {
 .frame-cell:hover .frame-remove, .frame-remove:focus-visible { opacity: 1; }
 .frame-remove:hover { background: rgba(0, 0, 0, 0.05); color: var(--ink); }
 .frame-remove svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
-/* Hold editing lives on the selected cell: a compact .seg stepper
-   overlaying the thumbnail, centred, shown only on the selected
-   frame's cell. Compact buttons (24px, tight padding) so it fits a
-   66px hold-1 cell. On the selected cell the stepper is the hold
-   display, so the delete × hides too — a
-   − value + stepper and a 24px × cannot both be clickable in 66px.
-   The × stays on every other cell. */
-.cell-hold {
-  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  display: none; z-index: 2; line-height: 1;
-}
-.frame-cell.selected .cell-hold { display: flex; }
-.frame-cell.selected .frame-remove { display: none; }
-.cell-hold button { height: 24px; padding: 0 6px; }
-.cell-hold-value {
-  font-size: 13px; font-weight: 500; min-width: 16px; text-align: center;
-  align-self: center; line-height: 1;
-}
 
 /* Player */
 #player-bar {

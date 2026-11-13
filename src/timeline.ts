@@ -22,6 +22,12 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
   addLayerBtn.addEventListener("click", () => store.addLayer());
 
   let lastStructural = "";
+  // The frame pitch: a 66px cell plus the 6px between cells. A hold
+  // gap is (hold − 1) pitches plus the 6px inter-cell space, so the
+  // line spans exactly from one cell's right edge to the next cell's
+  // left edge.
+  const PITCH = 72;
+  const gapWidth = (hold: number): number => (hold > 1 ? (hold - 1) * PITCH + 6 : 6);
   const thumbSigs = new Map<string, string>();
 
   function structuralSig(): string {
@@ -125,11 +131,8 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
         const cell = document.createElement("div");
         cell.className = "frame-cell";
         cell.dataset.frameId = frame.id;
-        // The cell spans its hold: hold N renders N × the 66px base
-        // cell, so a held frame visibly stretches across the strip.
-        // The thumbnail stays 64px at the left; the extra width is
-        // the frame's span, not a stretched image.
-        cell.style.setProperty("--hold", String(frame.hold));
+        // Every cell is the same size — the hold is shown by the line
+        // in the gap after the cell, not by the cell's width.
         cell.tabIndex = 0;
         cell.setAttribute("role", "button");
         cell.title = `Frame ${index + 1}${frame.hold > 1 ? `, hold ${frame.hold}` : ""}`;
@@ -150,37 +153,6 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
           });
           cell.appendChild(del);
         }
-        // Hold editing lives on the selected cell: a compact .seg
-        // stepper overlaying the thumbnail, shown only while this
-        // cell is the selected frame. The cell is 66px wide, so a
-        // − value + stepper and the 24px delete × cannot both be
-        // clickable there — on the selected cell the stepper takes
-        // the cell (× hidden; the stepper's value states the hold),
-        // and the × stays on every other cell. To delete
-        // the selected frame, select another frame first.
-        const holdCtl = document.createElement("span");
-        holdCtl.className = "cell-hold seg";
-        const minus = document.createElement("button");
-        minus.textContent = "−";
-        minus.title = "Shorter hold";
-        minus.setAttribute("aria-label", "Shorter hold");
-        minus.addEventListener("click", (e) => {
-          e.stopPropagation();
-          store.setHold(layer.id, index, frame.hold - 1);
-        });
-        const val = document.createElement("span");
-        val.className = "cell-hold-value";
-        val.textContent = String(frame.hold);
-        const plus = document.createElement("button");
-        plus.textContent = "+";
-        plus.title = "Longer hold";
-        plus.setAttribute("aria-label", "Longer hold");
-        plus.addEventListener("click", (e) => {
-          e.stopPropagation();
-          store.setHold(layer.id, index, frame.hold + 1);
-        });
-        holdCtl.append(minus, val, plus);
-        cell.appendChild(holdCtl);
         cell.addEventListener("click", () => store.setCurrentFrame(layer.id, index));
         cell.addEventListener("keydown", (e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -189,6 +161,22 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
           }
         });
         frow.appendChild(cell);
+        // The gap after the cell: 6px of plain space for a hold-1
+        // frame, or (hold − 1) cell-widths holding a thin line for a
+        // held frame — the line runs from this cell's right edge to
+        // the next cell's left edge, showing the frame is held until
+        // the next one. The last frame's gap extends the same
+        // distance into empty space.
+        const gap = document.createElement("div");
+        gap.className = "hold-gap";
+        gap.dataset.frameId = frame.id;
+        gap.style.width = `${gapWidth(frame.hold)}px`;
+        if (frame.hold > 1) {
+          const line = document.createElement("div");
+          line.className = "hold-line";
+          gap.appendChild(line);
+        }
+        frow.appendChild(gap);
       });
       const add = document.createElement("button");
       add.className = "icon-btn";
@@ -225,12 +213,6 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
         ? frameAt(layer, store.pos).frame.id
         : curLayer.frames[curIndex].id;
       el.classList.toggle("active", el.dataset.frameId === activeId);
-      // The stepper shows on the selected frame's cell only — the
-      // frame being edited, whether or not it is the one playing.
-      el.classList.toggle("selected", el.dataset.frameId === curLayer.frames[curIndex].id);
-      const hv = el.querySelector(".cell-hold-value") as HTMLElement | null;
-      const f = layer?.frames.find((fr) => fr.id === el.dataset.frameId);
-      if (hv && f) hv.textContent = String(f.hold);
     }
     // Thumbnails, redrawn when a frame's content changes.
     for (const layer of store.doc.layers) {

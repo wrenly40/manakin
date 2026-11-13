@@ -79,7 +79,6 @@ export type Store = {
   toggleLayerVisible(id: string): void;
   addFrame(layerId: string): void;
   deleteFrame(layerId: string, index: number): void;
-  setHold(layerId: string, index: number, hold: number): void;
   save(): void;
 };
 
@@ -504,18 +503,6 @@ export function createStore(): Store {
       }
       store.pos = Math.min(store.pos, timelineLength(store.doc) - 1);
       store.selection = [];
-      store.save();
-      store.emit();
-    },
-
-    setHold(layerId: string, index: number, hold: number): void {
-      const layer = store.doc.layers.find((l) => l.id === layerId);
-      const frame = layer?.frames[index];
-      if (!frame) return;
-      const h = Math.min(24, Math.max(1, Math.round(hold)));
-      if (h === frame.hold) return;
-      store.pushUndo();
-      frame.hold = h;
       store.save();
       store.emit();
     },
