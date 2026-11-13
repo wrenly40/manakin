@@ -1,4 +1,4 @@
-// Drawing: items, frames, the stage card, onion skin. All coordinates are
+// Drawing: items, frames, the stage card. All coordinates are
 // stage coordinates unless stated; the caller sets the canvas transform
 // (DPR) and passes the workspace layout.
 import type { Document, Frame, Item, WorkspaceLayout } from "./model";
@@ -90,7 +90,6 @@ export function drawFrameItems(c: CanvasRenderingContext2D, items: Item[], alpha
 export type RenderOpts = {
   pos: number;
   currentLayerId: string;
-  onion: boolean;
   previewItems?: Item[];
 };
 
@@ -132,14 +131,7 @@ export function renderStage(
   for (let li = doc.layers.length - 1; li >= 0; li--) {
     const layer = doc.layers[li];
     if (!layer.visible) continue;
-    const { frame, index } = frameAt(layer, opts.pos);
-    if (layer.id === opts.currentLayerId && opts.onion) {
-      // Adjacent frames ghost under the displayed one, display only.
-      const prev = layer.frames[index - 1];
-      const next = layer.frames[index + 1];
-      if (prev) drawFrameItems(c, prev.items, 0.3);
-      if (next) drawFrameItems(c, next.items, 0.15);
-    }
+    const { frame } = frameAt(layer, opts.pos);
     drawFrameItems(c, frame.items);
   }
   if (opts.previewItems) drawFrameItems(c, opts.previewItems);

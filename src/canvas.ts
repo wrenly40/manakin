@@ -85,7 +85,6 @@ export function createCanvasView(wrapEl: HTMLElement, store: Store): CanvasView 
     renderStage(ctx, L, store.doc, {
       pos: store.displayPos(),
       currentLayerId: store.currentLayerId,
-      onion: store.onion && !store.playing,
       previewItems: previewItems.length > 0 ? previewItems : undefined,
     });
     // Selection outlines, in stage coordinates (rotated with the stage).

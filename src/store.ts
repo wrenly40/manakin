@@ -33,7 +33,6 @@ export type Store = {
   currentByLayer: Map<string, number>;
   pos: number;
   playing: boolean;
-  onion: boolean;
   selection: SelectionRef[];
   onChange(cb: () => void): () => void;
   emit(): void;
@@ -56,7 +55,6 @@ export type Store = {
   stop(): void;
   back(): void;
   forward(): void;
-  setOnion(b: boolean): void;
   setName(n: string): void;
   canUndo(): boolean;
   canRedo(): boolean;
@@ -127,7 +125,6 @@ export function createStore(): Store {
     currentByLayer: new Map(initial.layers.map((l) => [l.id, 0])),
     pos: 0,
     playing: false,
-    onion: true,
     selection: [],
 
     onChange(cb: () => void): () => void {
@@ -250,11 +247,6 @@ export function createStore(): Store {
     forward(): void {
       store.playing = false;
       store.pos = timelineLength(store.doc) - 1;
-      store.emit();
-    },
-
-    setOnion(b: boolean): void {
-      store.onion = b;
       store.emit();
     },
 

@@ -10,8 +10,6 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
       <span class="panel-title">Layers</span>
       <button id="add-layer" class="pbtn" title="Add layer">+ Layer</button>
       <span class="head-spacer"></span>
-      <button id="onion-toggle" class="pbtn" title="Onion skin">Onion skin</button>
-      <span class="head-spacer"></span>
       <span id="frame-actions">
         <button id="dup-frame" class="pbtn" title="Duplicate frame">Duplicate</button>
         <button id="del-frame" class="pbtn" title="Delete frame">Delete</button>
@@ -27,7 +25,6 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
 
   const layerList = panelEl.querySelector("#layer-list") as HTMLDivElement;
   const framesRows = panelEl.querySelector("#frames-rows") as HTMLDivElement;
-  const onionBtn = panelEl.querySelector("#onion-toggle") as HTMLButtonElement;
   const addLayerBtn = panelEl.querySelector("#add-layer") as HTMLButtonElement;
   const dupFrameBtn = panelEl.querySelector("#dup-frame") as HTMLButtonElement;
   const delFrameBtn = panelEl.querySelector("#del-frame") as HTMLButtonElement;
@@ -36,7 +33,6 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
   const holdValue = panelEl.querySelector("#hold-value") as HTMLSpanElement;
 
   addLayerBtn.addEventListener("click", () => store.addLayer());
-  onionBtn.addEventListener("click", () => store.setOnion(!store.onion));
   dupFrameBtn.addEventListener("click", () => {
     const { layer, index } = store.currentFrame();
     store.duplicateFrame(layer.id, index);
@@ -202,7 +198,6 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
         el.dataset.frameId === curLayer.frames[curIndex].id,
       );
     }
-    onionBtn.classList.toggle("active", store.onion);
     holdValue.textContent = String(curLayer.frames[curIndex].hold);
     // Thumbnails, redrawn when a frame's items change.
     for (const layer of store.doc.layers) {
