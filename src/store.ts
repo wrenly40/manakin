@@ -559,7 +559,7 @@ export function createStore(): Store {
       store.pushUndo();
       const n = store.doc.layers.length + 1;
       const layer: Layer = {
-        id: nid(), name: `Layer ${n}`, visible: true, locked: false, opacity: 100,
+        id: nid(), name: `Layer ${n}`, visible: true, locked: false, opacity: 100, onionSkin: true,
         frames: [{ id: nid(), items: [], hold: 1 }],
       };
       // Layers[0] is the top layer; a new layer goes on top.
