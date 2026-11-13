@@ -1,4 +1,4 @@
-// Player: the bottom bar — transport, timeline scrubber, clock, zoom.
+// Player: the bottom bar — transport, clock, zoom.
 // Playback runs at FPS through the timeline; reaching the end stops.
 import { FPS, ZOOM_STOPS, timelineLength } from "./model";
 import type { Store } from "./store";
