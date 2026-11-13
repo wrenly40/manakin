@@ -139,7 +139,7 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
         // in the gap after the cell, not by the cell's width.
         cell.tabIndex = 0;
         cell.setAttribute("role", "button");
-        cell.title = `Frame ${index + 1}${frame.hold > 1 ? `, hold ${frame.hold}` : ""}`;
+        cell.title = `Frame ${index + 1}`;
         const thumb = document.createElement("canvas");
         cell.appendChild(thumb);
         // Delete is the layer row's hover-revealed ×, same size and
