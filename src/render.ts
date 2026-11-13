@@ -133,10 +133,9 @@ export function renderStage(
     if (!layer.visible) continue;
     const { frame } = frameAt(layer, opts.pos);
     // A layer draws at its own opacity, so lower layers show through.
-    c.save();
-    c.globalAlpha = (layer.opacity ?? 100) / 100;
-    drawFrameItems(c, frame.items);
-    c.restore();
+    // The opacity is the draw alpha: drawItem resets globalAlpha per
+    // item, so setting it on the context here would be overwritten.
+    drawFrameItems(c, frame.items, (layer.opacity ?? 100) / 100);
   }
   // The live preview belongs to the current layer, so it draws at that
   // layer's opacity too.
