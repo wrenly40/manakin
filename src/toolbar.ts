@@ -24,30 +24,7 @@ const TOOLS: { id: ToolId; label: string; key: string }[] = [
   { id: "paint", label: "Paint bucket (B)", key: "b" },
 ];
 
-const COLOURS_KEY = "manakin-v2-colours";
-
-type SavedColours = { recent: string[]; saved: string[] };
-
-function loadColours(): SavedColours {
-  try {
-    const raw = JSON.parse(localStorage.getItem(COLOURS_KEY) ?? "null") as SavedColours | null;
-    if (raw && Array.isArray(raw.recent) && Array.isArray(raw.saved)) return raw;
-  } catch {
-    // Bad save — start fresh.
-  }
-  return { recent: [], saved: [] };
-}
-
 export function createToolbar(wrapEl: HTMLElement, store: Store): void {
-  const colours = loadColours();
-  const saveColours = (): void => {
-    try {
-      localStorage.setItem(COLOURS_KEY, JSON.stringify(colours));
-    } catch {
-      // Storage unavailable — the session keeps working.
-    }
-  };
-
   const bar = document.createElement("div");
   bar.id = "toolbar";
   wrapEl.appendChild(bar);
@@ -189,7 +166,7 @@ export function createToolbar(wrapEl: HTMLElement, store: Store): void {
 
   // ---- Colour panel ----------------------------------------------------------
   // Hue bar style: a square colour field with a horizontal hue bar under it,
-  // then hex, recent and saved colours.
+  // then the hex input and the eyedropper.
   const panel = document.createElement("div");
   panel.id = "colour-panel";
   panel.style.display = "none";
@@ -199,12 +176,7 @@ export function createToolbar(wrapEl: HTMLElement, store: Store): void {
     <div class="colour-row">
       <input id="hex-input" type="text" spellcheck="false" aria-label="Hex colour" />
       <button id="pick-colour" title="Eyedropper (I)" aria-label="Eyedropper">${ICONS.eyedropper}</button>
-      <button id="save-colour">Save</button>
-    </div>
-    <div class="colour-label">Recent</div>
-    <div id="recent-row" class="colour-row"></div>
-    <div class="colour-label">Saved</div>
-    <div id="saved-row" class="colour-row"></div>`;
+    </div>`;
   wrapEl.appendChild(panel);
 
   const sv = panel.querySelector("#sv-field") as HTMLCanvasElement;
@@ -212,9 +184,6 @@ export function createToolbar(wrapEl: HTMLElement, store: Store): void {
   const hueBar = panel.querySelector("#hue-bar") as HTMLInputElement;
   const hexInput = panel.querySelector("#hex-input") as HTMLInputElement;
   const pickBtn = panel.querySelector("#pick-colour") as HTMLButtonElement;
-  const saveBtn = panel.querySelector("#save-colour") as HTMLButtonElement;
-  const recentRow = panel.querySelector("#recent-row") as HTMLDivElement;
-  const savedRow = panel.querySelector("#saved-row") as HTMLDivElement;
 
   let hue = 0;
   let sat = 1;
@@ -238,44 +207,11 @@ export function createToolbar(wrapEl: HTMLElement, store: Store): void {
     svCtx.stroke();
   }
 
-  function applyColour(fromPanel: boolean): void {
+  function applyColour(): void {
     const hex = hsvToHex(hue, sat, val);
     setSlotColor(hex);
     hexInput.value = hex;
     drawSv();
-    if (fromPanel) noteRecent(hex);
-  }
-
-  function noteRecent(hex: string): void {
-    colours.recent = [hex, ...colours.recent.filter((c) => c !== hex)].slice(0, 8);
-    saveColours();
-    renderRows();
-  }
-
-  function renderRows(): void {
-    const fillRow = (row: HTMLDivElement, list: string[]): void => {
-      row.innerHTML = "";
-      for (const c of list) {
-        const b = document.createElement("button");
-        b.className = "palette-dot";
-        b.style.background = c;
-        b.title = c;
-        b.addEventListener("click", () => {
-          setSlotColor(c);
-          const hsv = hexToHsv(c);
-          if (hsv) {
-            hue = hsv.h;
-            sat = hsv.s;
-            val = hsv.v;
-            hexInput.value = c;
-            drawSv();
-          }
-        });
-        row.appendChild(b);
-      }
-    };
-    fillRow(recentRow, colours.recent);
-    fillRow(savedRow, colours.saved);
   }
 
   let svDrag = false;
@@ -283,7 +219,7 @@ export function createToolbar(wrapEl: HTMLElement, store: Store): void {
     const rect = sv.getBoundingClientRect();
     sat = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
     val = 1 - Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
-    applyColour(true);
+    applyColour();
   };
   sv.addEventListener("pointerdown", (e) => {
     svDrag = true;
@@ -298,7 +234,7 @@ export function createToolbar(wrapEl: HTMLElement, store: Store): void {
   });
   hueBar.addEventListener("input", () => {
     hue = parseInt(hueBar.value, 10);
-    applyColour(true);
+    applyColour();
   });
   hexInput.addEventListener("change", () => {
     const n = normHex(hexInput.value);
@@ -313,16 +249,7 @@ export function createToolbar(wrapEl: HTMLElement, store: Store): void {
       val = hsv.v;
     }
     setSlotColor(n);
-    noteRecent(n);
     drawSv();
-  });
-  saveBtn.addEventListener("click", () => {
-    const hex = slotColor();
-    if (!colours.saved.includes(hex)) {
-      colours.saved.push(hex);
-      saveColours();
-      renderRows();
-    }
   });
 
   // The eyedropper lives in the colour panel, not the toolbar: it
@@ -348,14 +275,12 @@ export function createToolbar(wrapEl: HTMLElement, store: Store): void {
     // An eyedropper pick lands here: the canvas only recorded the
     // sampled hex on the store, and the colour UI applies it to the
     // panel's current slot (fg or bg — whichever swatch opened the
-    // panel) and notes it in Recent, like any colour chosen through
-    // the colour UI. Cleared before applying, so the re-entrant
-    // sync from setSlotColor sees nothing left to consume.
+    // panel). Cleared before applying, so the re-entrant sync from
+    // setSlotColor sees nothing left to consume.
     if (store.pickedColor) {
       const hex = store.pickedColor;
       store.pickedColor = null;
       setSlotColor(hex);
-      noteRecent(hex);
     }
     for (const [id, b] of toolButtons) {
       b.classList.toggle("active", store.tool === id);
@@ -379,6 +304,5 @@ export function createToolbar(wrapEl: HTMLElement, store: Store): void {
   }
 
   store.onChange(sync);
-  renderRows();
   sync();
 }

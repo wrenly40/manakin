@@ -285,9 +285,9 @@ export function createCanvasView(wrapEl: HTMLElement, store: Store): CanvasView 
     // The eyedropper is a one-shot read, not an edit: it samples
     // the visible pixel and records it on the store, and returns
     // to the tool that was active before it. The colour UI applies
-    // the sample to the panel's current slot (fg or bg) and notes
-    // it in Recent — the canvas never decides the slot. It works
-    // on a locked layer too — it changes no document state.
+    // the sample to the panel's current slot (fg or bg) — the canvas
+    // never decides the slot. It works on a locked layer too — it
+    // changes no document state.
     if (store.tool === "eyedropper") {
       const hex = sampleColorAt(e.clientX, e.clientY);
       if (hex) store.pickedColor = hex;

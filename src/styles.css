@@ -157,10 +157,6 @@ button:focus-visible, input:focus-visible {
 }
 .swap-btn:hover { background: rgba(0, 0, 0, 0.05); color: var(--ink); }
 .swap-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.palette-dot {
-  width: 16px; height: 16px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, 0.1);
-  cursor: pointer; padding: 0;
-}
 
 /* Colour panel: a square colour field with a horizontal hue bar under it. */
 #colour-panel {
@@ -180,26 +176,20 @@ button:focus-visible, input:focus-visible {
   box-shadow: var(--shadow-sm);
 }
 .colour-row { display: flex; gap: 6px; align-items: center; margin: 6px 0; flex-wrap: wrap; }
-.colour-row:empty { display: none; }
 #hex-input {
   flex: 1; min-width: 0; border: 1px solid var(--hairline); border-radius: 6px;
   padding: 5px 8px; font-size: 12px; color: var(--ink);
 }
-#save-colour {
-  border: 1px solid var(--hairline); background: var(--fill-2); border-radius: 6px;
-  padding: 5px 10px; font-size: 12px; cursor: pointer; color: var(--ink);
-}
-#save-colour:hover, #pick-colour:hover { background: var(--fill); }
-/* The eyedropper in the colour panel: the same treatment as Save —
-   hairline border, fill-2 background, 6px radius — icon-sized, so
-   the hex row keeps its width and the panel stays 204px. */
+#pick-colour:hover { background: var(--fill); }
+/* The eyedropper in the colour panel: hairline border, fill-2
+   background, 6px radius — icon-sized, so the hex row keeps its
+   width and the panel stays 204px. */
 #pick-colour {
   border: 1px solid var(--hairline); background: var(--fill-2); border-radius: 6px;
   padding: 5px 8px; cursor: pointer; color: var(--ink); flex: none;
   display: flex; align-items: center; justify-content: center;
 }
 #pick-colour svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.colour-label { font-size: 11px; color: var(--grey); margin-top: 8px; }
 
 /* Timeline */
 #bottom-bar {

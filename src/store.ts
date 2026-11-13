@@ -30,8 +30,8 @@ export type Store = {
   color2: string;
   // The last eyedropper sample, waiting to be applied: the canvas
   // only records the sampled hex here, and the colour UI consumes it
-  // (panel slot + Recent) on the next change — the canvas never
-  // decides which slot a pick goes to.
+  // (panel slot) on the next change — the canvas never decides
+  // which slot a pick goes to.
   pickedColor: string | null;
   brushSize: number;
   view: ViewState;
