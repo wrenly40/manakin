@@ -330,6 +330,18 @@ export function createToolbar(wrapEl: HTMLElement, store: Store): void {
   });
 
   function sync(): void {
+    // An eyedropper pick lands here: the canvas only recorded the
+    // sampled hex on the store, and the colour UI applies it to the
+    // panel's current slot (fg or bg — whichever swatch opened the
+    // panel) and notes it in Recent, like any colour chosen through
+    // the colour UI. Cleared before applying, so the re-entrant
+    // sync from setSlotColor sees nothing left to consume.
+    if (store.pickedColor) {
+      const hex = store.pickedColor;
+      store.pickedColor = null;
+      setSlotColor(hex);
+      noteRecent(hex);
+    }
     for (const [id, b] of toolButtons) {
       b.classList.toggle("active", store.tool === id);
     }

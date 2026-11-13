@@ -28,6 +28,11 @@ export type Store = {
   shapeKind: "rect" | "ellipse";
   color: string;
   color2: string;
+  // The last eyedropper sample, waiting to be applied: the canvas
+  // only records the sampled hex here, and the colour UI consumes it
+  // (panel slot + Recent) on the next change — the canvas never
+  // decides which slot a pick goes to.
+  pickedColor: string | null;
   brushSize: number;
   view: ViewState;
   currentLayerId: string;
@@ -152,6 +157,7 @@ export function createStore(): Store {
     shapeKind: "rect",
     color: "#1d1d1f",
     color2: "#007aff",
+    pickedColor: null,
     brushSize: 4,
     view: { zoom: 1, panX: 0, panY: 0, rotateDeg: 0 },
     currentLayerId: initial.layers[0].id,
