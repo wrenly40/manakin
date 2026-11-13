@@ -207,11 +207,6 @@ button:focus-visible, input:focus-visible {
   border-top: 1px solid var(--separator);
   display: flex; flex-direction: column;
 }
-#timeline-head {
-  flex: none; height: 36px; display: flex; align-items: center; gap: 8px;
-  padding: 0 12px; border-bottom: 1px solid var(--hairline);
-}
-.panel-title { font-size: 13px; font-weight: 600; }
 .pbtn {
   height: 32px; padding: 0 10px;
   border: 1px solid var(--hairline); border-radius: 9px; background: #fff;
@@ -219,7 +214,6 @@ button:focus-visible, input:focus-visible {
 }
 .pbtn:hover { background: var(--bg-system); }
 .pbtn:disabled { opacity: 0.35; cursor: default; }
-.head-spacer { flex: 1; }
 /* Segmented control: quiet grey fill — the old panel language.
    The hold stepper is one such bar. */
 .seg { display: flex; gap: 2px; background: var(--fill); border-radius: 9px; padding: 2px; }
@@ -230,7 +224,6 @@ button:focus-visible, input:focus-visible {
   white-space: nowrap;
 }
 .seg button:hover { background: rgba(0, 0, 0, 0.04); }
-#hold-value { font-size: 13px; font-weight: 500; min-width: 20px; text-align: center; align-self: center; }
 #timeline-body { flex: 1; display: flex; min-height: 0; }
 /* The list column: the scrollable card stack above, the Add pill
    pinned below it. The pill lives in the column footer, not in the

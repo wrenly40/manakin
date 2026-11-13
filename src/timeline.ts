@@ -7,15 +7,6 @@ import type { Store } from "./store";
 
 export function createTimeline(panelEl: HTMLElement, store: Store): void {
   panelEl.innerHTML = `
-    <div id="timeline-head">
-      <span class="panel-title">Layers</span>
-      <span class="head-spacer"></span>
-      <span id="frame-actions" class="seg">
-        <button id="hold-minus" title="Shorter hold">−</button>
-        <span id="hold-value" title="Hold">1</span>
-        <button id="hold-plus" title="Longer hold">+</button>
-      </span>
-    </div>
     <div id="timeline-body">
       <div id="layer-col">
         <div id="layer-list"></div>
@@ -27,19 +18,8 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
   const layerList = panelEl.querySelector("#layer-list") as HTMLDivElement;
   const framesRows = panelEl.querySelector("#frames-rows") as HTMLDivElement;
   const addLayerBtn = panelEl.querySelector("#add-layer") as HTMLButtonElement;
-  const holdMinus = panelEl.querySelector("#hold-minus") as HTMLButtonElement;
-  const holdPlus = panelEl.querySelector("#hold-plus") as HTMLButtonElement;
-  const holdValue = panelEl.querySelector("#hold-value") as HTMLSpanElement;
 
   addLayerBtn.addEventListener("click", () => store.addLayer());
-  holdMinus.addEventListener("click", () => {
-    const { layer, index, frame } = store.currentFrame();
-    store.setHold(layer.id, index, frame.hold - 1);
-  });
-  holdPlus.addEventListener("click", () => {
-    const { layer, index, frame } = store.currentFrame();
-    store.setHold(layer.id, index, frame.hold + 1);
-  });
 
   let lastStructural = "";
   const thumbSigs = new Map<string, string>();
@@ -216,7 +196,6 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
         : curLayer.frames[curIndex].id;
       el.classList.toggle("active", el.dataset.frameId === activeId);
     }
-    holdValue.textContent = String(curLayer.frames[curIndex].hold);
     // Thumbnails, redrawn when a frame's content changes.
     for (const layer of store.doc.layers) {
       for (const frame of layer.frames) {
