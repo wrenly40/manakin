@@ -117,6 +117,10 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
   // icon-button treatment as the move chevrons).
   const LOCK_SVG = `<svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>`;
   const UNLOCK_SVG = `<svg viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/></svg>`;
+  // Onion skin glyph (Lucide "layers", 16px, stroke 1.8): stacked
+  // frames — the neighbouring frames stacked under the live one.
+  // The ghost glyph is gone; this is the per-layer toggle's icon.
+  const ONION_SVG = `<svg viewBox="0 0 24 24"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg>`;
   const thumbSigs = new Map<string, string>();
 
   function structuralSig(): string {
@@ -144,8 +148,8 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
       // ---- Layer row: an old .blayer card, two lines. ----
       // Line 1 is the name only, with the hover-revealed delete ×
       // top-right. Line 2 holds ALL the controls on one line:
-      // visibility toggle, lock, opacity, move up/down. The
-      // opacity is a draggable % value (see below) — a slider
+      // visibility toggle, lock, onion skin, opacity, move up/down.
+      // The opacity is a draggable % value (see below) — a slider
       // would not fit the controls line at 250px.
       const row = document.createElement("div");
       row.className = "layer-row" + (layer.visible ? "" : " hidden") + (layer.locked ? " locked" : "");
@@ -227,6 +231,20 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
         store.toggleLayerLocked(layer.id);
       });
       controls.appendChild(lockBtn);
+      // Onion skin is per-layer: the layers glyph, same 24px
+      // treatment as the lock, sitting right after it. On is full
+      // ink, off dims the button — the state reads at a glance.
+      const onionBtn = document.createElement("button");
+      onionBtn.className = "layer-onion" + ((layer.onionSkin ?? true) ? "" : " off");
+      onionBtn.innerHTML = ONION_SVG;
+      onionBtn.title = (layer.onionSkin ?? true) ? "Turn onion skin off" : "Turn onion skin on";
+      onionBtn.setAttribute("aria-label", (layer.onionSkin ?? true) ? `Turn onion skin off for ${layer.name}` : `Turn onion skin on for ${layer.name}`);
+      onionBtn.setAttribute("aria-pressed", String(layer.onionSkin ?? true));
+      onionBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        store.toggleLayerOnionSkin(layer.id);
+      });
+      controls.appendChild(onionBtn);
       const up = document.createElement("button");
       up.className = "layer-chev";
       up.innerHTML = `<svg viewBox="0 0 24 24"><path d="M6 14l6-6 6 6"/></svg>`;
@@ -588,6 +606,17 @@ export function createTimeline(panelEl: HTMLElement, store: Store): void {
         if (value) {
           value.textContent = `${layer.opacity ?? 100}%`;
           value.setAttribute("aria-valuenow", String(layer.opacity ?? 100));
+        }
+        // The onion-skin toggle lives on the card too; keep its
+        // state in step — toggling it is not a structural change,
+        // so no rebuild refreshes the button.
+        const onion = el.querySelector<HTMLElement>(".layer-onion");
+        if (onion) {
+          const on = layer.onionSkin ?? true;
+          onion.classList.toggle("off", !on);
+          onion.title = on ? "Turn onion skin off" : "Turn onion skin on";
+          onion.setAttribute("aria-pressed", String(on));
+          onion.setAttribute("aria-label", on ? `Turn onion skin off for ${layer.name}` : `Turn onion skin on for ${layer.name}`);
         }
       }
       // A frame row matches its layer card's height, so the rows stay

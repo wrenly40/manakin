@@ -328,6 +328,17 @@ button:focus-visible, input:focus-visible {
 }
 .layer-lock:hover { background: rgba(0, 0, 0, 0.05); }
 .layer-lock svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+/* Onion skin is the same 24px icon-button treatment as the lock:
+   16px ink glyph at 1.8 stroke, sitting right after it. On is full
+   ink; off dims the button to 0.35, so the state reads at a glance. */
+.layer-onion {
+  flex: none; width: 24px; height: 24px; border: none; border-radius: 7px;
+  background: transparent; color: var(--ink); padding: 0;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.layer-onion:hover { background: rgba(0, 0, 0, 0.05); }
+.layer-onion.off { opacity: 0.35; }
+.layer-onion svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 /* Opacity is a draggable % value, not a slider: 12px grey, tabular
    numerals, a fixed 32px so "100%" and "50%" never shift the row.
    Drag horizontally (1% per 2px); arrow keys adjust by 1. */
@@ -422,7 +433,7 @@ button:focus-visible, input:focus-visible {
   position: absolute; top: 0; bottom: 0; width: 2px;
   background: var(--ink); pointer-events: none; z-index: 2;
 }
-/* A frame mid-reorder reads ghosted, so the move is visible even
+/* A frame mid-reorder reads faded, so the move is visible even
    before the drop indicator's position is read. */
 .frame-cell.reordering { opacity: 0.5; }
 /* The gap after a cell: 6px of plain space for a hold-1 frame, or
