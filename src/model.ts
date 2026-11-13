@@ -257,17 +257,11 @@ export function hitTestItems(items: Item[], p: Pt): Item | null {
     const it = items[i];
     if (it.type !== "shape") continue;
     const b = itemBBox(it);
-    if (it.fill && p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) return it;
-  }
-  for (let i = items.length - 1; i >= 0; i--) {
-    const it = items[i];
-    if (it.type !== "shape") continue;
-    const b = itemBBox(it);
-    const nearX = Math.min(Math.abs(p.x - b.x), Math.abs(p.x - (b.x + b.w)));
-    const nearY = Math.min(Math.abs(p.y - b.y), Math.abs(p.y - (b.y + b.h)));
     const insideX = p.x >= b.x - tol && p.x <= b.x + b.w + tol;
     const insideY = p.y >= b.y - tol && p.y <= b.y + b.h + tol;
-    if (insideX && insideY && (nearX <= tol || nearY <= tol)) return it;
+    // A click inside the shape selects it, filled or not; a click just
+    // outside still catches the outline.
+    if (insideX && insideY) return it;
   }
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i];

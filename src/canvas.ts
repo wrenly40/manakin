@@ -239,6 +239,10 @@ export function createCanvasView(wrapEl: HTMLElement, store: Store): CanvasView 
   }
 
   canvas.addEventListener("pointerdown", (e) => {
+    // Prevent the default focus change and text selection: without this,
+    // opening the text editor on mousedown is immediately undone when the
+    // browser moves focus to the body and the editor blurs shut.
+    e.preventDefault();
     if (e.button === 1 || spaceDown) {
       drag = { kind: "pan", startX: e.clientX, startY: e.clientY, panX: store.view.panX, panY: store.view.panY };
       canvas.setPointerCapture(e.pointerId);
