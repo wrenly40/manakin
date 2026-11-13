@@ -91,37 +91,39 @@ export type RenderOpts = {
   pos: number;
   currentLayerId: string;
   previewItems?: Item[];
-  // Onion skin: the neighbours of the frame at pos, ghosted under the
+  // Onion skin: the neighbours of the frame at pos, tinted under the
   // live frame. False (or absent) draws the frame on its own — the
-  // eyedropper samples through this path, so it never reads a ghost.
+  // eyedropper samples through this path, so it never reads a
+  // neighbour tint.
   onionSkin?: boolean;
 };
 
 // Onion skin: previous frame red, next frame green (the classic
 // before/after convention), at 30% so the live frame stays crisp on
-// top. The ghost is rendered to a stage-sized offscreen canvas and
-// tinted with source-atop, so the tint is a flat silhouette — the
-// ghost's own colours never leak through. The layer's opacity
-// multiplies the ghost alpha, so a 50% layer's ghost is fainter still.
-const GHOST_ALPHA = 0.3;
+// top. The neighbour is rendered to a stage-sized offscreen canvas
+// and tinted with source-atop, so the tint is a flat silhouette —
+// the neighbour's own colours never leak through. The layer's
+// opacity multiplies the neighbour alpha, so a 50% layer's
+// neighbours are fainter still.
+const ONION_ALPHA = 0.3;
 const PREV_TINT = "#ff3b30";
 const NEXT_TINT = "#34c759";
 
-let ghostCanvas: HTMLCanvasElement | null = null;
+let onionCanvas: HTMLCanvasElement | null = null;
 
-function drawTintedGhost(
+function drawTintedOnion(
   c: CanvasRenderingContext2D,
   stage: { w: number; h: number },
   items: Item[],
   tint: string,
   alpha: number,
 ): void {
-  if (!ghostCanvas) ghostCanvas = document.createElement("canvas");
-  if (ghostCanvas.width !== stage.w || ghostCanvas.height !== stage.h) {
-    ghostCanvas.width = stage.w;
-    ghostCanvas.height = stage.h;
+  if (!onionCanvas) onionCanvas = document.createElement("canvas");
+  if (onionCanvas.width !== stage.w || onionCanvas.height !== stage.h) {
+    onionCanvas.width = stage.w;
+    onionCanvas.height = stage.h;
   }
-  const g = ghostCanvas.getContext("2d");
+  const g = onionCanvas.getContext("2d");
   if (!g) return;
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.clearRect(0, 0, stage.w, stage.h);
@@ -132,7 +134,7 @@ function drawTintedGhost(
   g.globalCompositeOperation = "source-over";
   c.save();
   c.globalAlpha = alpha;
-  c.drawImage(ghostCanvas, 0, 0);
+  c.drawImage(onionCanvas, 0, 0);
   c.restore();
 }
 
@@ -176,16 +178,17 @@ export function renderStage(
     if (!layer.visible) continue;
     const { frame, index } = frameAt(layer, opts.pos);
     const layerAlpha = (layer.opacity ?? 100) / 100;
-    // Onion skin draws UNDER the live frame, per layer: the previous
-    // frame red, the next frame green. A layer with no neighbour on a
-    // side shows only the existing one (first frame: next only; last
-    // frame: previous only). Hidden layers contribute no ghosts.
-    if (opts.onionSkin) {
+    // Onion skin draws UNDER the live frame, per layer — and only
+    // when that layer's own toggle is on: the previous frame red,
+    // the next frame green. A layer with no neighbour on a side
+    // shows only the existing one (first frame: next only; last
+    // frame: previous only). Hidden layers contribute no neighbours.
+    if (opts.onionSkin && layer.onionSkin !== false) {
       if (index > 0) {
-        drawTintedGhost(c, stage, layer.frames[index - 1].items, PREV_TINT, GHOST_ALPHA * layerAlpha);
+        drawTintedOnion(c, stage, layer.frames[index - 1].items, PREV_TINT, ONION_ALPHA * layerAlpha);
       }
       if (index < layer.frames.length - 1) {
-        drawTintedGhost(c, stage, layer.frames[index + 1].items, NEXT_TINT, GHOST_ALPHA * layerAlpha);
+        drawTintedOnion(c, stage, layer.frames[index + 1].items, NEXT_TINT, ONION_ALPHA * layerAlpha);
       }
     }
     // A layer draws at its own opacity, so lower layers show through.
