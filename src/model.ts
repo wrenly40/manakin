@@ -470,8 +470,8 @@ export function sampleDocument(): Document {
   return {
     stageId: "wide",
     stageBg: "#ffffff",
+    // Layers[0] is the top layer: the ball draws above the background.
     layers: [
-      { id: nid(), name: "Background", visible: true, frames: [{ id: nid(), items: [sun, hill], hold: 1 }] },
       {
         id: nid(), name: "Ball", visible: true,
         frames: [
@@ -480,6 +480,7 @@ export function sampleDocument(): Document {
           { id: nid(), items: [ball(460)], hold: 2 },
         ],
       },
+      { id: nid(), name: "Background", visible: true, frames: [{ id: nid(), items: [sun, hill], hold: 1 }] },
     ],
   };
 }
