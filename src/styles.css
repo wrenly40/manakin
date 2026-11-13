@@ -282,22 +282,26 @@ button:focus-visible, input:focus-visible {
   padding: 0 16px;
 }
 #player-left { display: flex; }
-#angle-readout { font-size: 13px; color: var(--ink); }
+#angle-readout { font-size: 13px; color: var(--ink); font-variant-numeric: tabular-nums; }
 #player-centre { display: flex; flex-direction: column; align-items: center; gap: 4px; }
 #transport { display: flex; align-items: center; gap: 12px; }
 .pctl {
-  border: none; background: transparent; width: 40px; height: 40px;
+  border: none; background: transparent; border-radius: 9px;
+  width: 40px; height: 40px; padding: 0;
   display: flex; align-items: center; justify-content: center;
-  cursor: pointer; border-radius: 50%;
+  color: var(--ink); flex: none; cursor: pointer;
 }
-.pctl svg { width: 20px; height: 20px; fill: var(--ink); }
-.pctl.play {
-  width: 44px; height: 44px; background: #fff;
-  box-shadow: var(--shadow-md);
-}
-.pctl.play svg { width: 18px; height: 18px; }
 .pctl:hover { background: rgba(0, 0, 0, 0.05); }
-.pctl.play:hover { background: #fff; }
+.pctl:active { background: rgba(0, 0, 0, 0.09); }
+.pctl svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.pctl.solid svg { fill: currentColor; stroke: none; }
+#play-btn {
+  width: auto; height: 40px; padding: 0 18px;
+  border-radius: 999px; background: #fff;
+  box-shadow: var(--shadow-md); color: var(--ink);
+}
+#play-btn:hover { background: #fff; }
+#play-btn svg { width: 16px; height: 16px; fill: currentColor; stroke: none; }
 #scrub-row { display: flex; align-items: center; gap: 8px; }
 #scrub-track {
   width: 420px; height: 4px; background: var(--fill); border-radius: 2px;
@@ -307,13 +311,18 @@ button:focus-visible, input:focus-visible {
 #clock { font-size: 12px; color: var(--grey); min-width: 84px; }
 #player-right { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
 .zctl {
-  border: none; background: transparent; width: 28px; height: 28px;
-  font-size: 16px; color: var(--ink); cursor: pointer; border-radius: 6px;
+  border: none; background: transparent; border-radius: 9px;
+  width: 28px; height: 28px; padding: 0;
   display: flex; align-items: center; justify-content: center;
+  color: var(--ink); flex: none; cursor: pointer;
 }
 .zctl:hover { background: rgba(0, 0, 0, 0.05); }
+.zctl:active { background: rgba(0, 0, 0, 0.09); }
+.zctl svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .zoom-label {
-  border: none; background: transparent; font-size: 13px; color: var(--ink);
-  cursor: pointer; padding: 4px 6px; border-radius: 6px; min-width: 48px;
+  flex: none; min-width: 48px; padding: 0 4px; text-align: center;
+  border: none; background: transparent; border-radius: 9px;
+  font-size: 13px; color: var(--ink); cursor: pointer;
+  font-variant-numeric: tabular-nums;
 }
 .zoom-label:hover { background: rgba(0, 0, 0, 0.05); }

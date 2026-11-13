@@ -19,9 +19,9 @@ export function createPlayer(barEl: HTMLElement, store: Store): void {
       </div>
     </div>
     <div id="player-right">
-      <button id="zoom-out" class="zctl" title="Zoom out" aria-label="Zoom out">−</button>
+      <button id="zoom-out" class="zctl" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
       <button id="zoom-label" class="zoom-label" title="Reset zoom" aria-label="Zoom level, activate to reset zoom to 100%">100%</button>
-      <button id="zoom-in" class="zctl" title="Zoom in" aria-label="Zoom in">+</button>
+      <button id="zoom-in" class="zctl" title="Zoom in" aria-label="Zoom in"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
     </div>`;
 
   const playBtn = barEl.querySelector("#play-btn") as HTMLButtonElement;
