@@ -82,6 +82,8 @@ export type Store = {
   resolveSelection(): ResolvedSelection[];
   moveSelection(dx: number, dy: number): void;
   duplicateSelection(): void;
+  copySelection(): void;
+  paste(): void;
   deleteSelection(): void;
   addLayer(): void;
   renameLayer(id: string, name: string): void;
@@ -150,6 +152,10 @@ export function createStore(): Store {
   // returns to it, so the eyedropper is a one-shot tool. Null when
   // the eyedropper is not the active tool.
   let toolBeforeEyedropper: ToolId | null = null;
+  // The clipboard is in-memory only: a deep copy of the items copied
+  // with Cmd/Ctrl+C. It never touches the document or the undo stack,
+  // and it does not survive a reload — copy is not a document change.
+  let clipboard: Item[] | null = null;
   const store: Store = {
     doc: initial,
     name: initialName,
@@ -493,6 +499,51 @@ export function createStore(): Store {
       const refs: SelectionRef[] = [];
       for (const { layer, frame, item } of sel) {
         const copy = structuredClone(item);
+        copy.id = nid();
+        if (copy.type === "stroke") {
+          for (const p of copy.points) {
+            p.x += 16;
+            p.y += 16;
+          }
+        } else if (copy.type === "shape") {
+          copy.x += 16;
+          copy.y += 16;
+        } else {
+          copy.x += 16;
+          copy.y += 16;
+        }
+        frame.items.push(copy);
+        refs.push({ layerId: layer.id, frameId: frame.id, itemId: copy.id });
+      }
+      store.selection = refs;
+      store.save();
+      store.emit();
+    },
+
+    // Copy is not a document change: the selection is deep-copied into
+    // the in-memory clipboard and nothing else happens — no undo step,
+    // no save, no emit. Copying with nothing selected is a no-op and
+    // leaves the clipboard alone, so an earlier copy stays pasteable.
+    copySelection(): void {
+      const sel = store.resolveSelection();
+      if (sel.length === 0) return;
+      clipboard = sel.map((s) => structuredClone(s.item));
+    },
+
+    // Paste goes into the CURRENT layer's current frame, wherever the
+    // copy came from — so it works across frames and across layers.
+    // Fresh ids for every pasted item, offset +16px like duplicate so
+    // the paste is visible, and the pasted items become the selection.
+    // One undo step. Pasting with an empty clipboard, or into a locked
+    // layer, is a no-op.
+    paste(): void {
+      if (!clipboard || clipboard.length === 0) return;
+      const { layer, frame } = store.currentFrame();
+      if (layer.locked) return;
+      store.pushUndo();
+      const refs: SelectionRef[] = [];
+      for (const it of clipboard) {
+        const copy = structuredClone(it);
         copy.id = nid();
         if (copy.type === "stroke") {
           for (const p of copy.points) {

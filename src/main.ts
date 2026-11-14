@@ -153,6 +153,20 @@ window.addEventListener("keydown", (e) => {
     store.duplicateSelection();
     return;
   }
+  // Copy/paste are shortcuts only — the app has no menu bar. The
+  // isTyping guard above returns first, so Cmd/Ctrl+C and Cmd/Ctrl+V
+  // inside an input (project name, hex, brush size, layer rename) or
+  // the text editor keep their native behaviour.
+  if (mod && e.key.toLowerCase() === "c") {
+    e.preventDefault();
+    store.copySelection();
+    return;
+  }
+  if (mod && e.key.toLowerCase() === "v") {
+    e.preventDefault();
+    store.paste();
+    return;
+  }
   if (mod && e.key === "0") {
     e.preventDefault();
     store.resetView();
