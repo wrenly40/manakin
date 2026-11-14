@@ -637,10 +637,10 @@ export function createStore(): Store {
 
     // Paste goes into the CURRENT layer's current frame, wherever the
     // copy came from — so it works across frames and across layers.
-    // Fresh ids for every pasted item, offset +16px like duplicate so
-    // the paste is visible, and the pasted items become the selection.
-    // One undo step. Pasting with an empty clipboard, or into a locked
-    // layer, is a no-op.
+    // Fresh ids for every pasted item, no offset: the pasted items land
+    // exactly where they were copied from, and the pasted items become
+    // the selection. One undo step. Pasting with an empty clipboard,
+    // or into a locked layer, is a no-op.
     paste(): void {
       if (!clipboard || clipboard.length === 0) return;
       const { layer, frame } = store.currentFrame();
@@ -650,18 +650,6 @@ export function createStore(): Store {
       for (const it of clipboard) {
         const copy = structuredClone(it);
         copy.id = nid();
-        if (copy.type === "stroke") {
-          for (const p of copy.points) {
-            p.x += 16;
-            p.y += 16;
-          }
-        } else if (copy.type === "shape") {
-          copy.x += 16;
-          copy.y += 16;
-        } else {
-          copy.x += 16;
-          copy.y += 16;
-        }
         frame.items.push(copy);
         refs.push({ layerId: layer.id, frameId: frame.id, itemId: copy.id });
       }
