@@ -5,12 +5,15 @@ import type { Document, Frame, Item, Layer, ViewState } from "./model";
 import {
   SAVE_KEY,
   UNDO_LIMIT,
+  flipItem,
   frameAt,
   frameStartPos,
   nid,
   parseSave,
+  rotateItem90,
   sampleDocument,
   timelineLength,
+  unionBBox,
 } from "./model";
 
 export type ToolId = "select" | "pen" | "eraser" | "shape" | "text" | "paint" | "eyedropper";
@@ -84,6 +87,9 @@ export type Store = {
   duplicateSelection(): void;
   copySelection(): void;
   paste(): void;
+  rotateSelection(cw: boolean): void;
+  flipSelection(axis: "h" | "v"): void;
+  reorderSelection(dir: 1 | -1): void;
   deleteSelection(): void;
   addLayer(): void;
   renameLayer(id: string, name: string): void;
@@ -516,6 +522,96 @@ export function createStore(): Store {
         refs.push({ layerId: layer.id, frameId: frame.id, itemId: copy.id });
       }
       store.selection = refs;
+      store.save();
+      store.emit();
+    },
+
+    // Item transforms, around the shared centre box of the whole
+    // selection — so a stroke and a shape together rotate as one
+    // group. One undo step; the selection stays on the transformed
+    // items (the ids never change). A degenerate transform — a single
+    // point already on the centre — changes nothing and takes no undo
+    // step: the snapshot is dropped, the drag pattern from hold/fps.
+    rotateSelection(cw: boolean): void {
+      const sel = store.resolveSelection();
+      if (sel.length === 0) return;
+      const items = sel.map((s) => s.item);
+      const box = unionBBox(items);
+      if (!box) return;
+      const cx = box.x + box.w / 2;
+      const cy = box.y + box.h / 2;
+      const before = JSON.stringify(items);
+      store.pushUndo();
+      for (const it of items) rotateItem90(it, cx, cy, cw);
+      if (JSON.stringify(items) === before) {
+        store.popUndo();
+        return;
+      }
+      store.save();
+      store.emit();
+    },
+
+    flipSelection(axis: "h" | "v"): void {
+      const sel = store.resolveSelection();
+      if (sel.length === 0) return;
+      const items = sel.map((s) => s.item);
+      const box = unionBBox(items);
+      if (!box) return;
+      const cx = box.x + box.w / 2;
+      const cy = box.y + box.h / 2;
+      const before = JSON.stringify(items);
+      store.pushUndo();
+      for (const it of items) flipItem(it, cx, cy, axis);
+      if (JSON.stringify(items) === before) {
+        store.popUndo();
+        return;
+      }
+      store.save();
+      store.emit();
+    },
+
+    // Z-order, one step within the frame: bring forward moves an item
+    // above the next one, send backward below the previous one. The
+    // selection may span frames, so it is grouped per frame. A block
+    // of adjacent selected items moves as a block — the swap is
+    // skipped where the neighbour is also selected. The moves are
+    // worked out against the original indices first, so a selection
+    // already at the top (or bottom) changes nothing and takes no
+    // undo step.
+    reorderSelection(dir: 1 | -1): void {
+      const sel = store.resolveSelection();
+      if (sel.length === 0) return;
+      const byFrame = new Map<string, { frame: Frame; ids: Set<string> }>();
+      for (const { layer, frame, item } of sel) {
+        const key = `${layer.id}:${frame.id}`;
+        let g = byFrame.get(key);
+        if (!g) {
+          g = { frame, ids: new Set() };
+          byFrame.set(key, g);
+        }
+        g.ids.add(item.id);
+      }
+      const moves: { frame: Frame; from: number; to: number }[] = [];
+      for (const { frame, ids } of byFrame.values()) {
+        const idxs = frame.items.map((it, i) => (ids.has(it.id) ? i : -1)).filter((i) => i >= 0);
+        if (dir === 1) {
+          for (let k = idxs.length - 1; k >= 0; k--) {
+            const i = idxs[k];
+            if (i < frame.items.length - 1 && !ids.has(frame.items[i + 1].id)) moves.push({ frame, from: i, to: i + 1 });
+          }
+        } else {
+          for (let k = 0; k < idxs.length; k++) {
+            const i = idxs[k];
+            if (i > 0 && !ids.has(frame.items[i - 1].id)) moves.push({ frame, from: i, to: i - 1 });
+          }
+        }
+      }
+      if (moves.length === 0) return;
+      store.pushUndo();
+      for (const m of moves) {
+        const [it] = m.frame.items.splice(m.from, 1);
+        m.frame.items.splice(m.to, 0, it);
+      }
       store.save();
       store.emit();
     },

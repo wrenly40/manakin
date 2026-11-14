@@ -179,6 +179,35 @@ window.addEventListener("keydown", (e) => {
   }
   if (mod || e.altKey) return;
   const k = e.key.toLowerCase();
+  // Item transforms, around the shared centre of the selection.
+  // Shift+V is flip vertical — plain V is the Select tool, so the
+  // shift check comes first. [ and ] rotate 90° CCW / CW; H flips
+  // horizontally; PageUp/PageDown move one step in z-order
+  // (Inkscape's convention: PageUp raises, PageDown lowers).
+  if (e.shiftKey && k === "v") {
+    store.flipSelection("v");
+    return;
+  }
+  if (k === "[") {
+    store.rotateSelection(false);
+    return;
+  }
+  if (k === "]") {
+    store.rotateSelection(true);
+    return;
+  }
+  if (k === "h") {
+    store.flipSelection("h");
+    return;
+  }
+  if (k === "pageup") {
+    store.reorderSelection(1);
+    return;
+  }
+  if (k === "pagedown") {
+    store.reorderSelection(-1);
+    return;
+  }
   if (k === "v") store.setTool("select");
   else if (k === "p") store.setTool("pen");
   else if (k === "d") store.setTool("eraser");

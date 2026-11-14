@@ -230,6 +230,88 @@ export function itemBBox(it: Item): { x: number; y: number; w: number; h: number
   return { x: it.x, y: it.y - it.size, w, h: it.size * 1.2 };
 }
 
+// The union of several items' boxes — the shared centre a transform
+// rotates or mirrors around. Null when there is nothing to transform.
+export function unionBBox(items: Item[]): { x: number; y: number; w: number; h: number } | null {
+  if (items.length === 0) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const it of items) {
+    const b = itemBBox(it);
+    minX = Math.min(minX, b.x);
+    minY = Math.min(minY, b.y);
+    maxX = Math.max(maxX, b.x + b.w);
+    maxY = Math.max(maxY, b.y + b.h);
+  }
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+// ---------------------------------------------------------------------------
+// Item transforms — 90° steps around a shared centre, no rotation field
+// on the model. Strokes rotate/mirror their points; shapes rotate/mirror
+// their rect (a 90° rotation swaps w/h); text moves its anchor around
+// the centre and stays upright — the glyphs never rotate.
+// ---------------------------------------------------------------------------
+
+// 90° clockwise in screen coordinates (y down): a point right of the
+// centre goes below it. Counter-clockwise is the inverse.
+export function rotatePt90(p: Pt, cx: number, cy: number, cw: boolean): Pt {
+  const dx = p.x - cx;
+  const dy = p.y - cy;
+  return cw ? { x: cx - dy, y: cy + dx } : { x: cx + dy, y: cy - dx };
+}
+
+export function flipPt(p: Pt, cx: number, cy: number, axis: "h" | "v"): Pt {
+  return axis === "h" ? { x: 2 * cx - p.x, y: p.y } : { x: p.x, y: 2 * cy - p.y };
+}
+
+export function rotateItem90(it: Item, cx: number, cy: number, cw: boolean): void {
+  if (it.type === "stroke") {
+    for (let i = 0; i < it.points.length; i++) it.points[i] = rotatePt90(it.points[i], cx, cy, cw);
+    return;
+  }
+  if (it.type === "shape") {
+    const b = itemBBox(it);
+    // The bbox centre, rotated around the shared centre; the new rect
+    // is the old one with w/h swapped. The rect is stored normalised
+    // (positive w/h) — the geometry is identical either way.
+    const n = rotatePt90({ x: b.x + b.w / 2, y: b.y + b.h / 2 }, cx, cy, cw);
+    it.x = n.x - b.h / 2;
+    it.y = n.y - b.w / 2;
+    it.w = b.h;
+    it.h = b.w;
+    return;
+  }
+  const p = rotatePt90({ x: it.x, y: it.y }, cx, cy, cw);
+  it.x = p.x;
+  it.y = p.y;
+}
+
+export function flipItem(it: Item, cx: number, cy: number, axis: "h" | "v"): void {
+  if (it.type === "stroke") {
+    for (let i = 0; i < it.points.length; i++) it.points[i] = flipPt(it.points[i], cx, cy, axis);
+    return;
+  }
+  if (it.type === "shape") {
+    const b = itemBBox(it);
+    if (axis === "h") {
+      it.x = 2 * cx - (b.x + b.w);
+      it.y = b.y;
+    } else {
+      it.x = b.x;
+      it.y = 2 * cy - (b.y + b.h);
+    }
+    it.w = b.w;
+    it.h = b.h;
+    return;
+  }
+  const p = flipPt({ x: it.x, y: it.y }, cx, cy, axis);
+  it.x = p.x;
+  it.y = p.y;
+}
+
 export function distToSegment(p: Pt, a: Pt, b: Pt): number {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
