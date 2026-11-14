@@ -21,6 +21,7 @@ export function createPlayer(barEl: HTMLElement, store: Store): void {
       <button id="zoom-out" class="zctl" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
       <button id="zoom-label" class="zoom-label" title="Reset zoom" aria-label="Zoom level, activate to reset zoom to 100%">100%</button>
       <button id="zoom-in" class="zctl" title="Zoom in" aria-label="Zoom in"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      <button id="zoom-fit" class="zctl" title="Zoom to fit (F)" aria-label="Zoom to fit"><svg viewBox="0 0 24 24"><path d="M4 9V5a1 1 0 0 1 1-1h4"/><path d="M15 4h4a1 1 0 0 1 1 1v4"/><path d="M20 15v4a1 1 0 0 1-1 1h-4"/><path d="M9 20H5a1 1 0 0 1-1-1v-4"/></svg></button>
     </div>`;
 
   const playBtn = barEl.querySelector("#play-btn") as HTMLButtonElement;
@@ -35,6 +36,7 @@ export function createPlayer(barEl: HTMLElement, store: Store): void {
   const zoomOut = barEl.querySelector("#zoom-out") as HTMLButtonElement;
   const zoomIn = barEl.querySelector("#zoom-in") as HTMLButtonElement;
   const zoomLabel = barEl.querySelector("#zoom-label") as HTMLButtonElement;
+  const zoomFit = barEl.querySelector("#zoom-fit") as HTMLButtonElement;
 
   backBtn.addEventListener("click", () => store.back());
   stopBtn.addEventListener("click", () => store.stop());
@@ -44,6 +46,7 @@ export function createPlayer(barEl: HTMLElement, store: Store): void {
   zoomOut.addEventListener("click", () => zoomStep(-1));
   zoomIn.addEventListener("click", () => zoomStep(1));
   zoomLabel.addEventListener("click", () => store.resetZoom());
+  zoomFit.addEventListener("click", () => store.zoomToFit());
 
   // The frame rate is a draggable value in the clock, like the
   // opacity draggable %: drag horizontally, 1 fps per 2px, one undo

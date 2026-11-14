@@ -56,6 +56,7 @@ export type Store = {
   setView(v: Partial<ViewState>): void;
   resetView(): void;
   resetZoom(): void;
+  zoomToFit(): void;
   setCurrentLayer(id: string): void;
   setCurrentFrame(layerId: string, index: number): void;
   currentFrame(): { layer: Layer; frame: Frame; index: number };
@@ -247,6 +248,14 @@ export function createStore(): Store {
     resetView(): void {
       store.view = { zoom: 1, panX: 0, panY: 0, rotateDeg: 0 };
       store.emit();
+    },
+
+    // Zoom to fit: zoom 1 IS the fit scale (the layout multiplies
+    // the fit by the zoom), so resetting the view is the fit — the
+    // whole stage centred in the window at any window size. View
+    // state only: no undo step, and the document never changes.
+    zoomToFit(): void {
+      store.resetView();
     },
 
     resetZoom(): void {

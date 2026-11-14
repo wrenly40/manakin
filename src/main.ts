@@ -208,6 +208,11 @@ window.addEventListener("keydown", (e) => {
     store.reorderSelection(-1);
     return;
   }
+  // F zooms to fit: the whole stage centred, rotation reset to 0.
+  if (k === "f") {
+    store.zoomToFit();
+    return;
+  }
   if (k === "v") store.setTool("select");
   else if (k === "p") store.setTool("pen");
   else if (k === "d") store.setTool("eraser");
